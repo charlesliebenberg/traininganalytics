@@ -1,0 +1,208 @@
+import { describe, expect, it } from 'vitest';
+import { CURVE_DURATIONS, meanMax, resample1Hz } from './series';
+import { detectIntervals, fatigueCurves, normalizedPower, npCurve, wPrimeBalance, matchesBurned } from './power';
+import { fitCp2, fitPowerDuration, ompd } from './models';
+import { computePmc, dailyTssForCtl, formZone } from './pmc';
+import { bestEfforts, gradeCostFactor } from './running';
+import { hrTss } from './heartrate';
+import { timeInZones, POWER_ZONES, polarizationIndex } from './zones';
+import { toZwo, workoutMetrics } from './workout';
+import { generateSeasonPlan, generateWeekWorkouts } from './plan';
+import { decodePolyline, encodePolyline } from '../polyline';
+import { computeMetrics, normalizeStreams } from './metrics';
+import { BUILTIN_WORKOUTS } from '../library';
+import type { Thresholds } from '../types';
+
+const TH: Thresholds = {
+  date: '2020-01-01',
+  ftp: 250,
+  wPrime: 20000,
+  lthr: 165,
+  runLthr: 170,
+  maxHr: 190,
+  restHr: 50,
+  runThresholdSpeed: 4,
+  swimCss: 1.3,
+  weight: 70,
+};
+
+describe('power', () => {
+  it('NP of constant power equals that power', () => {
+    expect(normalizedPower(new Array(3600).fill(200))).toBeCloseTo(200, 6);
+  });
+  it('NP is higher than average for variable power', () => {
+    const p = Array.from({ length: 3600 }, (_, i) => (Math.floor(i / 60) % 2 ? 350 : 100));
+    const np = normalizedPower(p)!;
+    expect(np).toBeGreaterThan(225);
+    expect(np).toBeLessThan(350);
+  });
+  it('mean max finds best window', () => {
+    const p = new Array(600).fill(100);
+    for (let i = 100; i < 160; i++) p[i] = 400;
+    const mm = meanMax(p, [1, 60, 120]);
+    expect(mm).toEqual([400, 400, 250]);
+  });
+  it('NP curve ≥ power curve and constant for steady efforts', () => {
+    const p = Array.from({ length: 1800 }, (_, i) => (i % 40 < 20 ? 400 : 100));
+    const nc = npCurve(p, [300, 1200]);
+    const pc = meanMax(p, [300, 1200]);
+    nc.forEach((v, i) => expect(v!).toBeGreaterThanOrEqual(Math.floor(pc[i]!)));
+    expect(npCurve(new Array(1000).fill(220), [300])[0]).toBe(220);
+  });
+  it('W′ balance depletes above CP and recovers below', () => {
+    const p = [...new Array(120).fill(400), ...new Array(600).fill(100)];
+    const wb = wPrimeBalance(p, 250, 20000);
+    expect(Math.min(...wb)).toBeCloseTo(20000 - 150 * 120, 0);
+    expect(wb[wb.length - 1]).toBeGreaterThan(18000);
+    expect(matchesBurned(wb, 20000)).toBe(1);
+  });
+  it('fatigue curves only include power after the kJ threshold', () => {
+    const p = [...new Array(3000).fill(200), ...new Array(600).fill(300)]; // 600 kJ then 180 kJ
+    const fc = fatigueCurves(p, [500], [60]);
+    expect(fc['500'][0]).toBe(300);
+    expect(fatigueCurves(p, [1000], [60])['1000']).toBeUndefined();
+  });
+  it('detects structured intervals', () => {
+    const p: number[] = new Array(600).fill(150);
+    for (let r = 0; r < 3; r++) {
+      p.push(...new Array(600).fill(245));
+      p.push(...new Array(300).fill(140));
+    }
+    const iv = detectIntervals(p, 250);
+    expect(iv.length).toBe(3);
+    expect(Math.abs(iv[0].end - iv[0].start - 600)).toBeLessThan(10);
+  });
+});
+
+describe('models', () => {
+  it('recovers CP and W′ from an ideal hyperbolic curve', () => {
+    const pts = [180, 300, 600, 900, 1200].map((t) => ({ t, p: 20000 / t + 280 }));
+    const m = fitCp2(pts)!;
+    expect(m.cp).toBeCloseTo(280, 3);
+    expect(m.wPrime).toBeCloseTo(20000, 0);
+  });
+  it('fits the OmPD model to a synthetic curve', () => {
+    const truth = { cp: 270, wPrime: 18000, pmax: 1100, a: 30 };
+    const curve = CURVE_DURATIONS.filter((t) => t <= 14400).map((t) => ompd(t, truth));
+    const m = fitPowerDuration(curve)!;
+    expect(m).not.toBeNull();
+    expect(Math.abs(m.cp - 270)).toBeLessThan(8);
+    expect(Math.abs(m.p60 - ompd(3600, truth))).toBeLessThan(6);
+    expect(m.eftp).toBe(m.cp);
+    expect(m.error).toBeLessThan(0.03);
+  });
+});
+
+describe('pmc', () => {
+  it('converges to steady daily load', () => {
+    const days = Array.from({ length: 400 }, (_, i) => ({ date: String(i), tss: 80 }));
+    const pmc = computePmc(days);
+    const last = pmc[pmc.length - 1];
+    expect(last.ctl).toBeCloseTo(80, 0);
+    expect(last.atl).toBeCloseTo(80, 3);
+    expect(Math.abs(last.tsb)).toBeLessThan(1);
+  });
+  it('dailyTssForCtl hits the target', () => {
+    const x = dailyTssForCtl(50, 55, 7);
+    const pmc = computePmc(Array.from({ length: 7 }, (_, i) => ({ date: String(i), tss: x })), { startCtl: 50 });
+    expect(pmc[6].ctl).toBeCloseTo(55, 6);
+  });
+  it('classifies form', () => {
+    expect(formZone(-12, 60).id).toBe('optimal');
+    expect(formZone(10, 60).id).toBe('fresh');
+  });
+});
+
+describe('running & hr', () => {
+  it('grade cost is 1 on flat and higher uphill', () => {
+    expect(gradeCostFactor(0)).toBeCloseTo(1, 6);
+    expect(gradeCostFactor(0.1)).toBeGreaterThan(1.4);
+  });
+  it('finds best efforts', () => {
+    const d = Array.from({ length: 2000 }, (_, i) => i * 3 + (i > 1000 && i < 1400 ? (i - 1000) * 1 : i >= 1400 ? 400 : 0));
+    const be = bestEfforts(d);
+    expect(be['1k']).toBeCloseTo(250, 0);
+  });
+  it('hrTSS is ~100 for an hour at LTHR', () => {
+    expect(hrTss(new Array(3600).fill(165), 165, 50, 190)).toBeCloseTo(100, 3);
+  });
+});
+
+describe('zones', () => {
+  it('buckets time', () => {
+    const z = timeInZones([100, 150, 200, 250, 290, 350, 900], 250, POWER_ZONES);
+    expect(z).toEqual([1, 1, 1, 1, 1, 1, 1]);
+    expect(polarizationIndex([80, 5, 15])).toBeGreaterThan(2);
+  });
+});
+
+describe('workouts & plans', () => {
+  it('1h at FTP is 100 TSS', () => {
+    const m = workoutMetrics({ target: 'power', blocks: [{ kind: 'step', id: 'a', intent: 'active', duration: 3600, low: 1, high: 1 }] });
+    expect(m.tss).toBeCloseTo(100, 6);
+    expect(m.if).toBeCloseTo(1, 6);
+  });
+  it('exports zwo', () => {
+    const w = BUILTIN_WORKOUTS.find((w) => w.key === 'vo2-5x5')!;
+    expect(toZwo(w.name, w.description, w.structure)).toContain('<IntervalsT Repeat="5"');
+  });
+  it('generates a periodised season plan that builds fitness', () => {
+    const weeks = generateSeasonPlan({
+      startDate: '2026-01-05',
+      raceDate: '2026-06-14',
+      startCtl: 45,
+      startAtl: 45,
+      targetCtl: 85,
+      maxRamp: 5,
+      pattern: '3:1',
+      taperWeeks: 2,
+      maxWeeklyHours: 14,
+      sport: 'ride',
+    });
+    expect(weeks[weeks.length - 1].phase).toBe('Race');
+    expect(weeks.some((w) => w.recovery)).toBe(true);
+    const peak = Math.max(...weeks.map((w) => w.ctl));
+    expect(peak).toBeGreaterThan(70);
+    expect(weeks[weeks.length - 1].tsb).toBeGreaterThan(0);
+    const wk = generateWeekWorkouts(weeks[6]);
+    const total = wk.reduce((a, w) => a + w.tss, 0);
+    expect(Math.abs(total - weeks[6].tss) / weeks[6].tss).toBeLessThan(0.25);
+  });
+});
+
+describe('streams', () => {
+  it('polyline round-trips', () => {
+    const pts: [number, number][] = [
+      [38.5, -120.2],
+      [40.7, -120.95],
+      [43.252, -126.453],
+    ];
+    expect(decodePolyline(encodePolyline(pts))).toEqual(pts);
+  });
+  it('resamples with gaps', () => {
+    const r = resample1Hz([0, 2, 20], [100, 200, 300], 21, { gapValue: 0 });
+    expect(r[1]).toBe(150);
+    expect(r[10]).toBe(0);
+    expect(r[20]).toBe(300);
+  });
+  it('computes activity metrics end to end', () => {
+    const n = 3600;
+    const time = Array.from({ length: n }, (_, i) => i);
+    const s = normalizeStreams({
+      time,
+      watts: time.map(() => 200),
+      heartrate: time.map(() => 140),
+      speed: time.map(() => 9),
+      distance: time.map((t) => t * 9),
+      altitude: time.map((t) => 100 + Math.sin(t / 300) * 50),
+    })!;
+    const m = computeMetrics(s, 'ride', TH);
+    expect(m.np).toBe(200);
+    expect(m.tss).toBeCloseTo(64, 0);
+    expect(m.tssMethod).toBe('power');
+    expect(m.distance).toBeCloseTo(3599 * 9, 0);
+    expect(m.elevationGain!).toBeGreaterThan(160);
+    expect(m.curves.power![CURVE_DURATIONS.indexOf(60)]).toBe(200);
+    expect(m.decoupling).toBeCloseTo(0, 1);
+  });
+});

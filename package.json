@@ -1,0 +1,50 @@
+{
+  "name": "traininganalytics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted training analytics & planning suite with Strava and TrainingPeaks sync",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c magenta,cyan \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch --clear-screen=false server/index.ts",
+    "dev:web": "vite",
+    "build": "tsc -p . && vite build",
+    "start": "NODE_ENV=production tsx server/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p .",
+    "demo": "tsx server/scripts/seed-demo.ts"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "@tanstack/react-query": "^5.104.0",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
+    "echarts": "^6.1.0",
+    "fast-xml-parser": "^5.11.1",
+    "fflate": "^0.8.3",
+    "fit-file-parser": "^6.1.2",
+    "hono": "^4.13.9",
+    "leaflet": "^1.9.4",
+    "lucide-react": "^1.48.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-router-dom": "^7.18.4",
+    "tsx": "^4.23.15"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/leaflet": "^1.9.22",
+    "@types/node": "^26.6.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2"
+  }
+}
