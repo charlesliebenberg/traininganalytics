@@ -9,6 +9,7 @@ import { alpha, useTokens } from '../lib/theme';
 import { fmtDate, fmtDurLabel, fmtDuration, fmtPace, iso } from '../lib/format';
 import { Badge, Button, Card, Empty, PageHeader, Segmented, Spinner, Stat, Toggle } from '../components/ui';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
+import { makeTimeline, monthsText, type Gap, type Timeline } from '../lib/timeline';
 
 interface SeriesResponse {
   sport: ThresholdSport;
@@ -20,54 +21,12 @@ interface SeriesResponse {
   state: { running: boolean; lastRun: string | null };
   current: Th;
 }
-interface Gap {
-  from: string;
-  to: string;
-  days: number;
-}
 interface CurvesResponse {
   durations: number[];
   weeks: { date: string; values: (number | null)[] }[];
 }
 
 const DAY = 86400_000;
-/** Width a collapsed break takes on the chart. */
-const COLLAPSED_DAYS = 21;
-
-/**
- * Time axis with long breaks (90+ days without activities) squeezed to a fixed width,
- * so years of history read continuously.
- */
-function makeTimeline(gaps: Gap[]) {
-  const segs = gaps.map((g) => ({ ...g, a: parseISO(g.from).getTime(), b: parseISO(g.to).getTime() + DAY }));
-  const toX = (ts: number) => {
-    let x = ts;
-    for (const g of segs) {
-      const len = g.b - g.a;
-      if (ts >= g.b) x -= len - COLLAPSED_DAYS * DAY;
-      else if (ts > g.a) x -= (ts - g.a) * (1 - (COLLAPSED_DAYS * DAY) / len);
-    }
-    return x;
-  };
-  const fromX = (x: number) => {
-    let ts = x;
-    for (const g of segs) {
-      const ga = toX(g.a);
-      if (x >= ga + COLLAPSED_DAYS * DAY) ts += g.b - g.a - COLLAPSED_DAYS * DAY;
-      else if (x > ga) ts += (x - ga) * ((g.b - g.a) / (COLLAPSED_DAYS * DAY) - 1);
-    }
-    return ts;
-  };
-  const breaks = segs.map((g) => ({ ...g, x0: toX(g.a), x1: toX(g.a) + COLLAPSED_DAYS * DAY }));
-  /** weeks that fall inside a break are skipped (no new training to learn from) */
-  const hidden = (date: string) => segs.some((g) => {
-    const t = parseISO(date).getTime();
-    return t > g.a && t <= g.b;
-  });
-  return { toX, fromX, breaks, hidden };
-}
-type Timeline = ReturnType<typeof makeTimeline>;
-const monthsText = (days: number) => (days >= 365 ? `${(days / 365).toFixed(1)} yr` : `${Math.round(days / 30.4)} mo`);
 
 const LABEL: Record<ThresholdSport, { name: string; model: string; cp: string; wp: string }> = {
   ride: { name: 'Bike FTP', model: 'critical power', cp: 'Critical power', wp: 'W′' },

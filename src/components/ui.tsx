@@ -207,7 +207,7 @@ export function Tabs<T extends string>({ value, onChange, tabs }: { value: T; on
 export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: ReactNode }) {
   return (
     <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-ink-2 select-none">
-      <span className={clsx('relative inline-block h-4 w-7 rounded-full transition-colors', checked ? 'bg-accent' : 'bg-surface-3')} onClick={() => onChange(!checked)}>
+      <span className={clsx('relative inline-block h-4 w-7 shrink-0 rounded-full transition-colors', checked ? 'bg-accent' : 'bg-surface-3')} onClick={() => onChange(!checked)}>
         <span className={clsx('absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all', checked ? 'left-3.5' : 'left-0.5')} />
       </span>
       <span onClick={() => onChange(!checked)}>{label}</span>

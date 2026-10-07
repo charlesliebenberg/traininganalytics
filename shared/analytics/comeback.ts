@@ -1,10 +1,9 @@
 /**
- * "Comeback" analytics: find past performance peaks, describe the training that led to
- * them, and learn the athlete's own load → FTP relationship to plan a return.
+ * "Comeback" analytics: find past performance peaks and describe the training that led to
+ * them. How load turns into performance lives in capacity.ts.
  */
 import { addDays, differenceInCalendarDays, format, parseISO, startOfWeek } from 'date-fns';
 import type { Activity, PmcPoint } from '../types';
-import { linreg } from './series';
 import { polarizationIndex } from './zones';
 
 // ---------- session classification ----------
@@ -261,26 +260,7 @@ export function summarizeBuild(acts: Activity[], pmc: PmcPoint[], to: string, we
   };
 }
 
-// ---------- the athlete's own load → FTP relationship ----------
-
-export interface LoadModelPoint {
-  date: string;
-  /** mean CTL over the 8 weeks before the estimate date */
-  ctl: number;
-  ftp: number;
-}
-
-export interface LoadModel {
-  /** FTP ≈ a + b · CTL */
-  a: number;
-  b: number;
-  r2: number;
-  /** residual standard deviation, W */
-  sd: number;
-  n: number;
-  points: LoadModelPoint[];
-  ctlRange: [number, number];
-}
+// ---------- dating estimates by their efforts ----------
 
 /**
  * When an estimate was actually earned: the day after its most recent effort. A 6-month
@@ -301,39 +281,3 @@ export function byEffortDate<T extends { date: string; raw: number; points?: { d
   }
   return [...best].map(([date, value]) => ({ date, value })).sort((a, b) => a.date.localeCompare(b.date));
 }
-
-/**
- * Fit FTP against chronic training load using the athlete's own history. Each distinct set of
- * best efforts counts once, paired with the average CTL of the 6 weeks before those efforts
- * (fitness reflects recent load with a lag) — not the CTL when the rolling estimate is reported.
- */
-export function fitLoadModel(estimates: { date: string; raw: number; points?: { date: string | null }[] }[], ctlAt: (date: string) => number | null): LoadModel | null {
-  const pts: LoadModelPoint[] = [];
-  for (const e of byEffortDate(estimates)) {
-    const vals: number[] = [];
-    for (let d = 1; d <= 43; d += 7) {
-      const c = ctlAt(iso(addDays(parseISO(e.date), -d)));
-      if (c != null) vals.push(c);
-    }
-    if (vals.length < 4) continue;
-    pts.push({ date: e.date, ctl: vals.reduce((s, v) => s + v, 0) / vals.length, ftp: e.value });
-  }
-  if (pts.length < 6) return null;
-  const xs = pts.map((p) => p.ctl);
-  const ys = pts.map((p) => p.ftp);
-  const spread = Math.max(...xs) - Math.min(...xs);
-  if (spread < 15) return null; // need a range of fitness levels to learn a slope
-  const { a, b, r2 } = linreg(xs, ys);
-  if (!(b > 0)) return null;
-  const sd = Math.sqrt(pts.reduce((s, p) => s + (p.ftp - (a + b * p.ctl)) ** 2, 0) / Math.max(1, pts.length - 2));
-  return { a, b, r2, sd, n: pts.length, points: pts, ctlRange: [Math.min(...xs), Math.max(...xs)] };
-}
-
-/** CTL needed for a target FTP, with a ±1 SD range. */
-export function ctlForFtp(m: LoadModel, ftp: number): { ctl: number; low: number; high: number } {
-  const ctl = (ftp - m.a) / m.b;
-  return { ctl, low: (ftp - m.sd - m.a) / m.b, high: (ftp + m.sd - m.a) / m.b };
-}
-
-/** Steady weekly TSS that sustains a given CTL. */
-export const weeklyTssForCtl = (ctl: number) => ctl * 7;

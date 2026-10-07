@@ -40,18 +40,24 @@ export function generateSeasonPlan(config: SeasonPlanConfig, events: Pick<RaceEv
   const phases: string[] = new Array(nWeeks).fill('Base');
   if (!fitnessGoal) phases[nWeeks - 1] = 'Race';
   for (let i = 0; i < taper; i++) phases[nWeeks - 2 - i] = i === 0 ? 'Taper' : 'Peak';
-  let idx = fitnessGoal ? nWeeks - 1 : nWeeks - 2 - taper;
-  const blocks: [string, number][] = [
-    ['Build 2', 4],
-    ['Build 1', 4],
-    ['Base 3', 4],
-    ['Base 2', 4],
-    ['Base 1', 4],
-  ];
-  for (const [name, len] of blocks) {
-    for (let k = 0; k < len && idx >= 0; k++, idx--) phases[idx] = name;
+  if (fitnessGoal) {
+    // no race to peak for: alternate 4-week base (volume) and build (intensity) blocks,
+    // ending on a build block, however long the plan
+    for (let i = nWeeks - 1, k = 0; i >= 0; i--, k++) phases[i] = Math.floor(k / 4) % 2 === 0 ? 'Build' : 'Base';
+  } else {
+    let idx = nWeeks - 2 - taper;
+    const blocks: [string, number][] = [
+      ['Build 2', 4],
+      ['Build 1', 4],
+      ['Base 3', 4],
+      ['Base 2', 4],
+      ['Base 1', 4],
+    ];
+    for (const [name, len] of blocks) {
+      for (let k = 0; k < len && idx >= 0; k++, idx--) phases[idx] = name;
+    }
+    while (idx >= 0) phases[idx--] = 'Prep';
   }
-  while (idx >= 0) phases[idx--] = 'Prep';
   // a comeback starts with a few easy "return to riding" weeks whatever the plan length
   if (fitnessGoal && config.initialRamp != null) for (let w = 0; w < Math.min(config.initialWeeks ?? 4, nWeeks - 1); w++) phases[w] = 'Prep';
 
@@ -81,6 +87,7 @@ export function generateSeasonPlan(config: SeasonPlanConfig, events: Pick<RaceEv
   let ctl = config.startCtl;
   let atl = config.startAtl;
   let lastLoadTss = 7 * Math.max(ctl, 20);
+  let holding = false;
   const weeks: SeasonWeek[] = [];
 
   for (let w = 0; w < nWeeks; w++) {
@@ -92,11 +99,17 @@ export function generateSeasonPlan(config: SeasonPlanConfig, events: Pick<RaceEv
     else if (baseName === 'Taper') tss = lastLoadTss * 0.55;
     else if (baseName === 'Peak') tss = lastLoadTss * 0.75;
     else if (phase === 'Recovery') tss = lastLoadTss * 0.6;
-    else {
+    else if (fitnessGoal && holding) {
+      // holding the target: load weeks sized so a whole cycle (recovery week at 60 %)
+      // averages it, instead of chasing it back up with a spike after every recovery week
+      tss = (7 * config.targetCtl * loadCycle) / (loadCycle - 1 + 0.6);
+    } else {
       const r = config.initialRamp != null && w < (config.initialWeeks ?? 4) ? Math.min(config.initialRamp, ramp) : ramp;
       const targetEnd = Math.min(config.targetCtl, ctl + r);
       tss = 7 * dailyTssForCtl(ctl, Math.max(targetEnd, ctl * 0.98), 7, ctlDays);
       if (baseName === 'Prep' && !fitnessGoal) tss = Math.min(tss, 7 * dailyTssForCtl(ctl, ctl + ramp * 0.5, 7, ctlDays));
+      // a fitness goal holds from the week it gets there
+      if (fitnessGoal && targetEnd >= config.targetCtl - 0.5) holding = true;
     }
     const intensity = PHASE_IF[phase === 'Recovery' ? 'Recovery' : baseName] ?? 0.7;
     // TSS per hour: the athlete's own rate when known (scaled a little by phase), else IF² × 100

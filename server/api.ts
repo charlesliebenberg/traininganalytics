@@ -97,6 +97,9 @@ api.get('/comeback/build', (c) => {
   return c.json(comeback.build(date, weeks));
 });
 api.get('/comeback/compare', (c) => c.json(comeback.compare(c.req.query('date') ?? today())));
+api.get('/comeback/story', (c) => c.json(comeback.story()));
+api.get('/comeback/months', (c) => c.json(comeback.months(c.req.query('date') ?? today())));
+api.get('/comeback/hr-profile', (c) => c.json(comeback.hrCompare(c.req.query('date') ?? today())));
 api.post('/comeback/plan-preview', async (c) => c.json(comeback.planPreview(await c.req.json())));
 api.post('/comeback/pins', async (c) => {
   const b = await c.req.json();
