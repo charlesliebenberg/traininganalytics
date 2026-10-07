@@ -23,6 +23,13 @@ function safeEqual(a: string, b: string): boolean {
 export const authEnabled = () => !!config.appPassword;
 const isAuthed = (c: Context) => !authEnabled() || safeEqual(getCookie(c, COOKIE) ?? '', token());
 
+/** READ_TOKEN (at least 24 chars) as a Bearer token grants read-only access: GET requests only. */
+const hasReadToken = (c: Context) => {
+  if (c.req.method !== 'GET' || config.readToken.length < 24) return false;
+  const h = c.req.header('authorization') ?? '';
+  return h.startsWith('Bearer ') && safeEqual(h.slice(7).trim(), config.readToken);
+};
+
 /** Frontend and API on different sites (no proxy) need a cross-site cookie. */
 function cookieOptions() {
   const secure = config.apiUrl.startsWith('https://');
@@ -34,7 +41,7 @@ function cookieOptions() {
 }
 
 export const requireAuth: MiddlewareHandler = async (c, next) => {
-  if (c.req.method === 'OPTIONS' || PUBLIC_PATHS.some((r) => r.test(c.req.path)) || isAuthed(c)) return next();
+  if (c.req.method === 'OPTIONS' || PUBLIC_PATHS.some((r) => r.test(c.req.path)) || isAuthed(c) || hasReadToken(c)) return next();
   return c.json({ error: 'Unauthorized' }, 401);
 };
 

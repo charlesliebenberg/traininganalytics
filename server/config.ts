@@ -30,6 +30,8 @@ export const config = {
   apiUrl: (env.API_URL ?? env.PUBLIC_URL ?? (production ? `http://localhost:${port}` : 'http://localhost:5173')).replace(/\/$/, ''),
   /** Password protecting the app. Strongly recommended for any deployment reachable from the internet. */
   appPassword: env.APP_PASSWORD ?? '',
+  /** Optional read-only API token (GET requests only), e.g. for pulling a snapshot to test against. */
+  readToken: (env.READ_TOKEN ?? '').trim(),
   /** Extra origins allowed to call the API cross-origin (comma separated). PUBLIC_URL is always allowed. */
   corsOrigins: (env.CORS_ORIGINS ?? '').split(',').map((s) => s.trim().replace(/\/$/, '')).filter(Boolean),
   dataDir: resolve(env.DATA_DIR ?? './data'),
