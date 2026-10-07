@@ -53,6 +53,12 @@ export async function refreshEstimates(opts: { force?: boolean } = {}): Promise<
   state.running = true;
   const changedFrom: Record<string, string | null> = {};
   try {
+    // one-off backfill: swims synced before swim speed curves existed
+    const stale = q.all(`SELECT id FROM activities WHERE sport = 'swim' AND detailed = 1 AND (curves IS NULL OR curves NOT LIKE '%"speed"%')`).map((r) => r.id as number);
+    if (stale.length) {
+      recalculate({ ids: stale });
+      log(null, 'info', `Computed swim pace curves for ${stale.length} swims`);
+    }
     const auto = getPreferences().autoThresholds;
     for (const sport of SPORTS) {
       const next = computeSeries(sport);
