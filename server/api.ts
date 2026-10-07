@@ -28,6 +28,7 @@ import { linkPlanned, recalculate } from './ingest';
 import { importFile } from './importers/files';
 import { clearDemo, isDemo, loadDemo } from './demo';
 import { syncNow, syncStatus } from './sync';
+import * as comeback from './comeback';
 import { SPORTS, estimateOn, estimateState, refreshEstimates, storedSeries } from './estimates';
 import type { ThresholdSport } from '../shared/analytics/thresholds';
 import { stravaAuthUrl, stravaDisconnect, stravaExchangeCode, stravaHandleWebhook, stravaWebhookSubscribe } from './providers/strava';
@@ -78,6 +79,26 @@ api.put('/preferences', async (c) => {
     runJob('recalculate', (progress) => recalculate({ ids }, (d, t) => progress(d / t, `Recalculating ${d}/${t}`))).catch(() => {});
   }
   return c.json(next);
+});
+
+// ---------- comeback: peaks, the builds behind them, and the way back ----------
+api.get('/comeback/overview', (c) => c.json(comeback.overview()));
+api.get('/comeback/build', (c) => {
+  const date = c.req.query('date') ?? today();
+  const weeks = Math.max(4, Math.min(30, Number(c.req.query('weeks') ?? 16)));
+  return c.json(comeback.build(date, weeks));
+});
+api.get('/comeback/compare', (c) => c.json(comeback.compare(c.req.query('date') ?? today())));
+api.post('/comeback/plan-preview', async (c) => c.json(comeback.planPreview(await c.req.json())));
+api.post('/comeback/pins', async (c) => {
+  const b = await c.req.json();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(b.date ?? '')) return c.json({ error: 'date must be YYYY-MM-DD' }, 400);
+  comeback.addPin({ date: b.date, label: String(b.label ?? '').slice(0, 60) || 'Pinned peak' });
+  return c.json(comeback.getPins());
+});
+api.delete('/comeback/pins/:date', (c) => {
+  comeback.removePin(c.req.param('date'));
+  return c.json(comeback.getPins());
 });
 
 // ---------- automatic threshold estimates ----------
@@ -509,7 +530,7 @@ api.post('/plans/:id/apply', async (c) => {
   transaction(() => {
     q.run('DELETE FROM planned_workouts WHERE plan_id = ? AND date >= ? AND activity_id IS NULL', id, from);
     for (const w of weeks) {
-      for (const g of generateWeekWorkouts(w)) {
+      for (const g of generateWeekWorkouts(w, plan.config.mix)) {
         if (g.date < from) continue;
         q.run(
           `INSERT INTO planned_workouts(date, sport, title, description, structure, planned_duration, planned_tss, planned_if, plan_id, sort_order)

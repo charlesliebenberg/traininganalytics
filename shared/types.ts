@@ -299,4 +299,13 @@ export interface SeasonPlanConfig {
   taperWeeks: number;
   maxWeeklyHours: number;
   sport: Sport;
+  /** 'race' (default) peaks and tapers for race day; 'fitness' builds to the target and holds */
+  goal?: 'race' | 'fitness';
+  /** gentler ramp for the first weeks (e.g. returning from a break) */
+  initialRamp?: number;
+  initialWeeks?: number;
+  /** the athlete's typical TSS per hour, for converting load to hours (default: from phase IF) */
+  tssPerHour?: number;
+  /** session mix to copy when filling the calendar (e.g. from a past peak) */
+  mix?: { quality: number; vo2Share: number; longRides: number; days: number };
 }

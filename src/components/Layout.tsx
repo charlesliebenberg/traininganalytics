@@ -20,6 +20,7 @@ import {
   Menu,
   LogOut,
   Gauge,
+  Mountain,
 } from 'lucide-react';
 import { Suspense, useEffect, useState } from 'react';
 import { http, useApi, useAction } from '../lib/api';
@@ -55,6 +56,7 @@ const NAV = [
   {
     group: 'Plan',
     items: [
+      { to: '/comeback', label: 'Comeback', icon: Mountain },
       { to: '/calendar', label: 'Calendar', icon: CalendarDays },
       { to: '/workouts', label: 'Workout Builder', icon: Dumbbell },
       { to: '/season', label: 'Season Planner', icon: Flag },

@@ -12,6 +12,9 @@ import { decodePolyline, encodePolyline } from '../polyline';
 import { computeMetrics, normalizeStreams } from './metrics';
 import { BUILTIN_WORKOUTS } from '../library';
 import { estimateThreshold, limitDeclines } from './thresholds';
+import { classifySession, detectPeaks, fitLoadModel, ctlForFtp } from './comeback';
+import { addDays, differenceInCalendarDays, format, parseISO } from 'date-fns';
+const iso = (d: Date) => format(d, 'yyyy-MM-dd');
 import type { Thresholds } from '../types';
 
 const TH: Thresholds = {
@@ -253,5 +256,41 @@ describe('threshold history', () => {
     const filled = CURVE_DURATIONS.map((t) => t > 300 && t < 1200);
     const e = estimateThreshold('ride', { values, filled }, { date: '2026-01-05', windowFrom: '', windowTo: '', activities: 10 })!;
     expect(e.points.every((p) => p.t <= 300 || p.t >= 1200)).toBe(true);
+  });
+});
+
+describe('comeback analytics', () => {
+  const act = (o: Partial<import('../types').Activity>) => ({ id: 1, sport: 'ride', name: 'Ride', movingTime: 3600, intensity: 0.7, zones: null, tss: 50, localDate: '2026-01-01', ...o }) as import('../types').Activity;
+  it('classifies sessions from time in zones', () => {
+    const z = (m: number[]) => ({ power: m.map((x) => x * 60) });
+    expect(classifySession(act({ zones: z([10, 40, 5, 0, 10, 1, 0]) }))).toBe('vo2');
+    expect(classifySession(act({ zones: z([10, 20, 10, 20, 0, 0, 0]) }))).toBe('threshold');
+    expect(classifySession(act({ zones: z([10, 20, 25, 5, 0, 0, 0]) }))).toBe('tempo');
+    expect(classifySession(act({ zones: z([20, 40, 0, 0, 0, 0, 0]), intensity: 0.55, movingTime: 2400 }))).toBe('recovery');
+    expect(classifySession(act({ name: 'Spring Road Race', intensity: 0.85, movingTime: 3 * 3600 }))).toBe('race');
+    expect(classifySession(act({ zones: z([30, 150, 10, 0, 0, 0, 0]), movingTime: 4 * 3600 }))).toBe('endurance');
+  });
+  it('detects separated peaks', () => {
+    const series = Array.from({ length: 300 }, (_, i) => ({ date: iso(addDays(parseISO('2019-01-07'), i * 7)), value: 250 + 50 * Math.sin((i / 52) * 2 * Math.PI) }));
+    const p = detectPeaks(series, { minGapDays: 180 });
+    expect(p.length).toBeGreaterThanOrEqual(4);
+    for (let i = 1; i < p.length; i++) expect(differenceInCalendarDays(parseISO(p[i].date), parseISO(p[i - 1].date))).toBeGreaterThanOrEqual(180);
+  });
+  it('learns FTP vs load', () => {
+    const est = Array.from({ length: 120 }, (_, i) => ({ date: iso(addDays(parseISO('2020-01-06'), i * 7)), raw: 0 }));
+    const ctl = (d: string) => 40 + 40 * Math.sin(differenceInCalendarDays(parseISO(d), parseISO('2020-01-01')) / 120);
+    est.forEach((e) => (e.raw = 180 + 1.2 * ctl(e.date)));
+    const m = fitLoadModel(est, ctl)!;
+    expect(m.b).toBeGreaterThan(0.8);
+    expect(ctlForFtp(m, m.a + m.b * 70).ctl).toBeCloseTo(70, 3);
+  });
+  it('builds a gentle comeback plan that reaches the target without a race taper', () => {
+    const weeks = generateSeasonPlan({ startDate: '2026-01-05', raceDate: '2026-06-01', startCtl: 25, startAtl: 25, targetCtl: 75, maxRamp: 5, initialRamp: 3, initialWeeks: 4, pattern: '3:1', taperWeeks: 2, maxWeeklyHours: 16, sport: 'ride', goal: 'fitness' });
+    expect(weeks.some((w) => w.phase === 'Race' || w.phase === 'Taper')).toBe(false);
+    expect(weeks[1].ctl - weeks[0].ctl).toBeLessThanOrEqual(3.6);
+    expect(weeks[weeks.length - 1].ctl).toBeGreaterThan(70);
+    const wk = generateWeekWorkouts(weeks[8], { quality: 2, vo2Share: 0.5, longRides: 1, days: 5 });
+    expect(wk.length).toBe(5);
+    expect(wk.some((w) => w.title.startsWith('Long'))).toBe(true);
   });
 });

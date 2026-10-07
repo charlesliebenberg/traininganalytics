@@ -8,7 +8,7 @@ import { Badge, Button, Card, Field, Input, PageHeader, Segmented, Select, Spinn
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
 
 const PHASES = ['Prep', 'Base', 'Build', 'Peak', 'Taper', 'Race', 'Recovery'];
-function phaseColor(t: Tokens, phase: string): string {
+export function phaseColor(t: Tokens, phase: string): string {
   const p = phase.split(' ')[0];
   switch (p) {
     case 'Prep':
@@ -28,7 +28,7 @@ function phaseColor(t: Tokens, phase: string): string {
   }
 }
 
-function PlanChart({ weeks }: { weeks: SeasonWeek[] }) {
+export function PlanChart({ weeks }: { weeks: SeasonWeek[] }) {
   const t = useTokens();
   const option = useMemo(() => {
     const cats = weeks.map((w) => fmtDate(w.weekStart, 'd MMM'));
