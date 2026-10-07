@@ -2,7 +2,7 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from 're
 import { startOfYear, subDays, subYears, endOfYear } from 'date-fns';
 import { iso } from './format';
 
-export type RangePreset = '7d' | '28d' | '42d' | '90d' | '180d' | '365d' | 'ytd' | 'lastyear' | 'all' | 'custom';
+export type RangePreset = '7d' | '28d' | '42d' | '90d' | '180d' | '365d' | '730d' | 'ytd' | 'lastyear' | 'all' | 'custom';
 
 export interface DateRange {
   preset: RangePreset;
@@ -18,6 +18,7 @@ export const PRESETS: { value: RangePreset; label: string }[] = [
   { value: '90d', label: 'Last 90 days' },
   { value: '180d', label: 'Last 6 months' },
   { value: '365d', label: 'Last 12 months' },
+  { value: '730d', label: 'Last 2 years' },
   { value: 'ytd', label: 'This year' },
   { value: 'lastyear', label: 'Last year' },
   { value: 'all', label: 'All time' },
@@ -40,6 +41,8 @@ export function resolvePreset(preset: RangePreset, custom?: { from: string; to: 
       return { preset, from: iso(subDays(now, 179)), to: t, label };
     case '365d':
       return { preset, from: iso(subDays(now, 364)), to: t, label };
+    case '730d':
+      return { preset, from: iso(subDays(now, 729)), to: t, label };
     case 'ytd':
       return { preset, from: iso(startOfYear(now)), to: t, label };
     case 'lastyear': {

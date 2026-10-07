@@ -213,7 +213,7 @@ export function Trends() {
   const [metric, setMetric] = useState<Metric>('time');
   const [zoneKind, setZoneKind] = useState<'power' | 'hr' | 'seiler'>('seiler');
   const [yoy, setYoy] = useState<'distance' | 'time' | 'tss'>('distance');
-  const { data, isLoading } = useApi<Bucket[]>(`/trends${qs({ from: range.from === '2000-01-01' ? undefined : range.from, to: range.to, bucket })}`);
+  const { data, isLoading } = useApi<Bucket[]>(`/trends${qs({ from: range.from, to: range.to, bucket })}`);
   const buckets = data ?? [];
   const efLines = [
     { name: 'Ride EF (NP/HR)', color: t.series[0], get: (b: Bucket) => b.efRide, fmt: (v: number) => v.toFixed(2) },
@@ -228,7 +228,7 @@ export function Trends() {
         actions={
           <>
             <Segmented value={bucket} onChange={setBucket} options={[{ value: 'week', label: 'Weekly' }, { value: 'month', label: 'Monthly' }]} />
-            <RangePicker value={range} onChange={setRange} presets={['90d', '180d', '365d', 'ytd', 'lastyear', 'all']} />
+            <RangePicker value={range} onChange={setRange} presets={['90d', '180d', '365d', '730d', 'ytd', 'lastyear', 'all']} />
           </>
         }
       />

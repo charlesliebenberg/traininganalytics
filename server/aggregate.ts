@@ -171,10 +171,16 @@ export function planProjection(to: string): Map<string, number> {
   return out;
 }
 
+/** Earliest activity date; "all time" ranges start here instead of an arbitrary year. */
+export function firstActivityDate(sport?: string | null): string | null {
+  return (q.get(`SELECT MIN(local_date) AS d FROM activities ${sport ? 'WHERE sport = ?' : ''}`, ...(sport ? [sport] : []))?.d as string | null) ?? null;
+}
+
 export function pmc(from: string, to: string, sport?: string | null, extraPlanned?: Map<string, number>): PmcPoint[] {
   const prefs = getPreferences();
   if (!extraPlanned && !sport && to > today()) extraPlanned = planProjection(to);
-  const first = q.get('SELECT MIN(local_date) AS d FROM activities')?.d as string | undefined;
+  const first = firstActivityDate() ?? undefined;
+  if (first && from < first) from = first; // "all time": start at the first activity, not year 2000
   const start = first && first < from ? first : from;
   const t = today();
   const loads = dailyLoads(start, to, sport);
@@ -190,6 +196,8 @@ export function pmc(from: string, to: string, sport?: string | null, extraPlanne
 
 // ---------- trends ----------
 export function trends(from: string, to: string, bucket: 'week' | 'month') {
+  const first = firstActivityDate();
+  if (first && from < first) from = first;
   const rows = q.all(
     `SELECT id, local_date, sport, moving_time, distance, elevation_gain, COALESCE(tss_override, tss) AS tss, work, zones, ef, decoupling, intensity, np, avg_hr, trainer
      FROM activities WHERE local_date BETWEEN ? AND ? ORDER BY local_date`,

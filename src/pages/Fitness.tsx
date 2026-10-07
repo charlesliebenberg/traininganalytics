@@ -151,7 +151,7 @@ export function Fitness() {
   const events = useApi<RaceEvent[]>('/events');
   const nextA = events.data?.find((e) => e.date >= iso(new Date()) && e.priority === 'A');
   const to = projection && localRange.to >= iso(new Date()) ? [iso(addDays(new Date(), 42)), nextA ? iso(addDays(parseISO(nextA.date), 7)) : ''].sort().pop()! : localRange.to;
-  const { data: points, isLoading } = useApi<PmcPoint[]>(`/pmc${qs({ from: localRange.from === '2000-01-01' ? undefined : localRange.from, to, sport })}`);
+  const { data: points, isLoading } = useApi<PmcPoint[]>(`/pmc${qs({ from: localRange.from, to, sport })}`);
   const todayStr = iso(new Date());
   const current = points?.filter((p) => p.date <= todayStr).pop();
   const zone = current ? formZone(current.tsb, current.ctl) : null;
@@ -174,7 +174,7 @@ export function Fitness() {
                 </option>
               ))}
             </Select>
-            <RangePicker value={localRange} onChange={setLocalRange} presets={['90d', '180d', '365d', 'ytd', 'lastyear', 'all']} />
+            <RangePicker value={localRange} onChange={setLocalRange} presets={['90d', '180d', '365d', '730d', 'ytd', 'lastyear', 'all']} />
           </>
         }
       />
