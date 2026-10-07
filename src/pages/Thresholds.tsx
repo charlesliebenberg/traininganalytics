@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { parseISO } from 'date-fns';
-import { RefreshCw, Info } from 'lucide-react';
+import { RefreshCw, Info, ChevronLeft, ChevronRight, Play, Pause } from 'lucide-react';
 import type { Preferences, Thresholds as Th } from '../../shared/types';
 import { ESTIMATE_CONFIG, MAX_WEEKLY_DECLINE, WINDOW_DAYS, type ThresholdEstimate, type ThresholdSport } from '../../shared/analytics/thresholds';
 import { http, qs, useAction, useApi } from '../lib/api';
@@ -15,15 +15,59 @@ interface SeriesResponse {
   auto: boolean;
   series: ThresholdEstimate[];
   manual: { date: string; value: number }[];
+  gaps: Gap[];
+  firstActivity: string | null;
   state: { running: boolean; lastRun: string | null };
   current: Th;
 }
-interface DetailResponse {
-  estimate: ThresholdEstimate | null;
-  curve: { durations: number[]; values: (number | null)[]; activityIds: (number | null)[]; dates: (string | null)[]; filled: boolean[] };
+interface Gap {
   from: string;
   to: string;
+  days: number;
 }
+interface CurvesResponse {
+  durations: number[];
+  weeks: { date: string; values: (number | null)[] }[];
+}
+
+const DAY = 86400_000;
+/** Width a collapsed break takes on the chart. */
+const COLLAPSED_DAYS = 21;
+
+/**
+ * Time axis with long breaks (90+ days without activities) squeezed to a fixed width,
+ * so years of history read continuously.
+ */
+function makeTimeline(gaps: Gap[]) {
+  const segs = gaps.map((g) => ({ ...g, a: parseISO(g.from).getTime(), b: parseISO(g.to).getTime() + DAY }));
+  const toX = (ts: number) => {
+    let x = ts;
+    for (const g of segs) {
+      const len = g.b - g.a;
+      if (ts >= g.b) x -= len - COLLAPSED_DAYS * DAY;
+      else if (ts > g.a) x -= (ts - g.a) * (1 - (COLLAPSED_DAYS * DAY) / len);
+    }
+    return x;
+  };
+  const fromX = (x: number) => {
+    let ts = x;
+    for (const g of segs) {
+      const ga = toX(g.a);
+      if (x >= ga + COLLAPSED_DAYS * DAY) ts += g.b - g.a - COLLAPSED_DAYS * DAY;
+      else if (x > ga) ts += (x - ga) * ((g.b - g.a) / (COLLAPSED_DAYS * DAY) - 1);
+    }
+    return ts;
+  };
+  const breaks = segs.map((g) => ({ ...g, x0: toX(g.a), x1: toX(g.a) + COLLAPSED_DAYS * DAY }));
+  /** weeks that fall inside a break are skipped (no new training to learn from) */
+  const hidden = (date: string) => segs.some((g) => {
+    const t = parseISO(date).getTime();
+    return t > g.a && t <= g.b;
+  });
+  return { toX, fromX, breaks, hidden };
+}
+type Timeline = ReturnType<typeof makeTimeline>;
+const monthsText = (days: number) => (days >= 365 ? `${(days / 365).toFixed(1)} yr` : `${Math.round(days / 30.4)} mo`);
 
 const LABEL: Record<ThresholdSport, { name: string; model: string; cp: string; wp: string }> = {
   ride: { name: 'Bike FTP', model: 'critical power', cp: 'Critical power', wp: 'W′' },
@@ -40,34 +84,58 @@ function fmt(sport: ThresholdSport) {
 }
 const wpText = (sport: ThresholdSport, w: number) => (sport === 'ride' ? `${(w / 1000).toFixed(1)} kJ` : `${Math.round(w)} m`);
 
-function HistoryChart({ sport, data, selected, onSelect }: { sport: ThresholdSport; data: SeriesResponse; selected: string | null; onSelect: (d: string) => void }) {
+function HistoryChart({ sport, data, series, timeline, selected, onSelect }: { sport: ThresholdSport; data: SeriesResponse; series: ThresholdEstimate[]; timeline: Timeline; selected: string | null; onSelect: (d: string) => void }) {
   const t = useTokens();
   const f = fmt(sport);
   // the click handler is bound once; read the latest data through a ref
-  const ref = useRef({ series: data.series, onSelect });
-  ref.current = { series: data.series, onSelect };
+  const ref = useRef({ series, onSelect, timeline });
+  ref.current = { series, onSelect, timeline };
   const option = useMemo(() => {
-    const ts = (d: string) => parseISO(d).getTime();
-    const s = data.series;
+    const X = (d: string) => timeline.toX(parseISO(d).getTime());
+    const s = series;
+    const firstDate = s[0]?.date ?? iso(new Date());
     const lastDate = s.length ? s[s.length - 1].date : iso(new Date());
+    // manual values: clip to the visible range (no lines back to dates before any training)
     const manual = data.manual.filter((m) => m.value > 0);
-    const manualPts = manual.map((m) => [ts(m.date), m.value]).concat(manual.length ? [[ts(lastDate), manual[manual.length - 1].value]] : []);
+    const manualPts: [number, number][] = [];
+    manual.forEach((m, i) => {
+      const next = manual[i + 1]?.date;
+      if (next && next <= firstDate) return;
+      manualPts.push([X(m.date < firstDate ? firstDate : m.date), m.value]);
+    });
+    if (manualPts.length) manualPts.push([X(lastDate), manualPts[manualPts.length - 1][1]]);
     const sel = s.find((e) => e.date === selected);
+    // split lines at breaks so they don't draw across collapsed periods
+    const withBreaks = (pts: { date: string; v: number }[]) => {
+      const out: (number[] | null[])[] = [];
+      pts.forEach((p, i) => {
+        if (i && timeline.breaks.some((g) => g.a > parseISO(pts[i - 1].date).getTime() && g.a < parseISO(p.date).getTime())) out.push([null, null] as null[]);
+        out.push([X(p.date), p.v]);
+      });
+      return out;
+    };
     return {
       animation: false,
       grid: { left: 64, right: 16, top: 34, bottom: 30 },
-      legend: { ...legendStyle(t), data: ['Applied', 'Raw fit', ...(manual.length ? ['Manual setting'] : [])] },
+      legend: { ...legendStyle(t), data: ['Applied', 'Raw fit', ...(manualPts.length ? ['Manual setting'] : [])] },
       tooltip: {
         trigger: 'axis',
         ...tooltipStyle(t),
         formatter: (ps: any) => {
-          const x = ps[0].value[0];
-          const e = s.find((z) => ts(z.date) === x);
+          const x = ps[0].value?.[0];
+          const e = s.find((z) => X(z.date) === x);
           if (!e) return '';
           return `<b>From ${fmtDate(e.date, 'd MMM yyyy')}</b><div style="opacity:.6;font-size:11px;margin-bottom:4px">window ${fmtDate(e.windowFrom, 'd MMM')} – ${fmtDate(e.windowTo, 'd MMM yyyy')}</div>${tipRow(t.accent, 'Applied', f.value(e.threshold))}${tipRow(t.muted, 'Raw fit', f.value(e.raw))}${tipRow('transparent', LABEL[sport].wp, wpText(sport, e.wPrime))}<div style="opacity:.6;font-size:11px;margin-top:4px">Click to inspect the fit</div>`;
         },
       },
-      xAxis: { type: 'time', ...axisStyle(t, { grid: false }) },
+      xAxis: {
+        type: 'value',
+        min: X(firstDate) - 7 * DAY,
+        max: X(lastDate) + 7 * DAY,
+        ...axisStyle(t, { grid: false }),
+        splitNumber: 8,
+        axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => fmtDate(new Date(timeline.fromX(v)), 'MMM yy') },
+      },
       yAxis: valueAxis(t, {
         inverse: sport !== 'ride',
         scale: true,
@@ -79,22 +147,31 @@ function HistoryChart({ sport, data, selected, onSelect }: { sport: ThresholdSpo
           name: 'Applied',
           step: 'end',
           showSymbol: false,
-          data: s.map((e) => [ts(e.date), e.threshold]),
+          connectNulls: false,
+          data: withBreaks(s.map((e) => ({ date: e.date, v: e.threshold }))),
           lineStyle: { color: t.accent, width: 2.5 },
           itemStyle: { color: t.accent },
-          markLine: sel ? { symbol: 'none', silent: true, data: [{ xAxis: ts(sel.date) }], lineStyle: { color: t.ink2, type: 'solid', width: 1 }, label: { show: false } } : undefined,
+          markLine: sel ? { symbol: 'none', silent: true, data: [{ xAxis: X(sel.date) }], lineStyle: { color: t.ink2, type: 'solid', width: 1.5 }, label: { show: false } } : undefined,
+          markArea: timeline.breaks.length
+            ? {
+                silent: true,
+                itemStyle: { color: alpha(t.muted, 0.12) },
+                label: { show: true, position: 'insideTop', color: t.muted, fontSize: 10, lineHeight: 13, formatter: (p: any) => p.name },
+                data: timeline.breaks.map((g) => [{ xAxis: g.x0, name: `${monthsText(g.days)}\noff` }, { xAxis: g.x1 }]),
+              }
+            : undefined,
         },
         {
           type: 'scatter',
           name: 'Raw fit',
-          symbolSize: 6,
-          data: s.map((e) => [ts(e.date), e.raw]),
+          symbolSize: 5,
+          data: s.map((e) => [X(e.date), e.raw]),
           itemStyle: { color: alpha(t.muted, 0.7) },
         },
-        ...(manual.length ? [{ type: 'line', name: 'Manual setting', step: 'end', showSymbol: false, data: manualPts, lineStyle: { color: t.series[1], width: 1.5 }, itemStyle: { color: t.series[1] } }] : []),
+        ...(manualPts.length ? [{ type: 'line', name: 'Manual setting', step: 'end', showSymbol: false, data: manualPts, lineStyle: { color: t.series[1], width: 1.5 }, itemStyle: { color: t.series[1] } }] : []),
       ],
     };
-  }, [data, t, selected, sport, f]);
+  }, [data, series, timeline, t, selected, sport, f]);
   return (
     <Chart
       option={option}
@@ -103,25 +180,77 @@ function HistoryChart({ sport, data, selected, onSelect }: { sport: ThresholdSpo
         c.getZr().on('click', (ev: any) => {
           const pt = c.convertFromPixel({ gridIndex: 0 }, [ev.offsetX, ev.offsetY]);
           if (!pt) return;
-          const x = pt[0];
+          const { series: ser, timeline: tl, onSelect: sel } = ref.current;
           let best: ThresholdEstimate | null = null;
-          for (const e of ref.current.series) if (!best || Math.abs(parseISO(e.date).getTime() - x) < Math.abs(parseISO(best.date).getTime() - x)) best = e;
-          if (best) ref.current.onSelect(best.date);
+          for (const e of ser) if (!best || Math.abs(tl.toX(parseISO(e.date).getTime()) - pt[0]) < Math.abs(tl.toX(parseISO(best.date).getTime()) - pt[0])) best = e;
+          if (best) sel(best.date);
         })
       }
     />
   );
 }
 
-function CurveFitChart({ sport, detail }: { sport: ThresholdSport; detail: DetailResponse }) {
+/** Step, drag or play through every week's fit. */
+function Scrubber({ series, index, onIndex, timeline }: { series: ThresholdEstimate[]; index: number; onIndex: (i: number) => void; timeline: Timeline }) {
+  const [playing, setPlaying] = useState(false);
+  const idx = useRef(index);
+  idx.current = index;
+  useEffect(() => {
+    if (!playing) return;
+    const h = setInterval(() => {
+      if (idx.current >= series.length - 1) setPlaying(false);
+      else onIndex(idx.current + 1);
+    }, 280);
+    return () => clearInterval(h);
+  }, [playing, series.length, onIndex]);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === 'INPUT' && (e.target as HTMLInputElement).type !== 'range') return;
+      if (e.key === 'ArrowLeft') onIndex(Math.max(0, idx.current - 1));
+      else if (e.key === 'ArrowRight') onIndex(Math.min(series.length - 1, idx.current + 1));
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [series.length, onIndex]);
+  const e = series[index];
+  const breakBefore = index > 0 && timeline.breaks.find((g) => g.a > parseISO(series[index - 1].date).getTime() && g.a < parseISO(e.date).getTime());
+  return (
+    <div className="card sticky top-2 z-[600] mt-4 flex flex-wrap items-center gap-3 px-4 py-3 lg:top-3">
+      <div className="flex items-center gap-1">
+        <Button size="sm" variant="ghost" icon={<ChevronLeft className="h-4 w-4" />} onClick={() => onIndex(Math.max(0, index - 1))} disabled={index === 0} title="Previous week (←)" />
+        <Button
+          size="sm"
+          variant="primary"
+          icon={playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+          onClick={() => {
+            if (!playing && index >= series.length - 1) onIndex(0);
+            setPlaying(!playing);
+          }}
+          title="Play through time"
+        />
+        <Button size="sm" variant="ghost" icon={<ChevronRight className="h-4 w-4" />} onClick={() => onIndex(Math.min(series.length - 1, index + 1))} disabled={index === series.length - 1} title="Next week (→)" />
+      </div>
+      <div className="w-44 text-[13px]">
+        <div className="font-semibold">Week of {fmtDate(e.date, 'd MMM yyyy')}</div>
+        <div className="text-[11px] text-muted">
+          {index + 1} / {series.length}
+          {breakBefore ? ` · after ${monthsText(breakBefore.days)} off` : ''}
+        </div>
+      </div>
+      <input type="range" min={0} max={series.length - 1} value={index} onChange={(ev) => onIndex(Number(ev.target.value))} className="min-w-[200px] flex-1 accent-[var(--accent)]" aria-label="Week" />
+    </div>
+  );
+}
+
+function CurveFitChart({ sport, e, durations, values, yRange }: { sport: ThresholdSport; e: ThresholdEstimate; durations: number[]; values: (number | null)[]; yRange: [number, number] }) {
   const t = useTokens();
   const f = fmt(sport);
   const cfg = ESTIMATE_CONFIG[sport];
   const option = useMemo(() => {
-    const e = detail.estimate!;
-    const lo = Math.max(10, cfg.tMin / 4);
-    const hi = Math.min(4 * 3600, cfg.tMax * 2.5);
-    const curve = detail.curve.durations.map((d, i) => [d, detail.curve.values[i]] as [number, number | null]).filter(([d, v]) => v != null && d >= lo && d <= hi);
+    const [lo, hi] = curveSpan(sport);
+    const curve = durations.map((d, i) => [d, values[i]] as [number, number | null]).filter(([d, v]) => v != null && d >= lo && d <= hi);
     const model: [number, number][] = [];
     for (let d = cfg.tMin * 0.6; d <= hi; d *= 1.08) model.push([d, e.cp + e.wPrime / d]);
     const ticks = [15, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200].filter((x) => x >= lo && x <= hi);
@@ -135,12 +264,13 @@ function CurveFitChart({ sport, detail }: { sport: ThresholdSport; detail: Detai
         formatter: (p: any) => {
           const [d, v] = p.value;
           const pick = e.points.find((q) => q.t === d);
-          if (pick) return `<b>${BAND[pick.band]} effort · ${fmtDurLabel(d)}</b>${tipRow(t.series[1], 'Best', f.value(v))}${tipRow('transparent', 'vs envelope', `${(pick.score * 100).toFixed(1)}%`)}${pick.date ? `<div style="opacity:.6;font-size:11px">${fmtDate(pick.date)}</div>` : ''}`;
+          if (pick && p.seriesIndex === 2) return `<b>${BAND[pick.band]} effort · ${fmtDurLabel(d)}</b>${tipRow(t.series[1], 'Best', f.value(v))}${tipRow('transparent', 'vs envelope', `${(pick.score * 100).toFixed(1)}%`)}${pick.date ? `<div style="opacity:.6;font-size:11px">${fmtDate(pick.date)}</div>` : ''}`;
           return `<b>${fmtDurLabel(Math.round(d))}</b>${tipRow(p.color, p.seriesName, f.value(v))}`;
         },
       },
       xAxis: { type: 'log', min: lo, max: hi, ...axisStyle(t), splitLine: { show: false }, axisLabel: { color: t.muted, fontSize: 11, customValues: ticks, formatter: (v: number) => fmtDurLabel(Math.round(v)) }, axisTick: { show: true, customValues: ticks } },
-      yAxis: valueAxis(t, { inverse: sport !== 'ride', scale: true, axisLabel: { color: t.muted, fontSize: 11, formatter: f.axis } }),
+      // fixed range across weeks, so scrubbing through time shows real change, not axis jumps
+      yAxis: valueAxis(t, { inverse: sport !== 'ride', min: yRange[0], max: yRange[1], axisLabel: { color: t.muted, fontSize: 11, formatter: f.axis } }),
       series: [
         {
           type: 'line',
@@ -164,16 +294,22 @@ function CurveFitChart({ sport, detail }: { sport: ThresholdSport; detail: Detai
         },
       ],
     };
-  }, [detail, t, sport, f, cfg]);
+  }, [e, durations, values, yRange, t, sport, f, cfg]);
   return <Chart option={option} height={340} />;
 }
 
-function LinearFitChart({ sport, e }: { sport: ThresholdSport; e: ThresholdEstimate }) {
+/** Duration span shown on the curve chart. */
+function curveSpan(sport: ThresholdSport): [number, number] {
+  const cfg = ESTIMATE_CONFIG[sport];
+  return [Math.max(10, cfg.tMin / 4), Math.min(4 * 3600, cfg.tMax * 2.5)];
+}
+
+function LinearFitChart({ sport, e, yMax }: { sport: ThresholdSport; e: ThresholdEstimate; yMax: number }) {
   const t = useTokens();
   const option = useMemo(() => {
     const isBike = sport === 'ride';
     const yv = (p: { t: number; value: number }) => (isBike ? (p.value * p.t) / 1000 : p.value * p.t);
-    const maxT = Math.max(...e.points.map((p) => p.t)) * 1.15;
+    const maxT = ESTIMATE_CONFIG[sport].tMax * 1.05;
     const line: [number, number][] = [
       [0, isBike ? e.wPrime / 1000 : e.wPrime],
       [maxT / 60, isBike ? (e.cp * maxT + e.wPrime) / 1000 : e.cp * maxT + e.wPrime],
@@ -183,8 +319,8 @@ function LinearFitChart({ sport, e }: { sport: ThresholdSport; e: ThresholdEstim
       animation: false,
       grid: { left: 60, right: 16, top: 30, bottom: 40 },
       tooltip: { trigger: 'item', ...tooltipStyle(t), formatter: (p: any) => `${fmtDuration(p.value[0] * 60)} → ${Math.round(p.value[1]).toLocaleString()} ${isBike ? 'kJ' : 'm'}` },
-      xAxis: { type: 'value', min: 0, name: 'Duration (min)', nameLocation: 'middle', nameGap: 26, ...axisStyle(t) },
-      yAxis: valueAxis(t, { min: 0, name: yName, nameTextStyle: { color: t.muted, fontSize: 10 } }),
+      xAxis: { type: 'value', min: 0, max: Math.ceil(maxT / 60), name: 'Duration (min)', nameLocation: 'middle', nameGap: 26, ...axisStyle(t) },
+      yAxis: valueAxis(t, { min: 0, max: yMax, name: yName, nameTextStyle: { color: t.muted, fontSize: 10 } }),
       series: [
         { type: 'line', showSymbol: false, data: line, lineStyle: { color: t.ink2, width: 1.5, type: 'dashed' }, silent: true },
         {
@@ -196,7 +332,7 @@ function LinearFitChart({ sport, e }: { sport: ThresholdSport; e: ThresholdEstim
         },
       ],
     };
-  }, [e, t, sport]);
+  }, [e, t, sport, yMax]);
   return <Chart option={option} height={260} />;
 }
 
@@ -206,15 +342,44 @@ export function Thresholds() {
   const { data, isLoading } = useApi<SeriesResponse>(`/estimates${qs({ sport })}`, { refetchInterval: (q) => ((q.state.data as SeriesResponse | undefined)?.state.running ? 3000 : false) });
   const [selected, setSelected] = useState<string | null>(null);
   useEffect(() => setSelected(null), [sport]);
-  const today = iso(new Date());
-  const current = data?.series.filter((e) => e.date <= today).pop() ?? data?.series[data.series.length - 1];
-  const sel = selected ?? current?.date ?? null;
-  const detail = useApi<DetailResponse>(sel ? `/estimates/detail${qs({ sport, date: sel })}` : null);
+  const curves = useApi<CurvesResponse>(data?.series.length ? `/estimates/curves${qs({ sport, n: data.series.length, last: data.series[data.series.length - 1].date })}` : null, { staleTime: 5 * 60_000 });
   const prefs = useApi<Preferences>('/preferences');
   const setAuto = useAction((v: boolean) => http('/preferences', { method: 'PUT', json: { autoThresholds: { ...prefs.data!.autoThresholds, [sport]: v } } }));
   const refresh = useAction(() => http('/estimates/refresh', { method: 'POST' }));
   const f = fmt(sport);
-  const e = detail.data?.estimate ?? null;
+  const today = iso(new Date());
+  const timeline = useMemo(() => makeTimeline(data?.gaps ?? []), [data?.gaps]);
+  const series = useMemo(() => (data?.series ?? []).filter((e) => !timeline.hidden(e.date)), [data?.series, timeline]);
+  const current = series.filter((e) => e.date <= today).pop() ?? series[series.length - 1];
+  const sel = selected ?? current?.date ?? null;
+  const index = Math.max(0, series.findIndex((e) => e.date === sel));
+  const e = series[index] ?? null;
+  const curveByDate = useMemo(() => new Map(curves.data?.weeks.map((w) => [w.date, w.values]) ?? []), [curves.data]);
+  // fixed chart ranges across all weeks
+  const yRange = useMemo<[number, number]>(() => {
+    if (!curves.data) return [0, 1];
+    const [lo, hi] = curveSpan(sport);
+    let mn = Infinity,
+      mx = -Infinity;
+    for (const w of curves.data.weeks)
+      w.values.forEach((v, i) => {
+        const d = curves.data!.durations[i];
+        if (v == null || d < lo || d > hi) return;
+        mn = Math.min(mn, v);
+        mx = Math.max(mx, v);
+      });
+    if (!Number.isFinite(mn)) return [0, 1];
+    const pad = (mx - mn) * 0.06;
+    return sport === 'ride' ? [Math.max(0, Math.floor((mn - pad) / 25) * 25), Math.ceil((mx + pad) / 25) * 25] : [Math.max(0.1, mn - pad), mx + pad];
+  }, [curves.data, sport]);
+  const linearMax = useMemo(() => {
+    const tMax = ESTIMATE_CONFIG[sport].tMax * 1.05;
+    const m = Math.max(1, ...series.map((x) => x.cp * tMax + x.wPrime), ...series.flatMap((x) => x.points.map((p) => p.value * p.t)));
+    const v = sport === 'ride' ? m / 1000 : m;
+    const step = sport === 'ride' ? 100 : 1000;
+    return Math.ceil((v * 1.05) / step) * step;
+  }, [series, sport]);
+  const setIndex = (i: number) => series[i] && setSelected(series[i].date);
   const manualNow = data?.manual.filter((m) => m.date <= today).pop() ?? data?.manual[0];
 
   return (
@@ -246,7 +411,7 @@ export function Thresholds() {
             <Stat label={LABEL[sport].cp} value={current ? f.value(current.cp) : '–'} sub={sport === 'ride' ? `FTP = ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP` : 'threshold = CS'} />
             <Stat label={LABEL[sport].wp} value={current ? wpText(sport, current.wPrime) : '–'} sub={sport === 'ride' ? 'anaerobic capacity' : 'distance above CS'} />
             <Stat label="Manual value" value={manualNow?.value ? f.value(manualNow.value) : '–'} sub="Settings → Athlete" />
-            <Stat label="Weeks estimated" value={data.series.length} sub={data.state.running ? 'recomputing…' : data.state.lastRun ? `updated ${fmtDate(data.state.lastRun, 'd MMM HH:mm')}` : undefined} />
+            <Stat label="Weeks estimated" value={series.length} sub={data.state.running ? 'recomputing…' : data.state.lastRun ? `updated ${fmtDate(data.state.lastRun, 'd MMM HH:mm')}` : undefined} />
             <div>
               <div className="text-[11px] font-medium tracking-wide text-muted uppercase">Zones & TSS use</div>
               <div className="mt-2">
@@ -256,13 +421,15 @@ export function Thresholds() {
             </div>
           </div>
 
-          <Card title="History" subtitle="Applied value (used for zones and TSS on that date), the raw fit for each weekly window, and your manual setting. Click anywhere to inspect a week.">
-            <HistoryChart sport={sport} data={data} selected={sel} onSelect={setSelected} />
+          <Card title="History" subtitle="Applied value (used for zones and TSS on that date), the raw fit for each weekly window, and your manual setting. Breaks of 3+ months without activities are collapsed. Click anywhere, or use the timeline below, to inspect a week.">
+            <HistoryChart sport={sport} data={data} series={series} timeline={timeline} selected={sel} onSelect={setSelected} />
           </Card>
 
-          {detail.isLoading ? (
+          {e && <Scrubber series={series} index={index} onIndex={setIndex} timeline={timeline} />}
+
+          {!curves.data ? (
             <Spinner />
-          ) : e && detail.data ? (
+          ) : e ? (
             <>
               <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
                 <Card
@@ -270,10 +437,10 @@ export function Thresholds() {
                   subtitle={`Best efforts ${fmtDate(e.windowFrom, 'd MMM yyyy')} – ${fmtDate(e.windowTo, 'd MMM yyyy')} (${e.activities} activities). Orange = the three efforts the model is fitted to.`}
                   actions={<Badge>{e.threshold > e.raw + 1e-9 ? 'decline-limited' : 'raw fit'}</Badge>}
                 >
-                  <CurveFitChart sport={sport} detail={detail.data} />
+                  <CurveFitChart sport={sport} e={e} durations={curves.data.durations} values={curveByDate.get(e.date) ?? []} yRange={yRange} />
                 </Card>
                 <Card title="Linear check" subtitle={sport === 'ride' ? 'Work vs time is a straight line: slope = CP, intercept = W′' : 'Distance vs time is a straight line: slope = CS, intercept = D′'}>
-                  <LinearFitChart sport={sport} e={e} />
+                  <LinearFitChart sport={sport} e={e} yMax={linearMax} />
                   <div className="mt-2 grid grid-cols-3 gap-3 rounded-lg bg-surface-2 p-3">
                     <Stat label="Slope" value={<span className="text-base">{f.value(e.cp)}</span>} />
                     <Stat label="Intercept" value={<span className="text-base">{wpText(sport, e.wPrime)}</span>} />

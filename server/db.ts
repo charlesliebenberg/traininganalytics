@@ -91,6 +91,18 @@ CREATE TABLE IF NOT EXISTS sync_log (
 );
 `);
 
+// Repair: thresholds imported from a Strava profile used to be stored with the 1970 placeholder date.
+{
+  const bad = db.prepare("SELECT date, data FROM thresholds WHERE date < '1990-01-01'").all() as { date: string; data: string }[];
+  if (bad.length) {
+    const first = (db.prepare('SELECT MIN(local_date) AS d FROM activities').get() as { d: string | null }).d ?? new Date().toISOString().slice(0, 10);
+    for (const r of bad) {
+      db.prepare('DELETE FROM thresholds WHERE date = ?').run(r.date);
+      db.prepare('INSERT INTO thresholds(date, data) VALUES(?, ?) ON CONFLICT(date) DO NOTHING').run(first, r.data);
+    }
+  }
+}
+
 type Row = Record<string, any>;
 
 export const q = {

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { randomBytes } from 'node:crypto';
-import { addDays, parseISO, subDays } from 'date-fns';
+import { addDays, differenceInCalendarDays, parseISO, subDays } from 'date-fns';
 import { config, stravaConfigured } from './config';
 import {
   ACTIVITY_LIST_COLUMNS,
@@ -84,7 +84,14 @@ api.put('/preferences', async (c) => {
 api.get('/estimates', (c) => {
   const sport = (c.req.query('sport') ?? 'ride') as ThresholdSport;
   const manual = listThresholds().map((t) => ({ date: t.date, value: sport === 'ride' ? t.ftp : sport === 'run' ? t.runThresholdSpeed : t.swimCss }));
-  return c.json({ sport, auto: getPreferences().autoThresholds[sport], series: storedSeries(sport), manual, state: estimateState(), current: thresholdsFor(today()) });
+  // stretches of 90+ days without a single activity in this sport (injury, off-season, other sports)
+  const dates = q.all('SELECT DISTINCT local_date AS d FROM activities WHERE sport = ? ORDER BY local_date', sport).map((r) => r.d as string);
+  const gaps: { from: string; to: string; days: number }[] = [];
+  for (let i = 1; i < dates.length; i++) {
+    const days = differenceInCalendarDays(parseISO(dates[i]), parseISO(dates[i - 1]));
+    if (days >= 90) gaps.push({ from: iso(addDays(parseISO(dates[i - 1]), 1)), to: iso(subDays(parseISO(dates[i]), 1)), days: days - 1 });
+  }
+  return c.json({ sport, auto: getPreferences().autoThresholds[sport], series: storedSeries(sport), manual, gaps, firstActivity: dates[0] ?? null, state: estimateState(), current: thresholdsFor(today()) });
 });
 api.get('/estimates/detail', (c) => {
   const sport = (c.req.query('sport') ?? 'ride') as ThresholdSport;
@@ -94,6 +101,21 @@ api.get('/estimates/detail', (c) => {
   const from = estimate?.windowFrom ?? iso(subDays(parseISO(date), 182));
   const to = estimate?.windowTo ?? iso(subDays(parseISO(date), 1));
   return c.json({ estimate, curve: aggregateCurve(sport === 'ride' ? 'power' : 'speed', from, to, sport), from, to });
+});
+/** Every stored week's best-effort curve, trimmed to the plotted duration range, for scrubbing through time. */
+api.get('/estimates/curves', (c) => {
+  const sport = (c.req.query('sport') ?? 'ride') as ThresholdSport;
+  const type = sport === 'ride' ? 'power' : 'speed';
+  const series = storedSeries(sport);
+  const first = aggregateCurve(type, '0000-01-01', '0000-01-02', sport);
+  const keep = first.durations.map((d, i) => [d, i] as const).filter(([d]) => d >= 10 && d <= 4 * 3600);
+  return c.json({
+    durations: keep.map(([d]) => d),
+    weeks: series.map((e) => {
+      const cv = aggregateCurve(type, e.windowFrom, e.windowTo, sport);
+      return { date: e.date, values: keep.map(([, i]) => cv.values[i]) };
+    }),
+  });
 });
 api.post('/estimates/refresh', async (c) => {
   runJob('estimates', async (progress) => {

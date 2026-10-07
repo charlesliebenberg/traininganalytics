@@ -294,7 +294,7 @@ export async function stravaSyncAthlete(): Promise<void> {
   q.run("UPDATE connections SET athlete_name = ? WHERE provider = 'strava'", `${a.firstname} ${a.lastname}`.trim());
   // seed thresholds from the Strava profile if the user hasn't configured any
   if (!listThresholds().length && (a.ftp || a.weight)) {
-    upsertThresholds({ ...DEFAULT_THRESHOLDS, ftp: a.ftp || DEFAULT_THRESHOLDS.ftp, weight: a.weight || DEFAULT_THRESHOLDS.weight });
+    upsertThresholds({ ...DEFAULT_THRESHOLDS, date: new Date().toISOString().slice(0, 10), ftp: a.ftp || DEFAULT_THRESHOLDS.ftp, weight: a.weight || DEFAULT_THRESHOLDS.weight });
     log('strava', 'info', 'Imported FTP / weight from Strava profile');
   }
 }
