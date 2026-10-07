@@ -131,7 +131,6 @@ Per-activity metrics, mean-max curves (power, NP, HR, speed, VAM, fatigue-state 
 | `TRAININGPEAKS_CLIENT_ID`, `TRAININGPEAKS_CLIENT_SECRET`, `TRAININGPEAKS_SANDBOX` | | Partner API credentials |
 | `SYNC_INTERVAL_MINUTES` | `15` | Polling interval |
 | `DATA_DIR` | `./data` | Where `training.db` lives |
-
 | `APP_PASSWORD` | | Password-protects the app (login screen). Set it for any public deployment |
 | `API_URL`, `CORS_ORIGINS` | | Only for a frontend calling the API cross-origin without a proxy |
 
