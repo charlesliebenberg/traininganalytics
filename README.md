@@ -134,6 +134,16 @@ Per-activity metrics, mean-max curves (power, NP, HR, speed, VAM, fatigue-state 
 | `APP_PASSWORD` | | Password-protects the app (login screen). Set it for any public deployment |
 | `API_URL`, `CORS_ORIGINS` | | Only for a frontend calling the API cross-origin without a proxy |
 
+## Testing against real data
+
+Set `READ_TOKEN` (24+ random characters) on the deployed API to allow read-only (GET) access with
+`Authorization: Bearer <token>`. Then, with the same value in `TA_READ_TOKEN`:
+
+```sh
+npm run pull                     # → data/real.db (Strava tokens stripped); --no-streams for a small copy
+DB_PATH=data/real.db npm run dev
+```
+
 ## Deploying
 
 Auto-deploy from GitHub with **Render** (backend + database) and **Vercel or Netlify** (frontend). See **[DEPLOY.md](DEPLOY.md)**: `render.yaml`, `vercel.json` and `netlify.toml` are included.

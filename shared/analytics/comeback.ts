@@ -124,6 +124,10 @@ export interface BuildSummary {
   weeks: BuildWeek[];
   avgHours: number;
   avgTss: number;
+  /** mechanical work per week (kJ): unlike TSS, independent of the FTP at the time */
+  avgKj: number;
+  /** consecutive months (up to the date) with at least ~15 h of riding; filled in by the server */
+  consistentMonths?: number;
   /** best 4-week average weekly TSS */
   peakBlockTss: number;
   ctlStart: number | null;
@@ -233,6 +237,7 @@ export function summarizeBuild(acts: Activity[], pmc: PmcPoint[], to: string, we
     weeks: rows,
     avgHours: sum((r) => r.hours) / n,
     avgTss: sum((r) => r.tss) / n,
+    avgKj: inWin.filter((a) => a.sport === sport).reduce((s, a) => s + (a.work ?? 0), 0) / n,
     peakBlockTss,
     ctlStart,
     ctlPeak: peakPt?.ctl ?? null,
@@ -278,23 +283,41 @@ export interface LoadModel {
 }
 
 /**
- * Fit FTP against recent chronic training load using the athlete's own history.
- * Uses each weekly FTP estimate paired with the average CTL of the 8 weeks before it
- * (fitness reflects recent load with a lag). Points are thinned to one every 4 weeks so
- * overlapping 6-month windows don't overstate the evidence.
+ * When an estimate was actually earned: the day after its most recent effort. A 6-month
+ * rolling estimate keeps reporting old efforts long after training stops, so its own date
+ * says little about when the athlete was that fit.
  */
-export function fitLoadModel(estimates: { date: string; raw: number }[], ctlAt: (date: string) => number | null): LoadModel | null {
+export function effortDate(e: { date: string; points?: { date: string | null }[] }): string {
+  const last = (e.points ?? []).map((p) => p.date).filter((d): d is string => !!d).sort().pop();
+  return last ? iso(addDays(parseISO(last), 1)) : e.date;
+}
+
+/** One value per distinct effort date (the best estimate that relied on it), dated by effortDate. */
+export function byEffortDate<T extends { date: string; raw: number; points?: { date: string | null }[] }>(estimates: T[]): { date: string; value: number }[] {
+  const best = new Map<string, number>();
+  for (const e of estimates) {
+    const d = effortDate(e);
+    best.set(d, Math.max(best.get(d) ?? 0, e.raw));
+  }
+  return [...best].map(([date, value]) => ({ date, value })).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+/**
+ * Fit FTP against chronic training load using the athlete's own history. Each distinct set of
+ * best efforts counts once, paired with the average CTL of the 6 weeks before those efforts
+ * (fitness reflects recent load with a lag) — not the CTL when the rolling estimate is reported.
+ */
+export function fitLoadModel(estimates: { date: string; raw: number; points?: { date: string | null }[] }[], ctlAt: (date: string) => number | null): LoadModel | null {
   const pts: LoadModelPoint[] = [];
-  estimates.forEach((e, i) => {
-    if (i % 4 !== 0) return;
+  for (const e of byEffortDate(estimates)) {
     const vals: number[] = [];
-    for (let d = 1; d <= 56; d += 7) {
+    for (let d = 1; d <= 43; d += 7) {
       const c = ctlAt(iso(addDays(parseISO(e.date), -d)));
       if (c != null) vals.push(c);
     }
-    if (vals.length < 4) return;
-    pts.push({ date: e.date, ctl: vals.reduce((s, v) => s + v, 0) / vals.length, ftp: e.raw });
-  });
+    if (vals.length < 4) continue;
+    pts.push({ date: e.date, ctl: vals.reduce((s, v) => s + v, 0) / vals.length, ftp: e.value });
+  }
   if (pts.length < 6) return null;
   const xs = pts.map((p) => p.ctl);
   const ys = pts.map((p) => p.ftp);

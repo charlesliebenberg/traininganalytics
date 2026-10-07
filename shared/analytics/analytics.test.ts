@@ -12,7 +12,7 @@ import { decodePolyline, encodePolyline } from '../polyline';
 import { computeMetrics, normalizeStreams } from './metrics';
 import { BUILTIN_WORKOUTS } from '../library';
 import { estimateThreshold, limitDeclines } from './thresholds';
-import { classifySession, detectPeaks, fitLoadModel, ctlForFtp } from './comeback';
+import { byEffortDate, classifySession, detectPeaks, effortDate, fitLoadModel, ctlForFtp } from './comeback';
 import { addDays, differenceInCalendarDays, format, parseISO } from 'date-fns';
 const iso = (d: Date) => format(d, 'yyyy-MM-dd');
 import type { Thresholds } from '../types';
@@ -283,6 +283,19 @@ describe('comeback analytics', () => {
     const m = fitLoadModel(est, ctl)!;
     expect(m.b).toBeGreaterThan(0.8);
     expect(ctlForFtp(m, m.a + m.b * 70).ctl).toBeCloseTo(70, 3);
+  });
+  it('dates estimates by their efforts and ignores stale repeats of them', () => {
+    // a rolling estimate that keeps reporting March efforts for months after riding stopped
+    const pts = (d: string) => [{ t: 300, value: 400, activityId: 1, date: d, score: 1, band: 0 }];
+    const stale = ['2020-03-23', '2020-05-04', '2020-08-17'].map((date) => ({ date, raw: 357, points: pts('2020-03-15') }));
+    expect(effortDate(stale[2])).toBe('2020-03-16');
+    expect(byEffortDate(stale)).toEqual([{ date: '2020-03-16', value: 357 }]);
+    // CTL collapses after March: stale reports must not pair 357 W with a CTL near zero
+    const fresh = Array.from({ length: 8 }, (_, i) => ({ date: iso(addDays(parseISO('2019-06-03'), i * 21)), raw: 280 + i * 10, points: pts(iso(addDays(parseISO('2019-06-01'), i * 21))) }));
+    const ctlRamp = (d: string) => (d < '2020-04-01' ? 20 + differenceInCalendarDays(parseISO(d), parseISO('2019-04-01')) / 6 : 5);
+    const m = fitLoadModel([...fresh, ...stale], ctlRamp)!;
+    expect(m.points.every((p) => p.ctl > 15)).toBe(true);
+    expect(m.b).toBeGreaterThan(0);
   });
   it('builds a gentle comeback plan that reaches the target without a race taper', () => {
     const weeks = generateSeasonPlan({ startDate: '2026-01-05', raceDate: '2026-06-01', startCtl: 25, startAtl: 25, targetCtl: 75, maxRamp: 5, initialRamp: 3, initialWeeks: 4, pattern: '3:1', taperWeeks: 2, maxWeeklyHours: 16, sport: 'ride', goal: 'fitness' });

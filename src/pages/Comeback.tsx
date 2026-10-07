@@ -36,12 +36,15 @@ interface PeakCard {
 interface Overview {
   peaks: PeakCard[];
   model: LoadModel | null;
+  recentModel: LoadModel | null;
   now: { date: string; ftp: number | null; rawFtp: number | null; wkg: number | null; ctl: number | null; atl: number | null };
 }
 interface Preview {
   config: Record<string, unknown>;
   weeks: (SeasonWeek & { ftp: number | null })[];
   reached: boolean;
+  gentle: boolean;
+  ridingMonths: number;
   startCtl: number;
   hoursToHold: number;
   ftpAtTarget: number | null;
@@ -291,7 +294,7 @@ function RecipeTable({ peaks, weeks }: { peaks: PeakCard[]; weeks: number }) {
     { label: 'TSS / week', get: (b) => b.avgTss, fmt: (v) => fmtNum(v) },
     { label: 'Best 4-week TSS', get: (b) => b.peakBlockTss, fmt: (v) => fmtNum(v) },
     { label: 'CTL at peak', get: (b) => b.ctlPeak, fmt: (v) => fmtNum(v) },
-    { label: 'CTL gain / week', get: (b) => b.avgRamp, fmt: (v) => `+${v.toFixed(1)}` },
+    { label: 'CTL gain / week', get: (b) => b.avgRamp, fmt: (v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}` },
     { label: 'Training days / week', get: (b) => b.daysPerWeek, fmt: (v) => v.toFixed(1) },
     { label: 'Quality sessions / week', get: (b) => b.mix.quality, fmt: (v) => v.toFixed(1) },
     { label: 'Threshold / week', get: (b) => b.sessionsPerWeek.threshold, fmt: (v) => v.toFixed(1) },
@@ -341,6 +344,84 @@ function RecipeTable({ peaks, weeks }: { peaks: PeakCard[]; weeks: number }) {
 }
 
 // ---------- now vs then ----------
+/** Recent training next to the build before the peak, and what actually differs. */
+function StandCard({ peak, weeks, now }: { peak: PeakCard; weeks: number; now: Overview['now'] }) {
+  const then = useApi<BuildSummary>(`/comeback/build${qs({ date: peak.date, weeks })}`);
+  const cur = useApi<BuildSummary>(`/comeback/build${qs({ date: now.date, weeks })}`);
+  if (!then.data || !cur.data) return null;
+  const a = then.data;
+  const b = cur.data;
+  const name = peak.label ?? fmtDate(peak.date, 'MMM yyyy');
+  const hard = (x: BuildSummary) => x.sessionsPerWeek.vo2 + x.sessionsPerWeek.anaerobic + x.sessionsPerWeek.race;
+  const easy = (x: BuildSummary) => (x.seiler[0] / (x.seiler.reduce((s, v) => s + v, 0) || 1)) * 100;
+  const rows: { label: string; then: number | null; now: number | null; fmt: (v: number) => string }[] = [
+    { label: 'Hours / week', then: a.avgHours, now: b.avgHours, fmt: (v) => v.toFixed(1) },
+    { label: 'TSS / week', then: a.avgTss, now: b.avgTss, fmt: fmtNum },
+    { label: 'Work / week (kJ)', then: a.avgKj, now: b.avgKj, fmt: fmtNum },
+    { label: 'Riding CTL', then: a.ctlPeak, now: b.ctlPeak, fmt: fmtNum },
+    { label: 'Form (TSB)', then: a.tsbAtPeak, now: b.tsbAtPeak, fmt: (v) => (v > 0 ? `+${Math.round(v)}` : `${Math.round(v)}`) },
+    { label: 'VO2 / anaerobic / race per week', then: hard(a), now: hard(b), fmt: (v) => v.toFixed(1) },
+    { label: 'Tempo / SST per week', then: a.sessionsPerWeek.tempo, now: b.sessionsPerWeek.tempo, fmt: (v) => v.toFixed(1) },
+    { label: 'Threshold per week', then: a.sessionsPerWeek.threshold, now: b.sessionsPerWeek.threshold, fmt: (v) => v.toFixed(1) },
+    { label: 'Long rides (3 h+) per week', then: a.longRide.perWeek, now: b.longRide.perWeek, fmt: (v) => v.toFixed(1) },
+    { label: 'Easy share (3-zone)', then: easy(a), now: easy(b), fmt: (v) => `${Math.round(v)}%` },
+    { label: 'Months of unbroken riding', then: a.consistentMonths ?? null, now: b.consistentMonths ?? null, fmt: (v) => String(v) },
+  ];
+
+  // what stands out, most important first
+  const notes: string[] = [];
+  const loadRatio = a.ctlPeak && b.ctlPeak ? b.ctlPeak / a.ctlPeak : null;
+  if (loadRatio != null && loadRatio >= 0.9) {
+    notes.push(`Your training load already matches this build (riding CTL ${Math.round(b.ctlPeak!)} vs ${Math.round(a.ctlPeak!)}). More volume alone is unlikely to close the ${peak.ftp && now.ftp ? `${peak.ftp - now.ftp} W ` : ''}gap.`);
+  } else if (loadRatio != null) {
+    notes.push(`You're carrying ${Math.round(loadRatio * 100)}% of the load you had then (riding CTL ${Math.round(b.ctlPeak ?? 0)} vs ${Math.round(a.ctlPeak ?? 0)}). Building load is still the first lever.`);
+  }
+  if (a.avgKj > 0 && b.avgKj > 0 && Math.abs(b.avgKj / a.avgKj - b.avgTss / (a.avgTss || 1)) > 0.1)
+    notes.push(`TSS is relative to FTP, so the same TSS is less real work at a lower FTP: you're doing ${Math.round((b.avgKj / a.avgKj) * 100)}% of the weekly kJ you did then. As FTP climbs, holding the same CTL will take more watts.`);
+  if (a.consistentMonths != null && b.consistentMonths != null && a.consistentMonths >= b.consistentMonths + 6)
+    notes.push(`That peak came after ${a.consistentMonths} unbroken months of riding; this comeback is ${b.consistentMonths} months in. Years of base keep paying off after load is restored, so expect FTP to keep rising at the same load for a while yet.`);
+  if (hard(a) - hard(b) >= 0.5 || b.sessionsPerWeek.tempo - a.sessionsPerWeek.tempo >= 0.5)
+    notes.push(`Intensity mix: ${hard(a).toFixed(1)} VO2 / anaerobic / race sessions a week then vs ${hard(b).toFixed(1)} now, and ${a.sessionsPerWeek.tempo.toFixed(1)} vs ${b.sessionsPerWeek.tempo.toFixed(1)} tempo sessions. ${b.sessionsPerWeek.tempo > a.sessionsPerWeek.tempo ? 'Some of the tempo could become harder, shorter efforts.' : ''}`);
+  if (a.longRide.perWeek - b.longRide.perWeek >= 0.4) notes.push(`Long rides: ${a.longRide.perWeek.toFixed(1)} a week then vs ${b.longRide.perWeek.toFixed(1)} now.`);
+  if (a.tsbAtPeak != null && b.tsbAtPeak != null && a.tsbAtPeak - b.tsbAtPeak >= 15)
+    notes.push(`You're carrying fatigue (TSB ${Math.round(b.tsbAtPeak)} vs ${a.tsbAtPeak > 0 ? '+' : ''}${Math.round(a.tsbAtPeak)} then). FTP estimates come from your best efforts, so an all-out test after an easy week may well show more than ${now.ftp ?? 'today'}${now.ftp ? ' W' : ''}.`);
+
+  return (
+    <Card className="mt-4" title={`Where you stand vs ${name}`} subtitle={`Your last ${weeks} weeks next to the ${weeks} weeks before the peak (rides only).`}>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <table className="tnum h-fit w-full text-[13px]">
+          <thead>
+            <tr className="border-b border-line text-left text-[11px] tracking-wide text-muted uppercase">
+              <th className="py-2 font-medium" />
+              <th className="text-right font-medium">{name}</th>
+              <th className="text-right font-medium">Now</th>
+              <th className="text-right font-medium">Now / then</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.label} className="border-b border-line/60 last:border-0">
+                <td className="py-1.5">{r.label}</td>
+                <td className="text-right">{r.then == null ? '–' : r.fmt(r.then)}</td>
+                <td className="text-right font-medium">{r.now == null ? '–' : r.fmt(r.now)}</td>
+                <td className="text-right text-muted">{r.then && r.now != null && r.then > 0 && r.label !== 'Form (TSB)' ? `${Math.round((r.now / r.then) * 100)}%` : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="flex flex-col gap-3">
+          {notes.map((n, i) => (
+            <p key={i} className={clsx('flex gap-2 text-[13px] leading-relaxed', i === 0 ? 'font-medium text-ink' : 'text-ink-2')}>
+              <Info className={clsx('mt-0.5 h-4 w-4 shrink-0', i === 0 ? 'text-accent' : 'text-muted')} />
+              {n}
+            </p>
+          ))}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function NowVsThen({ peak, now }: { peak: PeakCard; now: Overview['now'] }) {
   const t = useTokens();
   const { data } = useApi<{ durations: number[]; then: (number | null)[]; now: (number | null)[] }>(`/comeback/compare${qs({ date: peak.date })}`);
@@ -399,9 +480,10 @@ function NowVsThen({ peak, now }: { peak: PeakCard; now: Overview['now'] }) {
 }
 
 // ---------- load → FTP model ----------
-function ModelCard({ model, target, setTarget, now }: { model: LoadModel; target: number; setTarget: (n: number) => void; now: Overview['now'] }) {
+function ModelCard({ model, recent, target, setTarget, now }: { model: LoadModel; recent: LoadModel | null; target: number; setTarget: (n: number) => void; now: Overview['now'] }) {
   const t = useTokens();
   const need = ctlForFtp(model, target);
+  const needNow = recent ? ctlForFtp(recent, target) : null;
   const option = useMemo(() => {
     const years = [...new Set(model.points.map((p) => p.date.slice(0, 4)))].sort();
     const [lo, hi] = [Math.max(0, model.ctlRange[0] - 10), model.ctlRange[1] + 15];
@@ -411,14 +493,14 @@ function ModelCard({ model, target, setTarget, now }: { model: LoadModel; target
     ];
     return {
       animation: false,
-      grid: { left: 52, right: 16, top: 34, bottom: 40 },
+      grid: { left: 52, right: recent ? 92 : 16, top: 34, bottom: 40 },
       legend: { ...legendStyle(t), data: years },
       tooltip: {
         trigger: 'item',
         ...tooltipStyle(t),
-        formatter: (p: any) => (p.seriesType === 'scatter' ? `<b>${fmtDate(p.data[2])}</b>${tipRow(p.color, 'FTP (fit)', `${Math.round(p.data[1])} W`)}${tipRow('transparent', 'CTL (8-wk avg)', p.data[0].toFixed(0))}` : ''),
+        formatter: (p: any) => (p.seriesType === 'scatter' ? `<b>${fmtDate(p.data[2])}</b>${tipRow(p.color, 'FTP (fit)', `${Math.round(p.data[1])} W`)}${tipRow('transparent', 'CTL (6-wk avg)', p.data[0].toFixed(0))}` : ''),
       },
-      xAxis: { type: 'value', min: Math.floor(lo / 10) * 10, max: Math.ceil(hi / 10) * 10, name: 'Fitness: CTL averaged over the previous 8 weeks', nameLocation: 'middle', nameGap: 26, ...axisStyle(t) },
+      xAxis: { type: 'value', min: Math.floor(lo / 10) * 10, max: Math.ceil(hi / 10) * 10, name: 'Fitness: riding CTL averaged over the 6 weeks before the efforts', nameLocation: 'middle', nameGap: 26, ...axisStyle(t) },
       yAxis: valueAxis(t, { scale: true, name: 'FTP (W)', nameTextStyle: { color: t.muted, fontSize: 10 } }),
       series: [
         ...years.map((y, i) => ({
@@ -430,6 +512,22 @@ function ModelCard({ model, target, setTarget, now }: { model: LoadModel; target
           itemStyle: { color: alpha(t.accent, 0.3 + (0.7 * i) / Math.max(1, years.length - 1)), borderColor: t.surface, borderWidth: 1 },
         })),
         { type: 'line', showSymbol: false, silent: true, data: line(0), lineStyle: { color: t.ink2, width: 2 } },
+        ...(recent
+          ? [
+              {
+                type: 'line',
+                name: 'This comeback',
+                showSymbol: false,
+                silent: true,
+                data: [
+                  [Math.max(0, recent.ctlRange[0] - 5), recent.a + recent.b * Math.max(0, recent.ctlRange[0] - 5)],
+                  [hi, recent.a + recent.b * hi],
+                ],
+                lineStyle: { color: t.series[1], width: 2, type: 'dashed' },
+                endLabel: { show: true, color: t.ink2, fontSize: 10, formatter: 'this comeback' },
+              },
+            ]
+          : []),
         { type: 'line', showSymbol: false, silent: true, data: line(model.sd), lineStyle: { color: t.muted, width: 1, type: 'dashed' } },
         { type: 'line', showSymbol: false, silent: true, data: line(-model.sd), lineStyle: { color: t.muted, width: 1, type: 'dashed' } },
         {
@@ -445,7 +543,7 @@ function ModelCard({ model, target, setTarget, now }: { model: LoadModel; target
           : []),
       ],
     };
-  }, [model, t, need.ctl, target, now]);
+  }, [model, recent, t, need.ctl, target, now]);
   const weak = model.r2 < 0.3;
   return (
     <Card className="mt-4" title="What load does your FTP need?" subtitle="Learned from your own history: each dot is an FTP estimate against the fitness (CTL) you carried into it. Line = best fit, dashed = typical spread.">
@@ -461,6 +559,13 @@ function ModelCard({ model, target, setTarget, now }: { model: LoadModel; target
             <div className="mt-1 text-xs text-muted">
               {need.high - need.low > 50 ? 'range too wide to pin down' : `likely range ${Math.max(0, Math.round(need.low))}–${Math.round(need.high)}`} · roughly {fmtNum(need.ctl * 7)} TSS/week sustained
             </div>
+            {needNow && (
+              <div className="mt-3 border-t border-line pt-3 text-xs text-ink-2">
+                On this comeback's own trend (last 12 months): CTL{' '}
+                <b className="text-ink">{needNow.ctl > 200 ? '200+' : Math.round(needNow.ctl)}</b>
+                {needNow.ctl > Math.max(120, model.ctlRange[1] * 1.3) ? ' — beyond what load alone can deliver yet; the gap is time and training age, not volume.' : '.'}
+              </div>
+            )}
           </div>
           <div className="grid grid-cols-3 gap-3">
             <Stat label="Per +10 CTL" value={`+${(model.b * 10).toFixed(0)}`} unit="W" />
@@ -522,7 +627,15 @@ function PlanSection({ peak, defaultTarget, defaultHours, mix, tssPerHour }: { p
   }, [preview, t, peak.ftp]);
   const end = preview?.weeks[preview.weeks.length - 1];
   return (
-    <Card className="mt-4" title="Your way back" subtitle="A build with no race taper: gentle for the first month (tendons and joints adapt slower than fitness), then up to your normal ramp, with recovery weeks in your usual rhythm.">
+    <Card
+      className="mt-4"
+      title="Your way back"
+      subtitle={
+        preview && !preview.gentle
+          ? `A build with no race taper, climbing at your ramp with recovery weeks in your usual rhythm. No gentle start: you've ridden consistently for ${preview.ridingMonths} months.`
+          : 'A build with no race taper: gentle for the first month (tendons and joints adapt slower than fitness), then up to your normal ramp, with recovery weeks in your usual rhythm.'
+      }
+    >
       <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
         <div className="grid h-fit grid-cols-2 gap-3">
           <Field label="Target CTL" className="col-span-2" hint={`peak was ${peak.ctl ?? '–'}`}>
@@ -531,10 +644,12 @@ function PlanSection({ peak, defaultTarget, defaultHours, mix, tssPerHour }: { p
           <Field label="Max hours / week" className="col-span-2">
             <Input type="number" value={hours} onChange={(e) => setHours(Number(e.target.value))} />
           </Field>
-          <Field label="First 4 weeks" hint="CTL / week">
-            <Input type="number" step={0.5} value={initialRamp} onChange={(e) => setInitialRamp(Number(e.target.value))} />
-          </Field>
-          <Field label="Then up to" hint="CTL / week">
+          {preview?.gentle !== false && (
+            <Field label="First 4 weeks" hint="CTL / week">
+              <Input type="number" step={0.5} value={initialRamp} onChange={(e) => setInitialRamp(Number(e.target.value))} />
+            </Field>
+          )}
+          <Field label={preview?.gentle === false ? 'Ramp' : 'Then up to'} hint="CTL / week" className={preview?.gentle === false ? 'col-span-2' : undefined}>
             <Input type="number" step={0.5} value={ramp} onChange={(e) => setRamp(Number(e.target.value))} />
           </Field>
           <Field label="Rhythm" className="col-span-2">
@@ -619,7 +734,7 @@ export function Comeback() {
       ) : (
         <>
           <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-            <div className="text-xs text-muted">Detected from your FTP history (the highest points at least 6 months apart). Select one to explore it.</div>
+            <div className="text-xs text-muted">Detected from your FTP history (the best sets of efforts at least 4 months apart, dated to when you rode them). Select one to explore it.</div>
             <PinForm />
           </div>
           <PeakCards peaks={peaks} selected={peak?.date ?? null} onSelect={setSelected} />
@@ -627,9 +742,10 @@ export function Comeback() {
             <>
               <BuildSection peak={peak} weeks={weeks} setWeeks={setWeeks} />
               {peaks.length >= 2 && <RecipeTable peaks={peaks} weeks={weeks} />}
+              <StandCard peak={peak} weeks={weeks} now={data.now} />
               <NowVsThen peak={peak} now={data.now} />
               {model ? (
-                <ModelCard model={model} target={tgt} setTarget={setTarget} now={data.now} />
+                <ModelCard model={model} recent={data.recentModel} target={tgt} setTarget={setTarget} now={data.now} />
               ) : (
                 <Card className="mt-4" title="What load does your FTP need?">
                   <p className="text-xs text-muted">Not enough history yet to learn your load → FTP relationship (needs FTP estimates across a range of fitness levels). Until then, plan with your peak's CTL as the target.</p>
