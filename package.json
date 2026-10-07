@@ -12,7 +12,8 @@
     "start": "NODE_ENV=production tsx server/index.ts",
     "test": "vitest run",
     "typecheck": "tsc -p .",
-    "demo": "tsx server/scripts/seed-demo.ts"
+    "demo": "tsx server/scripts/seed-demo.ts",
+    "pull": "tsx server/scripts/pull-snapshot.ts"
   },
   "engines": {
     "node": ">=22.13"

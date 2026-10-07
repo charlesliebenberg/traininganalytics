@@ -29,6 +29,7 @@ import { importFile } from './importers/files';
 import { clearDemo, isDemo, loadDemo } from './demo';
 import { syncNow, syncStatus } from './sync';
 import * as comeback from './comeback';
+import { snapshot } from './snapshot';
 import { SPORTS, estimateOn, estimateState, refreshEstimates, storedSeries } from './estimates';
 import type { ThresholdSport } from '../shared/analytics/thresholds';
 import { stravaAuthUrl, stravaDisconnect, stravaExchangeCode, stravaHandleWebhook, stravaWebhookSubscribe } from './providers/strava';
@@ -64,6 +65,13 @@ api.onError((err, c) => {
 });
 
 api.get('/health', (c) => c.json({ ok: true }));
+
+api.get('/admin/snapshot', (c) => {
+  const streams = c.req.query('streams') !== '0';
+  return new Response(snapshot({ streams }), {
+    headers: { 'content-type': 'application/gzip', 'content-disposition': `attachment; filename="training-${today()}.db.gz"`, 'cache-control': 'no-store' },
+  });
+});
 api.get('/status', (c) => c.json({ ...syncStatus(), job: job.kind ? { ...job } : null, demo: isDemo(), publicUrl: config.publicUrl, apiUrl: config.apiUrl }));
 
 // ---------- preferences & thresholds ----------
