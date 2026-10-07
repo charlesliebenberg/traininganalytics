@@ -39,12 +39,6 @@ export const config = {
     clientSecret: env.STRAVA_CLIENT_SECRET ?? '',
     verifyToken: env.STRAVA_WEBHOOK_VERIFY_TOKEN ?? 'training-analytics',
   },
-  trainingPeaks: {
-    clientId: env.TRAININGPEAKS_CLIENT_ID ?? '',
-    clientSecret: env.TRAININGPEAKS_CLIENT_SECRET ?? '',
-    sandbox: env.TRAININGPEAKS_SANDBOX === 'true',
-  },
 };
 
 export const stravaConfigured = () => !!(config.strava.clientId && config.strava.clientSecret);
-export const tpConfigured = () => !!(config.trainingPeaks.clientId && config.trainingPeaks.clientSecret);

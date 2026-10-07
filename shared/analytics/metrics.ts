@@ -238,6 +238,7 @@ export function computeMetrics(s: Streams, sport: Sport, th: Thresholds): Comput
     curves.speed = meanMax(toFloat(s.speed)).map((v) => round(v, 2));
     if (th.runThresholdSpeed) zones.pace = timeInZones(gap, th.runThresholdSpeed, PACE_ZONES, mask);
   }
+  if (sport === 'swim' && s.speed) curves.speed = meanMax(toFloat(s.speed)).map((v) => round(v, 2));
   if ((isBike(sport) || isFoot(sport)) && s.altitude) {
     const vc = vamCurve(s.altitude);
     if (vc && vc.some((v) => v != null)) curves.vam = vc;

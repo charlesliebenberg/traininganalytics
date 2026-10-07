@@ -148,7 +148,7 @@ export function ActivityDetail() {
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             <Badge>{SPORT_LABEL[a.sport]}</Badge>
             {a.trainer && <Badge>Indoor</Badge>}
-            <Badge>{a.source === 'strava' ? 'Strava' : a.source === 'trainingpeaks' ? 'TrainingPeaks' : a.source === 'demo' ? 'Demo' : 'File'}</Badge>
+            <Badge>{a.source === 'strava' ? 'Strava' : a.source === 'demo' ? 'Demo' : 'File'}</Badge>
             {a.device && <Badge>{a.device}</Badge>}
             {a.ftpUsed && <Badge>FTP {a.ftpUsed} W</Badge>}
             {!a.detailed && <Badge color={t.warning}>Summary only — streams pending</Badge>}

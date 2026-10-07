@@ -48,6 +48,8 @@ export interface AggregatedCurve {
   values: (number | null)[];
   activityIds: (number | null)[];
   dates: (string | null)[];
+  /** true where the value was copied from a longer duration (no distinct effort of that length) */
+  filled: boolean[];
 }
 
 function pickCurve(c: ActivityCurves, type: CurveType): (number | null)[] | undefined {
@@ -61,6 +63,7 @@ export function aggregateCurve(type: CurveType, from: string, to: string, sport?
   const values: (number | null)[] = CURVE_DURATIONS.map(() => null);
   const activityIds: (number | null)[] = CURVE_DURATIONS.map(() => null);
   const dates: (string | null)[] = CURVE_DURATIONS.map(() => null);
+  const filled: boolean[] = CURVE_DURATIONS.map(() => false);
   for (const r of rows) {
     const c = pickCurve(r.curves, type);
     if (!c) continue;
@@ -80,10 +83,11 @@ export function aggregateCurve(type: CurveType, from: string, to: string, sport?
         values[i] = values[i + 1];
         activityIds[i] = activityIds[i + 1];
         dates[i] = dates[i + 1];
+        filled[i] = true;
       }
     }
   }
-  return { durations: CURVE_DURATIONS, values, activityIds, dates };
+  return { durations: CURVE_DURATIONS, values, activityIds, dates, filled };
 }
 
 export function powerModel(from: string, to: string): { model: PdModel | null; cp2: ReturnType<typeof fitCp2> } {

@@ -8,7 +8,6 @@ export function Onboarding() {
   const { data: status } = useStatus();
   const demo = useAction(() => http('/demo', { method: 'POST' }));
   const strava = status?.connections.find((c) => c.provider === 'strava');
-  const tp = status?.connections.find((c) => c.provider === 'trainingpeaks');
   const job = status?.job;
   return (
     <div className="mx-auto max-w-4xl py-6">
@@ -33,19 +32,6 @@ export function Onboarding() {
           ) : (
             <p className="text-xs text-muted">
               Add <code className="rounded bg-surface-3 px-1">STRAVA_CLIENT_ID</code> and <code className="rounded bg-surface-3 px-1">STRAVA_CLIENT_SECRET</code> to <code className="rounded bg-surface-3 px-1">.env</code> (create an API app at strava.com/settings/api), then restart.
-            </p>
-          )}
-        </Card>
-        <Card title={<span className="flex items-center gap-2"><Link2 className="h-4 w-4 text-accent" />Connect TrainingPeaks</span>} subtitle="Workouts, planned sessions and device files">
-          {tp?.configured ? (
-            <a href={apiUrl('/auth/trainingpeaks/start')}>
-              <Button variant="primary" className="w-full">
-                Connect with TrainingPeaks
-              </Button>
-            </a>
-          ) : (
-            <p className="text-xs text-muted">
-              TrainingPeaks' API requires partner credentials (<code className="rounded bg-surface-3 px-1">TRAININGPEAKS_CLIENT_ID/SECRET</code>). No API access? Export your workouts from TrainingPeaks and import the ZIP below — the analysis is identical.
             </p>
           )}
         </Card>

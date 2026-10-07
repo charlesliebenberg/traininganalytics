@@ -30,9 +30,5 @@ services:
         sync: false
       - key: STRAVA_WEBHOOK_VERIFY_TOKEN
         generateValue: true
-      - key: TRAININGPEAKS_CLIENT_ID
-        sync: false
-      - key: TRAININGPEAKS_CLIENT_SECRET
-        sync: false
       - key: SYNC_INTERVAL_MINUTES
         value: "15"

@@ -7,7 +7,7 @@ The recommended setup auto-deploys from GitHub on every push:
 | Backend API, sync worker, SQLite database | **Render** (web service + persistent disk) | `render.yaml` |
 | Frontend | **Vercel** *or* **Netlify** | `vercel.json` / `netlify.toml` |
 
-The frontend proxies `/api/*` to Render, so the browser only ever talks to one domain. Login cookies, Strava/TrainingPeaks OAuth and webhooks all work without any CORS setup.
+The frontend proxies `/api/*` to Render, so the browser only ever talks to one domain. Login cookies, Strava OAuth and webhooks all work without any CORS setup.
 
 > The Render service also builds and serves the frontend, so its own `onrender.com` URL is a complete, working copy of the app. Vercel/Netlify is optional and gives you a faster CDN-hosted frontend that doesn't wait for a sleeping backend to serve the page.
 
@@ -22,7 +22,6 @@ The frontend proxies `/api/*` to Render, so the browser only ever talks to one d
    | `APP_PASSWORD` | A strong password. **Required**: without it anyone with the URL can read and change your data. |
    | `PUBLIC_URL` | The URL you'll open the app at, e.g. `https://traininganalytics.vercel.app`. Use the `onrender.com` URL if you skip Vercel/Netlify. |
    | `STRAVA_CLIENT_ID` / `STRAVA_CLIENT_SECRET` | From <https://www.strava.com/settings/api> (step 3). |
-   | `TRAININGPEAKS_*` | Only if you have partner API access. Leave empty otherwise. |
 
 4. Deploy. Note the service URL, normally `https://traininganalytics-api.onrender.com`.
 

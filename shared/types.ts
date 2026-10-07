@@ -11,7 +11,7 @@ export type Sport =
   | 'row'
   | 'other';
 
-export type Source = 'strava' | 'trainingpeaks' | 'file' | 'demo' | 'manual';
+export type Source = 'strava' | 'file' | 'demo' | 'manual';
 
 export type TssMethod = 'power' | 'pace' | 'swim' | 'hr' | 'estimate' | 'manual' | 'none';
 
@@ -57,7 +57,11 @@ export interface Thresholds {
   swimCss: number;
   /** kg */
   weight: number;
+  /** Where ftp / runThresholdSpeed / swimCss came from for this date */
+  sources?: { ftp: ThresholdSource; run: ThresholdSource; swim: ThresholdSource };
 }
+
+export type ThresholdSource = 'auto' | 'manual' | 'default';
 
 export interface Lap {
   name: string;
@@ -215,7 +219,7 @@ export interface RaceEvent {
 }
 
 export interface Connection {
-  provider: 'strava' | 'trainingpeaks';
+  provider: 'strava';
   connected: boolean;
   configured: boolean;
   athleteName: string | null;
@@ -240,6 +244,8 @@ export interface Preferences {
   weekStart: 1 | 0;
   athleteName: string;
   crankLength: number; // mm
+  /** Use rolling 6-month estimates (critical power / critical speed) instead of manual values */
+  autoThresholds: { ride: boolean; run: boolean; swim: boolean };
 }
 
 export interface DailyLoad {

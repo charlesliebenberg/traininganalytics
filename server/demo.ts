@@ -10,7 +10,7 @@ import { gradeCostFactor } from '../shared/analytics/running';
 import { BUILTIN_WORKOUTS } from '../shared/library';
 import { generateSeasonPlan } from '../shared/analytics/plan';
 import type { Sport, Thresholds, WorkoutStructure } from '../shared/types';
-import { DEFAULT_THRESHOLDS, deleteThresholds, q, setPreferences, transaction, upsertThresholds } from './db';
+import { DEFAULT_THRESHOLDS, deleteThresholds, resetEstimateCache, q, setPreferences, transaction, upsertThresholds } from './db';
 import { saveActivity, type LapInput } from './ingest';
 
 // ---------- randomness ----------
@@ -615,12 +615,14 @@ export function clearDemo() {
     q.run("DELETE FROM planned_workouts WHERE source = 'demo'");
     q.run("DELETE FROM events WHERE description = 'demo'");
     q.run("DELETE FROM season_plans WHERE name = 'Road to the Autumn Classic'");
+    q.run('DELETE FROM threshold_estimates');
     if (q.get("SELECT value FROM settings WHERE key = 'demo'")) {
       q.run('DELETE FROM thresholds');
       q.run("DELETE FROM settings WHERE key = 'demo'");
     }
   });
   deleteThresholds('0000-00-00'); // resets the thresholds cache
+  resetEstimateCache();
 }
 
 export function isDemo(): boolean {

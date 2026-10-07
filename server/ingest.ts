@@ -4,6 +4,9 @@ import { rollingMean, toFloat } from '../shared/analytics/series';
 import { rangeStats } from '../shared/analytics/range';
 import { getActivity, loadStreams, log, q, saveStreams, thresholdsFor, transaction } from './db';
 
+/** Listeners notified after an activity is stored (e.g. to refresh threshold estimates). */
+export const ingestEvents = { onSaved: [] as (() => void)[] };
+
 export interface LapInput {
   name?: string;
   start: number; // seconds from activity start
@@ -159,7 +162,7 @@ function buildRow(input: ActivityInput): Cols {
   };
 }
 
-/** Find an activity from another source that is the same workout (e.g. Strava + TrainingPeaks copies). */
+/** Find an activity from another source that is the same workout (e.g. a Strava copy and an imported file). */
 function findDuplicate(input: ActivityInput, elapsed: number): { id: number; detailed: number; source: string } | undefined {
   const t = Date.parse(input.startTime);
   const lo = new Date(t - 120_000).toISOString();
@@ -180,7 +183,7 @@ function findDuplicate(input: ActivityInput, elapsed: number): { id: number; det
  */
 export function saveActivity(input: ActivityInput): number | null {
   const row = buildRow(input);
-  return transaction(() => {
+  const saved = transaction(() => {
     const existing = input.externalId
       ? q.get('SELECT id, rpe, description, name, sport FROM activities WHERE source = ? AND external_id = ?', input.source, input.externalId)
       : undefined;
@@ -211,6 +214,8 @@ export function saveActivity(input: ActivityInput): number | null {
     linkPlanned(id);
     return id;
   });
+  if (saved != null) ingestEvents.onSaved.forEach((fn) => fn());
+  return saved;
 }
 
 /** Link a completed activity to a same-day, same-sport planned workout. */

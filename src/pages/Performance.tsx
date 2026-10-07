@@ -60,12 +60,18 @@ function ModelCard({ model, cp2, th, weight }: { model: PdModel | null; cp2: { c
       </div>
       <div className="mt-4 flex items-center justify-between rounded-lg bg-surface-2 p-3 text-xs">
         <span className="text-ink-2">
-          Current FTP <b className="text-ink">{th.ftp} W</b> · model says {diff >= 0 ? '+' : ''}
+          Current FTP <b className="text-ink">{th.ftp} W</b>{th.sources?.ftp === 'auto' ? ' (3-point CP)' : ''} · model says {diff >= 0 ? '+' : ''}
           {Math.round(diff)} W
         </span>
-        <Button size="sm" variant="primary" icon={<Check className="h-3.5 w-3.5" />} loading={apply.isPending} disabled={Math.abs(diff) < 2} onClick={() => apply.mutate(undefined)}>
-          Use eFTP from today
-        </Button>
+        {th.sources?.ftp === 'auto' ? (
+          <Link to="/thresholds" className="text-accent hover:underline">
+            FTP is automatic →
+          </Link>
+        ) : (
+          <Button size="sm" variant="primary" icon={<Check className="h-3.5 w-3.5" />} loading={apply.isPending} disabled={Math.abs(diff) < 2} onClick={() => apply.mutate(undefined)}>
+            Use eFTP from today
+          </Button>
+        )}
       </div>
     </Card>
   );

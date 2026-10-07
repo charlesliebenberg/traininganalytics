@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { randomBytes } from 'node:crypto';
 import { addDays, parseISO, subDays } from 'date-fns';
-import { config, stravaConfigured, tpConfigured } from './config';
+import { config, stravaConfigured } from './config';
 import {
   ACTIVITY_LIST_COLUMNS,
   deleteThresholds,
@@ -9,6 +9,7 @@ import {
   getCurves,
   getPreferences,
   listThresholds,
+  manualThresholds,
   loadStreams,
   q,
   rowToActivity,
@@ -27,8 +28,9 @@ import { linkPlanned, recalculate } from './ingest';
 import { importFile } from './importers/files';
 import { clearDemo, isDemo, loadDemo } from './demo';
 import { syncNow, syncStatus } from './sync';
+import { SPORTS, estimateOn, estimateState, refreshEstimates, storedSeries } from './estimates';
+import type { ThresholdSport } from '../shared/analytics/thresholds';
 import { stravaAuthUrl, stravaDisconnect, stravaExchangeCode, stravaHandleWebhook, stravaWebhookSubscribe } from './providers/strava';
-import { tpAuthUrl, tpDisconnect, tpExchangeCode } from './providers/trainingpeaks';
 import { BUILTIN_WORKOUTS } from '../shared/library';
 import { workoutMetrics } from '../shared/analytics/workout';
 import { generateSeasonPlan, generateWeekWorkouts } from '../shared/analytics/plan';
@@ -65,9 +67,43 @@ api.get('/status', (c) => c.json({ ...syncStatus(), job: job.kind ? { ...job } :
 
 // ---------- preferences & thresholds ----------
 api.get('/preferences', (c) => c.json(getPreferences()));
-api.put('/preferences', async (c) => c.json(setPreferences(await c.req.json())));
+api.put('/preferences', async (c) => {
+  const body = await c.req.json();
+  const before = getPreferences().autoThresholds;
+  const next = setPreferences(body);
+  // switching a sport between auto and manual changes its thresholds everywhere
+  const toggled = SPORTS.filter((s) => before[s] !== next.autoThresholds[s]);
+  if (toggled.length) {
+    const ids = q.all(`SELECT id FROM activities WHERE sport IN (${toggled.map(() => '?').join(',')})`, ...toggled).map((r) => r.id as number);
+    runJob('recalculate', (progress) => recalculate({ ids }, (d, t) => progress(d / t, `Recalculating ${d}/${t}`))).catch(() => {});
+  }
+  return c.json(next);
+});
 
-api.get('/thresholds', (c) => c.json({ history: listThresholds(), current: thresholdsFor(today()), defaults: DEFAULT_THRESHOLDS }));
+// ---------- automatic threshold estimates ----------
+api.get('/estimates', (c) => {
+  const sport = (c.req.query('sport') ?? 'ride') as ThresholdSport;
+  const manual = listThresholds().map((t) => ({ date: t.date, value: sport === 'ride' ? t.ftp : sport === 'run' ? t.runThresholdSpeed : t.swimCss }));
+  return c.json({ sport, auto: getPreferences().autoThresholds[sport], series: storedSeries(sport), manual, state: estimateState(), current: thresholdsFor(today()) });
+});
+api.get('/estimates/detail', (c) => {
+  const sport = (c.req.query('sport') ?? 'ride') as ThresholdSport;
+  const date = c.req.query('date') ?? today();
+  const stored = storedSeries(sport).find((e) => e.date === date);
+  const estimate = stored ?? estimateOn(sport, date);
+  const from = estimate?.windowFrom ?? iso(subDays(parseISO(date), 182));
+  const to = estimate?.windowTo ?? iso(subDays(parseISO(date), 1));
+  return c.json({ estimate, curve: aggregateCurve(sport === 'ride' ? 'power' : 'speed', from, to, sport), from, to });
+});
+api.post('/estimates/refresh', async (c) => {
+  runJob('estimates', async (progress) => {
+    progress(0, 'Estimating thresholds…');
+    await refreshEstimates({ force: true });
+  }).catch(() => {});
+  return c.json({ started: true });
+});
+
+api.get('/thresholds', (c) => c.json({ history: listThresholds(), current: thresholdsFor(today()), manual: manualThresholds(today()) ?? DEFAULT_THRESHOLDS, defaults: DEFAULT_THRESHOLDS }));
 api.put('/thresholds', async (c) => {
   const t = (await c.req.json()) as Thresholds;
   if (!t.date) t.date = today();
@@ -543,19 +579,3 @@ api.post('/webhooks/strava', async (c) => {
   if (conn && String(ev.owner_id) === conn.athlete_id) stravaHandleWebhook(ev);
   return c.json({ ok: true });
 });
-
-api.get('/auth/trainingpeaks/start', (c) => {
-  if (!tpConfigured()) return c.redirect(config.publicUrl + '/settings?error=trainingpeaks-not-configured');
-  return c.redirect(tpAuthUrl(newState()));
-});
-api.get('/auth/trainingpeaks/callback', async (c) => {
-  const { code, state, error } = c.req.query();
-  if (error || !code || !checkState(state)) return c.redirect(`${config.publicUrl}/settings?error=${encodeURIComponent(error ?? 'trainingpeaks-auth-failed')}`);
-  await tpExchangeCode(code);
-  return c.redirect(config.publicUrl + '/settings?connected=trainingpeaks');
-});
-api.post('/auth/trainingpeaks/disconnect', (c) => {
-  tpDisconnect();
-  return c.json({ ok: true });
-});
-

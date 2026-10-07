@@ -11,6 +11,7 @@ import { generateSeasonPlan, generateWeekWorkouts } from './plan';
 import { decodePolyline, encodePolyline } from '../polyline';
 import { computeMetrics, normalizeStreams } from './metrics';
 import { BUILTIN_WORKOUTS } from '../library';
+import { estimateThreshold, limitDeclines } from './thresholds';
 import type { Thresholds } from '../types';
 
 const TH: Thresholds = {
@@ -204,5 +205,53 @@ describe('streams', () => {
     expect(m.elevationGain!).toBeGreaterThan(160);
     expect(m.curves.power![CURVE_DURATIONS.indexOf(60)]).toBe(200);
     expect(m.decoupling).toBeCloseTo(0, 1);
+  });
+});
+
+describe('threshold estimation', () => {
+  const meta = { date: '2026-01-05', windowFrom: '2025-07-07', windowTo: '2026-01-04', activities: 20 };
+  it('recovers CP / W′ from maximal efforts and ignores sub-maximal ones', () => {
+    const values = CURVE_DURATIONS.map((t) => {
+      const v = 280 + 20000 / t;
+      // the athlete never went all-out between 7 and 15 minutes or beyond 25 minutes
+      if (t > 420 && t < 900) return v * 0.85;
+      if (t > 1500) return v * 0.8;
+      return v;
+    });
+    const e = estimateThreshold('ride', { values }, meta)!;
+    expect(e.points).toHaveLength(3);
+    expect(e.cp).toBeCloseTo(280, 0);
+    expect(e.wPrime).toBeCloseTo(20000, -2);
+    expect(e.threshold).toBeCloseTo(280 * 0.96, 0);
+    expect(e.points.every((p) => p.score > 0.99)).toBe(true);
+  });
+  it('estimates critical speed for running', () => {
+    const values = CURVE_DURATIONS.map((t) => 4.2 + 200 / t);
+    const e = estimateThreshold('run', { values }, meta)!;
+    expect(e.cp).toBeCloseTo(4.2, 2);
+    expect(e.wPrime).toBeCloseTo(200, 0);
+  });
+  it('needs enough data', () => {
+    const values = CURVE_DURATIONS.map((t) => (t <= 300 ? 300 + 20000 / t : null));
+    expect(estimateThreshold('ride', { values }, meta)).toBeNull();
+    expect(estimateThreshold('ride', { values: CURVE_DURATIONS.map((t) => 280 + 20000 / t) }, { ...meta, activities: 1 })).toBeNull();
+  });
+});
+
+describe('threshold history', () => {
+  it('limits declines but applies rises immediately', () => {
+    const s = limitDeclines([
+      { date: '2026-01-05', raw: 300, threshold: 300 },
+      { date: '2026-01-12', raw: 250, threshold: 250 },
+      { date: '2026-01-19', raw: 320, threshold: 320 },
+    ]);
+    expect(s[1].threshold).toBeCloseTo(297, 0);
+    expect(s[2].threshold).toBe(320);
+  });
+  it('skips points copied from longer efforts', () => {
+    const values = CURVE_DURATIONS.map((t) => 280 + 20000 / t);
+    const filled = CURVE_DURATIONS.map((t) => t > 300 && t < 1200);
+    const e = estimateThreshold('ride', { values, filled }, { date: '2026-01-05', windowFrom: '', windowTo: '', activities: 10 })!;
+    expect(e.points.every((p) => p.t <= 300 || p.t >= 1200)).toBe(true);
   });
 });

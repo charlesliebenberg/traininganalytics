@@ -1,6 +1,6 @@
 # Training Analytics
 
-A self-hosted training analytics and planning suite for endurance athletes. It syncs with **Strava** and **TrainingPeaks**, imports FIT/TCX/GPX files, and covers everything Strava and TrainingPeaks offer plus several analyses neither has: a normalized-power curve, durability (fatigue-resistance) curves, an omni-domain power-duration model, quadrant analysis, W′ balance, and PMC projection all the way to race day.
+A self-hosted training analytics and planning suite for endurance athletes. It syncs with **Strava**, imports FIT/TCX/GPX files (including TrainingPeaks exports), and covers everything Strava and TrainingPeaks offer plus several analyses neither has: a normalized-power curve, durability (fatigue-resistance) curves, an omni-domain power-duration model, quadrant analysis, W′ balance, and PMC projection all the way to race day.
 
 ```bash
 npm install
@@ -27,6 +27,7 @@ Requires Node.js ≥ 22.13. SQLite is built in (`node:sqlite`), so there is noth
 | **Fitness & Form** | Performance Management Chart (CTL / ATL / TSB) with form zones, race markers, and **projection from planned workouts and your season plan**; weekly ramp rate; Foster **monotony & strain**; ACWR; 12-month load calendar; fitness goal calculator ("what daily TSS gets me to CTL 80 by June?") |
 | **Power & Performance** | Power / **NP** / HR / pace / VAM curves over any range with comparisons (previous period, last year, all-time) · watts or W/kg · **OmPD power-duration model** (CP/eFTP, W′, Pmax, modelled 60-min power, time-to-exhaustion) with one-click "use eFTP" · Coggan **power profile** & rider type · **durability curves** (best power after 1 000 / 2 000 / 3 000 kJ) with retention table · **model history** (eFTP, W′, Pmax over 12 months vs your FTP setting) · peak table by period |
 | **Trends** | Weekly/monthly volume by sport (hours, distance, TSS, elevation, kJ, count) · intensity distribution (Seiler 3-zone, power zones, HR zones) · **polarization index** · aerobic efficiency (EF) trends for rides and runs · decoupling trend · year-over-year cumulative |
+| **Thresholds** | **Automatic FTP, run threshold pace and swim CSS**, re-estimated every week from the previous 6 months: a critical-power / critical-speed fit through your three most impressive, well-spread efforts. Shows the full history next to your manual values, plus the curve, chosen efforts and linear fit for any week so you can check it. Each activity's zones and TSS use the threshold that applied on its date |
 | **Records** | Peak power by year, running best efforts (400 m → marathon) by year, and highlights (longest, most climbing, biggest TSS, most work, highest NP) |
 | **Heatmap** | Every GPS route on one map, heat or per-sport colouring, click through to activities |
 
@@ -56,11 +57,9 @@ What happens next:
 - For instant sync, make the app reachable from the internet (a reverse proxy or a tunnel such as `cloudflared` or `ngrok`), set `PUBLIC_URL` to that address and click **Enable webhook**. Creates, updates, deletes and deauthorisations are handled.
 - FTP and weight from your Strava profile seed your thresholds if you haven't set any.
 
-### TrainingPeaks
+### TrainingPeaks history
 
-TrainingPeaks' API is only available to [approved partners](https://github.com/TrainingPeaks/PartnersAPI/wiki). If you have credentials, set `TRAININGPEAKS_CLIENT_ID` / `TRAININGPEAKS_CLIENT_SECRET` (and `TRAININGPEAKS_SANDBOX=true` for the sandbox). The client syncs completed workouts (downloading device files through the full analytics pipeline), and imports **planned workouts** into your calendar. Endpoint paths follow the partner API docs; adjust them in `server/providers/trainingpeaks.ts` if your partner agreement exposes different versions.
-
-**No API access?** In TrainingPeaks go to *Settings → Export Data → Export Workout Files* and drop the ZIP on **Settings → Import files**. Everything is recomputed with your own thresholds, so the analysis is identical.
+To bring in history that only lives in TrainingPeaks, go to *Settings → Export Data → Export Workout Files* there and drop the ZIP on **Settings → Import files**. Everything is recomputed with your own thresholds.
 
 ### Files
 
@@ -85,6 +84,7 @@ All analytics live in [`shared/analytics`](shared/analytics) and are covered by 
 - **W′ balance**: Skiba's model in the differential form (Froncioni/Clarke), using FTP as CP and your W′.
 - **Grade-adjusted pace** uses Minetti's metabolic cost of running on gradients. **NGP** applies the NP algorithm to GAP.
 - **Aerobic decoupling**: output-per-heartbeat in the first vs second half of the moving time (skipping a 10-minute warm-up on long efforts). **EF** = NP (or NGP) / average HR.
+- **Automatic thresholds**: for each week, the mean-max power (bike) or speed (run, swim) curve of the previous 182 days within the critical-power range (bike 3–30 min, run 2–40 min, swim 1–25 min). A hyperbola is fitted to the curve's upper envelope and each effort is scored against it. From all triples of efforts spaced ≥ 1.6× apart in duration (≥ 4× overall), the triple whose weakest effort scores highest is fitted with the linear work–time (distance–time) model. FTP = 96 % of CP; run threshold = CS; CSS = CS. Applied values may fall by at most 1 % per week (fitness fades slowly, but a big effort leaves the window all at once); rises apply immediately. Toggle auto/manual per sport on the Thresholds page. LTHR and max HR stay manual.
 - **PMC**: exponentially weighted CTL (42 d) and ATL (7 d); TSB = yesterday's CTL − ATL. The time constants can be changed in Preferences. Form zones are relative to fitness: TSB/CTL.
 - **Intervals** are detected in two passes: sustained ≥ 88 % of threshold for ≥ 3 min, and ≥ 120 % for ≥ 15 s.
 - **Polarization index** follows Treff et al. (2019) on the Seiler 3-zone distribution.
@@ -99,7 +99,8 @@ shared/            Pure TypeScript used by both server and browser
   analytics/       NP, curves, models, PMC, zones, running, workouts, season plan (+ tests)
   library.ts       Built-in structured workouts
 server/            Hono API on Node, SQLite via node:sqlite
-  providers/       Strava & TrainingPeaks OAuth + sync
+  providers/       Strava OAuth, webhooks and sync
+  estimates.ts     Rolling weekly FTP / threshold pace / CSS estimates
   importers/       FIT / TCX / GPX / ZIP parsing
   queue.ts         Persistent, rate-limit-aware job queue
   ingest.ts        Metrics computation & storage (streams gzipped)
@@ -128,7 +129,6 @@ Per-activity metrics, mean-max curves (power, NP, HR, speed, VAM, fatigue-state 
 | `PUBLIC_URL` | `http://localhost:5173` (dev) | Used for OAuth redirects and the Strava webhook |
 | `STRAVA_CLIENT_ID`, `STRAVA_CLIENT_SECRET` | | Strava API app |
 | `STRAVA_WEBHOOK_VERIFY_TOKEN` | | Any random string |
-| `TRAININGPEAKS_CLIENT_ID`, `TRAININGPEAKS_CLIENT_SECRET`, `TRAININGPEAKS_SANDBOX` | | Partner API credentials |
 | `SYNC_INTERVAL_MINUTES` | `15` | Polling interval |
 | `DATA_DIR` | `./data` | Where `training.db` lives |
 | `APP_PASSWORD` | | Password-protects the app (login screen). Set it for any public deployment |

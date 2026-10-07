@@ -24,6 +24,7 @@ const Calendar = page('Calendar', () => import('./pages/Calendar'));
 const Workouts = page('Workouts', () => import('./pages/Workouts'));
 const Season = page('Season', () => import('./pages/Season'));
 const Settings = page('Settings', () => import('./pages/Settings'));
+const Thresholds = page('Thresholds', () => import('./pages/Thresholds'));
 
 setUnauthorizedHandler(() => queryClient.invalidateQueries({ queryKey: ['/session'] }));
 
@@ -67,6 +68,7 @@ function Root() {
                   <Route path="performance" element={<Performance />} />
                   <Route path="trends" element={<Trends />} />
                   <Route path="records" element={<Records />} />
+                  <Route path="thresholds" element={<Thresholds />} />
                   <Route path="map" element={<Heatmap />} />
                   <Route path="calendar" element={<Calendar />} />
                   <Route path="workouts" element={<Workouts />} />

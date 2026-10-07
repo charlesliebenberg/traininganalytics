@@ -19,6 +19,7 @@ import {
   Activity,
   Menu,
   LogOut,
+  Gauge,
 } from 'lucide-react';
 import { Suspense, useEffect, useState } from 'react';
 import { http, useApi, useAction } from '../lib/api';
@@ -46,6 +47,7 @@ const NAV = [
       { to: '/fitness', label: 'Fitness & Form', icon: TrendingUp },
       { to: '/performance', label: 'Power & Performance', icon: Zap },
       { to: '/trends', label: 'Trends', icon: BarChart3 },
+      { to: '/thresholds', label: 'Thresholds', icon: Gauge },
       { to: '/records', label: 'Records', icon: Trophy },
       { to: '/map', label: 'Heatmap', icon: MapIcon },
     ],
@@ -71,7 +73,7 @@ function SyncPill() {
     : busy
       ? `Syncing · ${data.queue} queued`
       : connected.length
-        ? `Synced · ${connected.map((c) => (c.provider === 'strava' ? 'Strava' : 'TrainingPeaks')).join(' + ')}`
+        ? `Synced · ${'Strava'}`
         : data.demo
           ? 'Demo data'
           : 'No sources connected';

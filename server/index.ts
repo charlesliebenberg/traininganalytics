@@ -9,6 +9,8 @@ import { config } from './config';
 import { api } from './api';
 import { authEnabled, requireAuth, session } from './auth';
 import { startScheduler } from './sync';
+import { ingestEvents } from './ingest';
+import { scheduleEstimateRefresh } from './estimates';
 
 const app = new Hono();
 
@@ -33,4 +35,6 @@ serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`Open ${config.publicUrl}`);
   if (config.production && !authEnabled()) console.warn('WARNING: APP_PASSWORD is not set — anyone who can reach this server can read and change your data.');
   startScheduler();
+  ingestEvents.onSaved.push(() => scheduleEstimateRefresh());
+  scheduleEstimateRefresh(3000);
 });

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, AlertTriangle, RefreshCw, Unplug, Webhook, Trash2, Sparkles, Calculator } from 'lucide-react';
 import type { Preferences, Thresholds } from '../../shared/types';
 import { HR_ZONES, PACE_ZONES, POWER_ZONES, zoneBounds } from '../../shared/analytics/zones';
@@ -18,14 +18,15 @@ const textToSpeed = (txt: string, per: number) => {
   return secs > 0 ? per / secs : null;
 };
 
-function ConnectionCard({ provider }: { provider: 'strava' | 'trainingpeaks' }) {
+function StravaCard() {
+  const provider = 'strava';
   const { data: status } = useStatus();
   const c = status?.connections.find((x) => x.provider === provider);
   const sync = useAction(() => http('/sync', { method: 'POST' }));
   const disconnect = useAction(() => http(`/auth/${provider}/disconnect`, { method: 'POST' }));
   const webhook = useAction(() => http('/webhooks/strava/subscribe', { method: 'POST' }));
-  const name = provider === 'strava' ? 'Strava' : 'TrainingPeaks';
-  const brand = provider === 'strava' ? '#fc4c02' : '#1b6ec2';
+  const name = 'Strava';
+  const brand = '#fc4c02';
   if (!c) return null;
   return (
     <Card
@@ -54,12 +55,10 @@ function ConnectionCard({ provider }: { provider: 'strava' | 'trainingpeaks' }) 
               <div className="text-[11px] text-muted uppercase">Queue</div>
               {c.pending} jobs
             </div>
-            {provider === 'strava' && (
-              <div>
-                <div className="text-[11px] text-muted uppercase">Webhook</div>
-                {c.webhook ? 'Active — instant sync' : 'Polling only'}
-              </div>
-            )}
+            <div>
+              <div className="text-[11px] text-muted uppercase">Webhook</div>
+              {c.webhook ? 'Active — instant sync' : 'Polling only'}
+            </div>
           </div>
           {c.lastError && (
             <div className="mt-3 flex items-start gap-2 rounded-lg bg-surface-2 p-2.5 text-xs">
@@ -71,7 +70,7 @@ function ConnectionCard({ provider }: { provider: 'strava' | 'trainingpeaks' }) 
             <Button size="sm" icon={<RefreshCw className="h-3.5 w-3.5" />} loading={sync.isPending} onClick={() => sync.mutate(undefined)}>
               Sync now
             </Button>
-            {provider === 'strava' && !c.webhook && (
+            {!c.webhook && (
               <Button size="sm" icon={<Webhook className="h-3.5 w-3.5" />} loading={webhook.isPending} onClick={() => webhook.mutate(undefined)} title="Requires PUBLIC_URL reachable from the internet">
                 Enable webhook
               </Button>
@@ -85,9 +84,7 @@ function ConnectionCard({ provider }: { provider: 'strava' | 'trainingpeaks' }) 
       ) : c.configured ? (
         <>
           <p className="mb-3 text-xs text-ink-2">
-            {provider === 'strava'
-              ? 'Authorise read access to your activities. History is backfilled newest-first within Strava’s rate limits (≈200 activities/hour), then new activities sync automatically.'
-              : 'Syncs completed workouts (with device files) and planned workouts from your TrainingPeaks calendar.'}
+            Authorise read access to your activities. History is backfilled newest-first within Strava’s rate limits (≈200 activities/hour), then new activities sync automatically.
           </p>
           <a href={apiUrl(`/auth/${provider}/start`)}>
             <Button variant="primary" style={{ background: brand }}>
@@ -95,7 +92,7 @@ function ConnectionCard({ provider }: { provider: 'strava' | 'trainingpeaks' }) 
             </Button>
           </a>
         </>
-      ) : provider === 'strava' ? (
+      ) : (
         <ol className="list-decimal space-y-1 pl-4 text-xs text-ink-2">
           <li>
             Create an API application at <b>strava.com/settings/api</b>.
@@ -108,15 +105,6 @@ function ConnectionCard({ provider }: { provider: 'strava' | 'trainingpeaks' }) 
           </li>
           <li>For instant sync, expose the app publicly (e.g. a tunnel) and enable the webhook after connecting.</li>
         </ol>
-      ) : (
-        <div className="space-y-2 text-xs text-ink-2">
-          <p>
-            TrainingPeaks’ API is limited to approved partners. If you have credentials, set <code className="rounded bg-surface-3 px-1">TRAININGPEAKS_CLIENT_ID</code> / <code className="rounded bg-surface-3 px-1">TRAININGPEAKS_CLIENT_SECRET</code> in <code className="rounded bg-surface-3 px-1">.env</code>.
-          </p>
-          <p>
-            Otherwise: in TrainingPeaks open <b>Settings → Export Data → Export Workout Files</b>, then drop the ZIP on the Import tab — identical analysis, including TSS/IF recalculated with your thresholds.
-          </p>
-        </div>
       )}
     </Card>
   );
@@ -142,16 +130,30 @@ function SyncLog() {
   );
 }
 
+/** Shown under a field whose value is currently being replaced by the automatic estimate. */
+function autoHint(source: string | undefined, value: string) {
+  if (source !== 'auto') return undefined;
+  return (
+    <span>
+      Auto: <b className="text-ink-2">{value}</b> in use ·{' '}
+      <Link to="/thresholds" className="text-accent hover:underline">
+        details
+      </Link>
+    </span>
+  );
+}
+
 function AthleteTab() {
-  const { data } = useApi<{ history: Thresholds[]; current: Thresholds; defaults: Thresholds }>('/thresholds');
+  const { data } = useApi<{ history: Thresholds[]; current: Thresholds; manual: Thresholds; defaults: Thresholds }>('/thresholds');
   const [form, setForm] = useState<Thresholds | null>(null);
   const [runPace, setRunPace] = useState('');
   const [css, setCss] = useState('');
   useEffect(() => {
     if (data && !form) {
-      setForm({ ...data.current, date: iso(new Date()) });
-      setRunPace(paceToText(data.current.runThresholdSpeed, 1000));
-      setCss(paceToText(data.current.swimCss, 100));
+      const { sources: _s, ...m } = data.manual;
+      setForm({ ...m, date: iso(new Date()) });
+      setRunPace(paceToText(m.runThresholdSpeed, 1000));
+      setCss(paceToText(m.swimCss, 100));
     }
   }, [data, form]);
   const save = useAction(() => http('/thresholds', { method: 'PUT', json: { ...form, runThresholdSpeed: textToSpeed(runPace, 1000) ?? form!.runThresholdSpeed, swimCss: textToSpeed(css, 100) ?? form!.swimCss } }));
@@ -167,7 +169,7 @@ function AthleteTab() {
           <Field label="Effective from">
             <Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
           </Field>
-          <Field label="FTP (W)">
+          <Field label="FTP (W)" hint={autoHint(cur.sources?.ftp, `${cur.ftp} W`)}>
             <Input type="number" value={form.ftp} onChange={num('ftp')} />
           </Field>
           <Field label="W′ (J)" hint="anaerobic capacity">
@@ -188,10 +190,10 @@ function AthleteTab() {
           <Field label="Resting HR">
             <Input type="number" value={form.restHr} onChange={num('restHr')} />
           </Field>
-          <Field label="Run threshold pace" hint="min:sec per km">
+          <Field label="Run threshold pace" hint={autoHint(cur.sources?.run, `${paceToText(cur.runThresholdSpeed, 1000)}/km`) ?? 'min:sec per km'}>
             <Input value={runPace} onChange={(e) => setRunPace(e.target.value)} />
           </Field>
-          <Field label="Swim CSS" hint="min:sec per 100 m">
+          <Field label="Swim CSS" hint={autoHint(cur.sources?.swim, `${paceToText(cur.swimCss, 100)}/100m`) ?? 'min:sec per 100 m'}>
             <Input value={css} onChange={(e) => setCss(e.target.value)} />
           </Field>
         </div>
@@ -342,7 +344,7 @@ export function Settings() {
       {(connected || error) && (
         <div className={`card mb-4 flex items-center gap-2 px-4 py-3 text-[13px] ${error ? 'text-critical' : ''}`}>
           {error ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4 text-good" />}
-          {error ? `Connection failed: ${error}` : `Connected to ${connected === 'strava' ? 'Strava' : 'TrainingPeaks'} — your history is syncing in the background.`}
+          {error ? `Connection failed: ${error}` : 'Connected to Strava — your history is syncing in the background.'}
           <button className="ml-auto text-xs text-muted hover:text-ink" onClick={() => setParams({})}>
             Dismiss
           </button>
@@ -362,9 +364,8 @@ export function Settings() {
         />
       </div>
       {tab === 'connections' && (
-        <div className="grid gap-4 xl:grid-cols-3">
-          <ConnectionCard provider="strava" />
-          <ConnectionCard provider="trainingpeaks" />
+        <div className="grid gap-4 xl:grid-cols-2">
+          <StravaCard />
           <SyncLog />
         </div>
       )}

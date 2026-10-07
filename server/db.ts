@@ -83,6 +83,9 @@ CREATE TABLE IF NOT EXISTS sync_queue (
   sort_key INTEGER NOT NULL DEFAULT 0,
   UNIQUE(provider, kind, external_id)
 );
+CREATE TABLE IF NOT EXISTS threshold_estimates (
+  sport TEXT NOT NULL, date TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (sport, date)
+);
 CREATE TABLE IF NOT EXISTS sync_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL DEFAULT (datetime('now')), provider TEXT, level TEXT NOT NULL, message TEXT NOT NULL
 );
@@ -118,15 +121,22 @@ export const DEFAULT_PREFERENCES: Preferences = {
   weekStart: 1,
   athleteName: 'Athlete',
   crankLength: 172.5,
+  autoThresholds: { ride: true, run: true, swim: true },
 };
 
+let prefCache: Preferences | null = null;
 export function getPreferences(): Preferences {
-  const row = q.get('SELECT value FROM settings WHERE key = ?', 'preferences');
-  return { ...DEFAULT_PREFERENCES, ...(row ? JSON.parse(row.value) : {}) };
+  if (!prefCache) {
+    const row = q.get('SELECT value FROM settings WHERE key = ?', 'preferences');
+    const saved = row ? JSON.parse(row.value) : {};
+    prefCache = { ...DEFAULT_PREFERENCES, ...saved, autoThresholds: { ...DEFAULT_PREFERENCES.autoThresholds, ...(saved.autoThresholds ?? {}) } };
+  }
+  return prefCache!;
 }
 
 export function setPreferences(p: Partial<Preferences>): Preferences {
   const next = { ...getPreferences(), ...p };
+  prefCache = null;
   q.run('INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', 'preferences', JSON.stringify(next));
   return next;
 }
@@ -164,12 +174,77 @@ export function listThresholds(): Thresholds[] {
   return thresholdCache;
 }
 
-export function thresholdsFor(date: string): Thresholds {
+/** Weekly rolling estimates per sport, sorted by date (loaded from threshold_estimates). */
+type EstimateRow = { date: string; threshold: number; wPrime: number };
+let estimateCache: Record<string, EstimateRow[]> | null = null;
+
+export function estimatesFor(sport: string): EstimateRow[] {
+  if (!estimateCache) {
+    estimateCache = {};
+    for (const r of q.all('SELECT sport, date, data FROM threshold_estimates ORDER BY date')) {
+      const d = JSON.parse(r.data);
+      (estimateCache[r.sport] ??= []).push({ date: r.date, threshold: d.threshold, wPrime: d.wPrime });
+    }
+  }
+  return estimateCache[sport] ?? [];
+}
+export const resetEstimateCache = () => (estimateCache = null);
+
+/** Latest estimate on or before `date`; before the first estimate, the first one (better than a default). */
+function estimateAt(sport: string, date: string, allowBackfill: boolean): EstimateRow | null {
+  const list = estimatesFor(sport);
+  if (!list.length) return null;
+  let found: EstimateRow | null = null;
+  for (const e of list) {
+    if (e.date <= date) found = e;
+    else break;
+  }
+  return found ?? (allowBackfill ? list[0] : null);
+}
+
+export function manualThresholds(date: string): Thresholds | null {
   const all = listThresholds();
-  if (!all.length) return DEFAULT_THRESHOLDS;
+  if (!all.length) return null;
   let found = all[0];
   for (const t of all) if (t.date <= date) found = t;
   return found;
+}
+
+/**
+ * Thresholds in effect on a date: the manual entry for that date, with FTP / run threshold
+ * pace / CSS replaced by the rolling 6-month estimate where auto mode is on.
+ */
+export function thresholdsFor(date: string): Thresholds {
+  const manual = manualThresholds(date);
+  const base: Thresholds = { ...(manual ?? DEFAULT_THRESHOLDS) };
+  const src = manual ? 'manual' : 'default';
+  const sources: NonNullable<Thresholds['sources']> = { ftp: src, run: src, swim: src };
+  const auto = getPreferences().autoThresholds;
+  // if the athlete entered values themselves, use them before the first estimate exists
+  const backfill = !manual;
+  if (auto.ride) {
+    const e = estimateAt('ride', date, backfill);
+    if (e) {
+      base.ftp = Math.round(e.threshold);
+      if (e.wPrime >= 3000 && e.wPrime <= 60000) base.wPrime = Math.round(e.wPrime);
+      sources.ftp = 'auto';
+    }
+  }
+  if (auto.run) {
+    const e = estimateAt('run', date, backfill);
+    if (e) {
+      base.runThresholdSpeed = e.threshold;
+      sources.run = 'auto';
+    }
+  }
+  if (auto.swim) {
+    const e = estimateAt('swim', date, backfill);
+    if (e) {
+      base.swimCss = e.threshold;
+      sources.swim = 'auto';
+    }
+  }
+  return { ...base, sources };
 }
 
 export function upsertThresholds(t: Thresholds) {
