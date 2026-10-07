@@ -1,5 +1,5 @@
 import { config, stravaConfigured } from '../config';
-import { log, q, upsertThresholds, listThresholds, DEFAULT_THRESHOLDS } from '../db';
+import { log, q, upsertThresholds, listThresholds, DEFAULT_THRESHOLDS, getSetting, setSetting } from '../db';
 import { saveActivity, type LapInput } from '../ingest';
 import { normalizeStreams } from '../../shared/analytics/metrics';
 import type { Sport } from '../../shared/types';
@@ -51,7 +51,8 @@ export async function stravaExchangeCode(code: string, scope: string | null) {
   );
   log('strava', 'info', `Connected Strava athlete ${t.athlete?.firstname ?? ''}`);
   enqueue('strava', 'athlete', 'me', null, 10);
-  enqueue('strava', 'list', 'backfill', { page: 1 }, 9);
+  setSetting('strava_backfill_done', false);
+  enqueue('strava', 'list', 'backfill-start', { mode: 'backfill' }, 9);
 }
 
 async function accessToken(): Promise<string> {
@@ -180,35 +181,77 @@ function summaryInput(a: StravaSummary) {
 }
 
 /** Page through the athlete's activity list, storing summaries and queueing detail fetches. */
-export async function stravaSyncList(payload: { page?: number; after?: number } | null): Promise<void> {
-  const page = payload?.page ?? 1;
+const PER_PAGE = 200; // Strava's maximum
+const LITE_AFTER_DAYS = 60;
+
+type ListPayload = { mode?: 'backfill' | 'poll'; before?: number; after?: number; page?: number } | null;
+
+/**
+ * Two kinds of list job:
+ *  - backfill: walks history newest → oldest with `before` = oldest start seen so far,
+ *    one page per job, until Strava returns a short page.
+ *  - poll: fetches anything newer than the cursor (ascending, paged).
+ * Older activities get a "lite" detail job (streams only, 1 API call instead of 2) so a
+ * multi-year history fits Strava's rate limits roughly twice as fast.
+ */
+export async function stravaSyncList(payload: ListPayload): Promise<void> {
   const conn = q.get("SELECT cursor FROM connections WHERE provider = 'strava'");
-  const after = payload?.after ?? (conn?.cursor ? Number(conn.cursor) : undefined);
-  const params = new URLSearchParams({ page: String(page), per_page: '100' });
-  if (after) params.set('after', String(after));
-  const list = await api<StravaSummary[]>(`/athlete/activities?${params}`);
-  let newest = after ?? 0;
-  for (const a of list) {
-    const existing = q.get("SELECT id, detailed FROM activities WHERE source = 'strava' AND external_id = ?", String(a.id));
-    if (!existing) saveActivity(summaryInput(a));
-    if (!existing?.detailed) enqueue('strava', 'detail', String(a.id), null, after ? 5 : 1, Date.parse(a.start_date));
-    newest = Math.max(newest, Math.floor(Date.parse(a.start_date) / 1000));
+  // jobs queued by older versions carried { page } only: treat page-1 "backfill" as a fresh backfill
+  const mode = payload?.mode ?? (payload?.after == null && !conn?.cursor ? 'backfill' : 'poll');
+  const params = new URLSearchParams({ per_page: String(PER_PAGE) });
+  let after: number | undefined;
+  const page = payload?.page ?? 1;
+  if (mode === 'backfill') {
+    if (payload?.before) params.set('before', String(payload.before));
+  } else {
+    after = payload?.after ?? (conn?.cursor ? Number(conn.cursor) : undefined);
+    if (after) params.set('after', String(after));
+    params.set('page', String(page));
   }
-  if (list.length === 100) enqueue('strava', 'list', `${after ? 'after' : 'backfill'}-${page + 1}`, { page: page + 1, after }, 8);
+  const list = await api<StravaSummary[]>(`/athlete/activities?${params}`);
+  const liteBefore = Date.now() - LITE_AFTER_DAYS * 86400_000;
+  let newest = 0;
+  let oldest = Infinity;
+  for (const a of list) {
+    const start = Date.parse(a.start_date);
+    const existing = q.get("SELECT id, detailed FROM activities WHERE source = 'strava' AND external_id = ?", String(a.id));
+    if (!existing) saveActivity({ ...summaryInput(a), raw: a });
+    if (!existing?.detailed) enqueue('strava', 'detail', String(a.id), start < liteBefore ? { lite: true } : null, mode === 'poll' ? 5 : 1, start);
+    newest = Math.max(newest, Math.floor(start / 1000));
+    oldest = Math.min(oldest, Math.floor(start / 1000));
+  }
+  if (mode === 'backfill') {
+    if (list.length === PER_PAGE && Number.isFinite(oldest)) enqueue('strava', 'list', `backfill-${oldest}`, { mode: 'backfill', before: oldest }, 8);
+    else {
+      setSetting('strava_backfill_done', true);
+      log('strava', 'info', 'History backfill complete — all activities listed');
+    }
+  } else if (list.length === PER_PAGE) enqueue('strava', 'list', `poll-${after ?? 0}-${page + 1}`, { mode: 'poll', after, page: page + 1 }, 8);
   // advance cursor to newest seen (a day of overlap guards against late uploads)
   if (newest) {
     const cur = conn?.cursor ? Number(conn.cursor) : 0;
     const next = Math.max(cur, newest - 86400);
     q.run("UPDATE connections SET cursor = ?, last_sync_at = ?, last_error = NULL WHERE provider = 'strava'", String(next), new Date().toISOString());
   } else q.run("UPDATE connections SET last_sync_at = ?, last_error = NULL WHERE provider = 'strava'", new Date().toISOString());
-  if (list.length) log('strava', 'info', `Listed ${list.length} activities (page ${page})`);
+  if (list.length) log('strava', 'info', `Listed ${list.length} activities (${mode}${mode === 'backfill' && Number.isFinite(oldest) ? ` back to ${new Date(oldest * 1000).toISOString().slice(0, 10)}` : ''})`);
+}
+
+/** Resume an unfinished history backfill (also repairs connections made before this fix). */
+export function ensureStravaBackfill() {
+  const c = q.get("SELECT refresh_token FROM connections WHERE provider = 'strava'");
+  if (!c?.refresh_token || getSetting<boolean>('strava_backfill_done')) return;
+  const oldest = q.get("SELECT MIN(start_time) AS t FROM activities WHERE source = 'strava'")?.t as string | undefined;
+  const before = oldest ? Math.floor(Date.parse(oldest) / 1000) : undefined;
+  enqueue('strava', 'list', `backfill-${before ?? 'start'}`, { mode: 'backfill', before }, 8);
 }
 
 type StreamSet = Record<string, { data: unknown[] } | undefined>;
 
 /** Fetch full detail + streams for an activity and compute analytics. */
-export async function stravaSyncDetail(id: string): Promise<void> {
-  const detail = await api<StravaSummary>(`/activities/${id}?include_all_efforts=false`);
+export async function stravaSyncDetail(id: string, payload?: { lite?: boolean } | null): Promise<void> {
+  // lite: reuse the summary stored from the list call and only fetch streams (no laps/description)
+  const stored = payload?.lite ? q.get("SELECT summary FROM activities WHERE source = 'strava' AND external_id = ?", id)?.summary : null;
+  const detail = stored ? (JSON.parse(stored) as StravaSummary) : await api<StravaSummary>(`/activities/${id}?include_all_efforts=false`);
   let streams: StreamSet = {};
   try {
     streams = await api<StreamSet>(

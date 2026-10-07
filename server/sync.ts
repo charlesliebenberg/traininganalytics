@@ -1,11 +1,11 @@
 import { config, stravaConfigured } from './config';
 import { q } from './db';
 import { enqueue, kick, pauseInfo, queueSize, registerHandler, registerThrottle, worker } from './queue';
-import { stravaSyncAthlete, stravaSyncDetail, stravaSyncList, stravaThrottleUntil } from './providers/strava';
+import { ensureStravaBackfill, stravaSyncAthlete, stravaSyncDetail, stravaSyncList, stravaThrottleUntil } from './providers/strava';
 import type { Connection, SyncStatus } from '../shared/types';
 
 registerHandler('strava', 'list', (_id, payload) => stravaSyncList(payload));
-registerHandler('strava', 'detail', (id) => stravaSyncDetail(id));
+registerHandler('strava', 'detail', (id, payload) => stravaSyncDetail(id, payload));
 registerHandler('strava', 'athlete', () => stravaSyncAthlete());
 registerThrottle('strava', stravaThrottleUntil);
 
@@ -15,13 +15,14 @@ function connected(provider: string): boolean {
 
 /** Queue an incremental sync for every connected provider. */
 export function syncNow() {
-  if (connected('strava')) enqueue('strava', 'list', 'poll', { page: 1 }, 15);
+  if (connected('strava')) enqueue('strava', 'list', 'poll', { mode: 'poll', page: 1 }, 15);
 }
 
 export function startScheduler() {
   // TrainingPeaks support was removed; drop any leftover connection/queue rows
   q.run("DELETE FROM connections WHERE provider = 'trainingpeaks'");
   q.run("DELETE FROM sync_queue WHERE provider = 'trainingpeaks'");
+  ensureStravaBackfill();
   kick(2000); // resume any queued work from a previous run
   const ms = Math.max(1, config.syncIntervalMinutes) * 60_000;
   setInterval(syncNow, ms).unref();
