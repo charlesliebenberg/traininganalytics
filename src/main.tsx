@@ -3,7 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import './index.css';
-import { queryClient, useApi } from './lib/api';
+import { queryClient, setUnauthorizedHandler, useApi } from './lib/api';
+import { Login } from './pages/Login';
 import { ThemeContext, useThemeState } from './lib/theme';
 import { RangeProvider } from './lib/range';
 import { setUnits } from './lib/format';
@@ -23,6 +24,17 @@ const Calendar = page('Calendar', () => import('./pages/Calendar'));
 const Workouts = page('Workouts', () => import('./pages/Workouts'));
 const Season = page('Season', () => import('./pages/Season'));
 const Settings = page('Settings', () => import('./pages/Settings'));
+
+setUnauthorizedHandler(() => queryClient.invalidateQueries({ queryKey: ['/session'] }));
+
+/** Shows the login screen when the server is password protected and we have no session. */
+function AuthGate({ children }: { children: ReactNode }) {
+  const { data, isLoading, error } = useApi<{ required: boolean; authenticated: boolean }>('/session', { staleTime: Infinity });
+  if (isLoading) return null;
+  if (error) return <div className="p-10 text-center text-sm text-muted">Can't reach the server: {(error as Error).message}</div>;
+  if (data?.required && !data.authenticated) return <Login />;
+  return <>{children}</>;
+}
 
 function Prefs({ children }: { children: ReactNode }) {
   const { data } = useApi<Preferences>('/preferences');
@@ -44,6 +56,7 @@ function Root() {
       <QueryClientProvider client={queryClient}>
         <RangeProvider>
           <BrowserRouter>
+            <AuthGate>
             <Prefs>
               <Routes>
                 <Route element={<Layout />}>
@@ -62,6 +75,7 @@ function Root() {
                 </Route>
               </Routes>
             </Prefs>
+            </AuthGate>
           </BrowserRouter>
         </RangeProvider>
       </QueryClientProvider>

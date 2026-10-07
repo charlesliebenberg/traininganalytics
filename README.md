@@ -132,4 +132,11 @@ Per-activity metrics, mean-max curves (power, NP, HR, speed, VAM, fatigue-state 
 | `SYNC_INTERVAL_MINUTES` | `15` | Polling interval |
 | `DATA_DIR` | `./data` | Where `training.db` lives |
 
-This is a single-user app intended to run on your own machine or server. If you expose it publicly, put it behind authentication (e.g. a reverse proxy with basic auth or an identity-aware proxy).
+| `APP_PASSWORD` | | Password-protects the app (login screen). Set it for any public deployment |
+| `API_URL`, `CORS_ORIGINS` | | Only for a frontend calling the API cross-origin without a proxy |
+
+## Deploying
+
+Auto-deploy from GitHub with **Render** (backend + database) and **Vercel or Netlify** (frontend). See **[DEPLOY.md](DEPLOY.md)**: `render.yaml`, `vercel.json` and `netlify.toml` are included.
+
+This is a single-user app. Set `APP_PASSWORD` whenever it's reachable from the internet.

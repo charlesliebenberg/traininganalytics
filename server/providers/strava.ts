@@ -11,7 +11,7 @@ const SCOPES = 'read,activity:read_all,profile:read_all';
 export function stravaAuthUrl(state: string): string {
   const u = new URL('https://www.strava.com/oauth/authorize');
   u.searchParams.set('client_id', config.strava.clientId);
-  u.searchParams.set('redirect_uri', `${config.publicUrl}/api/auth/strava/callback`);
+  u.searchParams.set('redirect_uri', `${config.apiUrl}/api/auth/strava/callback`);
   u.searchParams.set('response_type', 'code');
   u.searchParams.set('approval_prompt', 'auto');
   u.searchParams.set('scope', SCOPES);
@@ -270,7 +270,7 @@ export async function stravaWebhookSubscribe(): Promise<string> {
   const existing = await fetch(
     `${API}/push_subscriptions?client_id=${config.strava.clientId}&client_secret=${config.strava.clientSecret}`,
   ).then((r) => r.json() as Promise<{ id: number; callback_url: string }[]>);
-  const callback = `${config.publicUrl}/api/webhooks/strava`;
+  const callback = `${config.apiUrl}/api/webhooks/strava`;
   for (const s of existing ?? []) {
     if (s.callback_url === callback) {
       q.run("UPDATE connections SET webhook_id = ? WHERE provider = 'strava'", String(s.id));

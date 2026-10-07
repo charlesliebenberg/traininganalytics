@@ -22,7 +22,7 @@ const hosts = () =>
     : { oauth: 'https://oauth.trainingpeaks.com', api: 'https://api.trainingpeaks.com' };
 
 const SCOPES = 'athlete:profile workouts:read workouts:details workouts:plan';
-const redirectUri = () => `${config.publicUrl}/api/auth/trainingpeaks/callback`;
+const redirectUri = () => `${config.apiUrl}/api/auth/trainingpeaks/callback`;
 
 export function tpAuthUrl(state: string): string {
   const u = new URL(`${hosts().oauth}/OAuth/Authorize`);

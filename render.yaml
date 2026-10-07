@@ -1,0 +1,38 @@
+# Render Blueprint — backend API (and a fully working copy of the app at its own URL).
+# Render → New → Blueprint → pick this repo. Every push to the branch auto-deploys.
+services:
+  - type: web
+    name: traininganalytics-api
+    runtime: node
+    # A persistent disk (for the SQLite database) needs a paid instance; on the free plan
+    # all data would be wiped on every deploy/restart.
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATA_DIR
+        value: /var/data
+      - key: APP_PASSWORD
+        sync: false # you choose it in the Render dashboard
+      - key: PUBLIC_URL
+        sync: false # URL you open the app at, e.g. https://traininganalytics.vercel.app
+      - key: STRAVA_CLIENT_ID
+        sync: false
+      - key: STRAVA_CLIENT_SECRET
+        sync: false
+      - key: STRAVA_WEBHOOK_VERIFY_TOKEN
+        generateValue: true
+      - key: TRAININGPEAKS_CLIENT_ID
+        sync: false
+      - key: TRAININGPEAKS_CLIENT_SECRET
+        sync: false
+      - key: SYNC_INTERVAL_MINUTES
+        value: "15"

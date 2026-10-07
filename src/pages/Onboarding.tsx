@@ -1,5 +1,5 @@
 import { Activity, Sparkles, Link2, Upload } from 'lucide-react';
-import { http, useAction } from '../lib/api';
+import { apiUrl, http, useAction } from '../lib/api';
 import { Button, Card } from '../components/ui';
 import { ImportDropzone } from '../components/Import';
 import { useStatus } from '../components/Layout';
@@ -25,7 +25,7 @@ export function Onboarding() {
       <div className="grid gap-4 md:grid-cols-2">
         <Card title={<span className="flex items-center gap-2"><Link2 className="h-4 w-4 text-accent" />Connect Strava</span>} subtitle="Automatic sync via webhooks + background polling">
           {strava?.configured ? (
-            <a href="/api/auth/strava/start">
+            <a href={apiUrl('/auth/strava/start')}>
               <Button variant="primary" className="w-full" style={{ background: '#fc4c02' }}>
                 Connect with Strava
               </Button>
@@ -38,7 +38,7 @@ export function Onboarding() {
         </Card>
         <Card title={<span className="flex items-center gap-2"><Link2 className="h-4 w-4 text-accent" />Connect TrainingPeaks</span>} subtitle="Workouts, planned sessions and device files">
           {tp?.configured ? (
-            <a href="/api/auth/trainingpeaks/start">
+            <a href={apiUrl('/auth/trainingpeaks/start')}>
               <Button variant="primary" className="w-full">
                 Connect with TrainingPeaks
               </Button>

@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { CheckCircle2, AlertTriangle, RefreshCw, Unplug, Webhook, Trash2, Sparkles, Calculator } from 'lucide-react';
 import type { Preferences, Thresholds } from '../../shared/types';
 import { HR_ZONES, PACE_ZONES, POWER_ZONES, zoneBounds } from '../../shared/analytics/zones';
-import { http, useAction, useApi } from '../lib/api';
+import { apiUrl, http, useAction, useApi } from '../lib/api';
 import { fmtDate, fmtPaceSec, iso } from '../lib/format';
 import { Badge, Button, Card, Field, Input, PageHeader, Segmented, Select, Tabs } from '../components/ui';
 import { ImportDropzone } from '../components/Import';
@@ -89,7 +89,7 @@ function ConnectionCard({ provider }: { provider: 'strava' | 'trainingpeaks' }) 
               ? 'Authorise read access to your activities. History is backfilled newest-first within Strava’s rate limits (≈200 activities/hour), then new activities sync automatically.'
               : 'Syncs completed workouts (with device files) and planned workouts from your TrainingPeaks calendar.'}
           </p>
-          <a href={`/api/auth/${provider}/start`}>
+          <a href={apiUrl(`/auth/${provider}/start`)}>
             <Button variant="primary" style={{ background: brand }}>
               Connect {name}
             </Button>
@@ -101,7 +101,7 @@ function ConnectionCard({ provider }: { provider: 'strava' | 'trainingpeaks' }) 
             Create an API application at <b>strava.com/settings/api</b>.
           </li>
           <li>
-            Set the Authorization Callback Domain to the host of <code className="rounded bg-surface-3 px-1">{status?.publicUrl}</code>.
+            Set the Authorization Callback Domain to <code className="rounded bg-surface-3 px-1">{status?.apiUrl ? new URL(status.apiUrl).hostname : ''}</code>.
           </li>
           <li>
             Put <code className="rounded bg-surface-3 px-1">STRAVA_CLIENT_ID</code> and <code className="rounded bg-surface-3 px-1">STRAVA_CLIENT_SECRET</code> in <code className="rounded bg-surface-3 px-1">.env</code> and restart.

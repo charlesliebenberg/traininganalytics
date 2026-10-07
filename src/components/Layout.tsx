@@ -18,6 +18,7 @@ import {
   Monitor,
   Activity,
   Menu,
+  LogOut,
 } from 'lucide-react';
 import { Suspense, useEffect, useState } from 'react';
 import { http, useApi, useAction } from '../lib/api';
@@ -25,7 +26,7 @@ import { useTheme } from '../lib/theme';
 import { Spinner } from './ui';
 import type { SyncStatus } from '../../shared/types';
 
-export type Status = SyncStatus & { job: { kind: string; message: string | null; progress: number } | null; demo: boolean; publicUrl: string };
+export type Status = SyncStatus & { job: { kind: string; message: string | null; progress: number } | null; demo: boolean; publicUrl: string; apiUrl: string };
 
 export function useStatus() {
   return useApi<Status>('/status', {
@@ -104,6 +105,18 @@ function ThemeSwitch() {
   );
 }
 
+function SignOut() {
+  const { data } = useApi<{ required: boolean }>('/session', { staleTime: Infinity });
+  const out = useAction(() => http('/session/logout', { method: 'POST' }));
+  if (!data?.required) return null;
+  return (
+    <button onClick={() => out.mutate(undefined)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-ink">
+      <LogOut className="h-3.5 w-3.5" />
+      Sign out
+    </button>
+  );
+}
+
 export function Layout() {
   const [open, setOpen] = useState(false);
   const loc = useLocation();
@@ -159,6 +172,7 @@ export function Layout() {
           </NavLink>
           <SyncPill />
           <ThemeSwitch />
+          <SignOut />
         </div>
       </aside>
       {open && <div className="fixed inset-0 z-[800] bg-black/40 lg:hidden" onClick={() => setOpen(false)} />}

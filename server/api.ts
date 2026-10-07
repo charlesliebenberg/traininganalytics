@@ -60,7 +60,8 @@ api.onError((err, c) => {
   return c.json({ error: err.message }, 500);
 });
 
-api.get('/status', (c) => c.json({ ...syncStatus(), job: job.kind ? { ...job } : null, demo: isDemo(), publicUrl: config.publicUrl }));
+api.get('/health', (c) => c.json({ ok: true }));
+api.get('/status', (c) => c.json({ ...syncStatus(), job: job.kind ? { ...job } : null, demo: isDemo(), publicUrl: config.publicUrl, apiUrl: config.apiUrl }));
 
 // ---------- preferences & thresholds ----------
 api.get('/preferences', (c) => c.json(getPreferences()));
@@ -514,15 +515,15 @@ const checkState = (s: string | undefined) => {
 };
 
 api.get('/auth/strava/start', (c) => {
-  if (!stravaConfigured()) return c.redirect('/settings?error=strava-not-configured');
+  if (!stravaConfigured()) return c.redirect(config.publicUrl + '/settings?error=strava-not-configured');
   return c.redirect(stravaAuthUrl(newState()));
 });
 api.get('/auth/strava/callback', async (c) => {
   const { code, scope, state, error } = c.req.query();
-  if (error || !code || !checkState(state)) return c.redirect(`/settings?error=${encodeURIComponent(error ?? 'strava-auth-failed')}`);
-  if (!scope?.includes('activity:read')) return c.redirect('/settings?error=strava-scope');
+  if (error || !code || !checkState(state)) return c.redirect(`${config.publicUrl}/settings?error=${encodeURIComponent(error ?? 'strava-auth-failed')}`);
+  if (!scope?.includes('activity:read')) return c.redirect(config.publicUrl + '/settings?error=strava-scope');
   await stravaExchangeCode(code, scope);
-  return c.redirect('/settings?connected=strava');
+  return c.redirect(config.publicUrl + '/settings?connected=strava');
 });
 api.post('/auth/strava/disconnect', (c) => {
   stravaDisconnect();
@@ -544,14 +545,14 @@ api.post('/webhooks/strava', async (c) => {
 });
 
 api.get('/auth/trainingpeaks/start', (c) => {
-  if (!tpConfigured()) return c.redirect('/settings?error=trainingpeaks-not-configured');
+  if (!tpConfigured()) return c.redirect(config.publicUrl + '/settings?error=trainingpeaks-not-configured');
   return c.redirect(tpAuthUrl(newState()));
 });
 api.get('/auth/trainingpeaks/callback', async (c) => {
   const { code, state, error } = c.req.query();
-  if (error || !code || !checkState(state)) return c.redirect(`/settings?error=${encodeURIComponent(error ?? 'trainingpeaks-auth-failed')}`);
+  if (error || !code || !checkState(state)) return c.redirect(`${config.publicUrl}/settings?error=${encodeURIComponent(error ?? 'trainingpeaks-auth-failed')}`);
   await tpExchangeCode(code);
-  return c.redirect('/settings?connected=trainingpeaks');
+  return c.redirect(config.publicUrl + '/settings?connected=trainingpeaks');
 });
 api.post('/auth/trainingpeaks/disconnect', (c) => {
   tpDisconnect();

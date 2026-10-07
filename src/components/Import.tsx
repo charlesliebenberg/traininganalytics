@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { UploadCloud, CheckCircle2, AlertCircle, MinusCircle } from 'lucide-react';
 import clsx from 'clsx';
 import { useQueryClient } from '@tanstack/react-query';
+import { apiUrl } from '../lib/api';
 
 interface Result {
   file: string;
@@ -27,7 +28,7 @@ export function ImportDropzone({ compact = false }: { compact?: boolean }) {
       const fd = new FormData();
       batch.forEach((f) => fd.append('files', f, f.name));
       try {
-        const res = await fetch('/api/import', { method: 'POST', body: fd });
+        const res = await fetch(apiUrl('/import'), { method: 'POST', body: fd, credentials: 'include' });
         out.push(...((await res.json()) as Result[]));
       } catch (e) {
         batch.forEach((f) => out.push({ file: f.name, status: 'error', message: (e as Error).message }));
