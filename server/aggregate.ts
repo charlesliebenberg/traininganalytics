@@ -6,7 +6,6 @@ import { fitCp2, fitPowerDuration, curvePoints, type PdModel } from '../shared/a
 import { polarizationIndex } from '../shared/analytics/zones';
 import { BEST_EFFORT_DISTANCES } from '../shared/analytics/running';
 import { getPreferences, q, thresholdsFor } from './db';
-import { activityHrBins } from './hrbins';
 
 export const iso = (d: Date) => format(d, 'yyyy-MM-dd');
 export const today = () => iso(new Date());
@@ -267,53 +266,6 @@ export function trends(from: string, to: string, bucket: 'week' | 'month') {
     efRun: avg(_efr),
     decoupling: avg(decRolling(i)),
   }));
-}
-
-/** Heart-rate band treated as "aerobic" for the trend: 80–88 % of LTHR, in 5-bpm bins. */
-export function aerobicBands() {
-  const th = thresholdsFor(today());
-  const band = (lthr: number): [number, number] => [Math.round((lthr * 0.8) / 5) * 5, Math.round((lthr * 0.88) / 5) * 5];
-  return { ride: band(th.lthr), run: band(th.runLthr || th.lthr) };
-}
-
-const median = (xs: number[]) => {
-  const s = [...xs].sort((a, b) => a - b);
-  return s.length ? (s.length % 2 ? s[s.length >> 1] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : null;
-};
-
-/**
- * Aerobic fitness per bucket, the robust way: the median power (rides) or grade-adjusted
- * speed (runs) of steady 10-minute stretches ridden or run at an aerobic heart rate. Unlike
- * efficiency factor it doesn't change with how hard the session was — only with fitness.
- */
-export function aerobicTrend(from: string, to: string, bucket: 'week' | 'month') {
-  const bands = aerobicBands();
-  const prefs = getPreferences();
-  const keyOf = (d: string) => iso(bucket === 'week' ? startOfWeek(parseISO(d), { weekStartsOn: prefs.weekStart }) : startOfMonth(parseISO(d)));
-  const rows = q.all<{ id: number; local_date: string; sport: string; data: string | null }>(
-    `SELECT a.id, a.local_date, a.sport, h.data FROM activities a LEFT JOIN hr_power h ON h.activity_id = a.id
-     WHERE a.has_hr = 1 AND a.local_date BETWEEN ? AND ? AND ((a.sport = 'ride' AND a.has_power = 1) OR a.sport = 'run')`,
-    from,
-    to,
-  );
-  const acc = new Map<string, { ride: number[]; run: number[] }>();
-  for (const r of rows) {
-    const bins = activityHrBins(r.id, r.sport, r.data);
-    const [lo, hi] = r.sport === 'ride' ? bands.ride : bands.run;
-    const e = acc.get(keyOf(r.local_date)) ?? { ride: [], run: [] };
-    for (const [bin, vals] of Object.entries(bins)) if (Number(bin) >= lo && Number(bin) <= hi) (r.sport === 'ride' ? e.ride : e.run).push(...vals);
-    acc.set(keyOf(r.local_date), e);
-  }
-  // weekly buckets pool the 4 weeks ending there: a single week rarely has enough steady
-  // stretches at an aerobic heart rate
-  const out: Record<string, { power: number | null; speed: number | null; rideWindows: number; runWindows: number }> = {};
-  for (const k of acc.keys()) {
-    const keys = bucket === 'week' ? [0, 1, 2, 3].map((w) => iso(subDays(parseISO(k), 7 * w))) : [k];
-    const ride = keys.flatMap((x) => acc.get(x)?.ride ?? []);
-    const run = keys.flatMap((x) => acc.get(x)?.run ?? []);
-    out[k] = { power: ride.length >= 10 ? median(ride) : null, speed: run.length >= 10 ? median(run) : null, rideWindows: ride.length, runWindows: run.length };
-  }
-  return { bands, buckets: out };
 }
 
 // ---------- records ----------

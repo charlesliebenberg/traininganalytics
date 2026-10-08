@@ -104,7 +104,7 @@ export function Gap({ peak, hr }: { peak: PeakCard; hr: HrCompareResponse | unde
                 Each point is the median power of steady 10-minute stretches at that heart rate ({fmtDate(hr.thenRange[0], 'MMM yyyy')} – {fmtDate(hr.thenRange[1], 'MMM yyyy')} vs the last 4 months
                 {hr.outdoorOnly ? ', outdoor rides only — indoors, heat raises heart rate' : ''}).{' '}
                 {c?.ratio != null && c.shared.length >= 3
-                  ? `Where both periods have data you make ${Math.round(c.ratio * 100)}% of the power you did then at the same heart rate. `
+                  ? `Where both periods have data you make ${Math.round(c.ratio * 100)}% of the power you did then at the same heart rate${hr.aerobic ? ` — ${Math.round(hr.aerobic.ratio * 100)}% once heat, fatigue and indoor riding are taken out of both` : ''}. `
                   : `There's too little overlap to compare (${hr.thenRides} rides then, ${hr.nowRides} now). `}
                 Heart rate stops rising near your limit, so the top of each line — how high it reaches — shows what you could sustain. This assumes both power meters read alike.
               </p>

@@ -21,12 +21,10 @@ interface Bucket {
   efRide: number | null;
   efRun: number | null;
   decoupling: number | null;
-  aerobic: { power: number | null; speed: number | null; rideWindows: number; runWindows: number } | null;
 }
 type Item = Bucket | { gap: Gap };
 interface TrendsData {
   buckets: Bucket[];
-  bands: { ride: [number, number]; run: [number, number] };
 }
 
 /** Category labels, with a folded break shown as "5.8 yr off". */
@@ -260,17 +258,12 @@ export function Trends() {
     const first = list.findIndex((b) => Object.keys(b.sports).length > 0);
     return foldEmptyBuckets(first > 0 ? list.slice(first) : list, (b) => Object.keys(b.sports).length === 0, bucket === 'week' ? 13 : 3);
   }, [data, bucket]);
-  const bands = data?.bands;
-  const pace = (v: number) => {
-    const sec = 1000 / v;
-    return `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`;
-  };
   const folded = items.some(isGap);
   return (
     <div>
       <PageHeader
         title="Trends"
-        subtitle="Volume, intensity distribution and aerobic fitness over time"
+        subtitle="Volume, intensity distribution and durability over time"
         actions={
           <>
             <Segmented value={bucket} onChange={setBucket} options={[{ value: 'week', label: 'Weekly' }, { value: 'month', label: 'Monthly' }]} />
@@ -301,17 +294,13 @@ export function Trends() {
               <LineTrend items={items} bucket={bucket} height={280} threshold={{ value: 2, label: 'polarized' }} lines={[{ name: 'Polarization index', color: t.series[6], get: (b) => b.polarization, fmt: (v) => v.toFixed(2) }]} />
             </Card>
           </div>
-          <div className="mt-4 grid gap-4 xl:grid-cols-3">
-            <Card title="Aerobic power" subtitle={bands ? `Median power of steady 10-min stretches ridden at ${bands.ride[0]}–${bands.ride[1]} bpm (80–88 % of LTHR)${bucket === 'week' ? ', over the 4 weeks ending each week' : ''}. Rising = fitter aerobic engine; unlike EF it doesn't depend on how hard the session was.` : ''}>
-              <LineTrend items={items} bucket={bucket} lines={[{ name: 'Power at aerobic heart rate', color: t.series[0], get: (b) => b.aerobic?.power ?? null, fmt: (v) => `${Math.round(v)} W` }]} />
-            </Card>
-            <Card title="Aerobic pace" subtitle={bands ? `Median grade-adjusted pace of steady 10-min stretches run at ${bands.run[0]}–${bands.run[1]} bpm${bucket === 'week' ? ', over the 4 weeks ending each week' : ''}. Faster = fitter.` : ''}>
-              <LineTrend items={items} bucket={bucket} inverse lines={[{ name: 'Pace at aerobic heart rate', color: t.series[1], get: (b) => b.aerobic?.speed ?? null, fmt: (v) => `${pace(v)} /km` }]} />
-            </Card>
-            <Card title="Aerobic decoupling" subtitle={`Pw:HR / Pa:HR drift on steady sessions of an hour or more, ridden evenly${bucket === 'week' ? ', averaged over 4 weeks' : ''}. Under 5 % = aerobically durable.`}>
-              <LineTrend items={items} bucket={bucket} threshold={{ value: 5, label: '5%' }} lines={[{ name: 'Decoupling', color: t.series[2], get: (b) => b.decoupling, fmt: (v) => `${v.toFixed(1)}%` }]} />
-            </Card>
-          </div>
+          <Card
+            className="mt-4"
+            title="Aerobic decoupling"
+            subtitle={`Pw:HR / Pa:HR drift on steady sessions of an hour or more, ridden evenly${bucket === 'week' ? ', averaged over 4 weeks' : ''}. Under 5 % = aerobically durable. Aerobic fitness itself is on Fitness & Form.`}
+          >
+            <LineTrend items={items} bucket={bucket} height={240} threshold={{ value: 5, label: '5%' }} lines={[{ name: 'Decoupling', color: t.series[2], get: (b) => b.decoupling, fmt: (v) => `${v.toFixed(1)}%` }]} />
+          </Card>
           <Card className="mt-4" title="Year over year" subtitle="Cumulative totals by day of year, every year you trained — this year and your biggest year highlighted" actions={<Segmented size="sm" value={yoy} onChange={setYoy} options={[{ value: 'distance', label: 'Distance' }, { value: 'time', label: 'Time' }, { value: 'tss', label: 'TSS' }]} />}>
             <YearOverYear metric={yoy} />
           </Card>

@@ -6,7 +6,8 @@ import { qs, useApi } from '../lib/api';
 import { useRange, resolvePreset } from '../lib/range';
 import { useTokens, alpha } from '../lib/theme';
 import { fmtDate, fmtNum, iso, SPORT_LABEL } from '../lib/format';
-import { Card, Field, Input, PageHeader, Select, Spinner, Stat, Toggle } from '../components/ui';
+import { Card, Empty, Field, Input, PageHeader, Segmented, Select, Spinner, Stat, Toggle } from '../components/ui';
+import { AerobicChart, outText, type AerobicSport, type AerobicTrendData } from '../components/insights';
 import { RangePicker } from '../components/RangePicker';
 import { FormLegend, PmcChart, formColor } from '../components/charts';
 import { Chart, axisStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
@@ -49,7 +50,7 @@ function MonotonyChart({ points }: { points: PmcPoint[] }) {
     const tl = gaps.length ? makeTimeline(gaps) : null;
     const x = actual.map((p) => (tl ? tl.toX(parseISO(p.date).getTime()) : parseISO(p.date).getTime()));
     const span = x.length ? x[x.length - 1] - x[0] : 0;
-    const label = (v: number) => fmtDate(new Date(tl ? tl.fromX(v) : v), span > 300 * 86400_000 ? 'MMM yy' : 'd MMM');
+    const label = (v: number) => (tl?.inBreak(v) ? '' : fmtDate(new Date(tl ? tl.fromX(v) : v), span > 300 * 86400_000 ? 'MMM yy' : 'd MMM'));
     const bands = tl
       ? { markArea: { silent: true, itemStyle: { color: alpha(t.muted, 0.1) }, label: { show: false }, data: tl.breaks.map((g) => [{ xAxis: g.x0, name: `${monthsText(g.days)} off` }, { xAxis: g.x1 }]) } }
       : {};
@@ -152,6 +153,52 @@ function GoalCalculator({ current }: { current: PmcPoint | undefined }) {
   );
 }
 
+/**
+ * Measured aerobic fitness: what the heart rate says the training did, as opposed to CTL,
+ * which counts the training.
+ */
+function AerobicFitnessCard() {
+  const [sport, setSport] = useState<AerobicSport>('ride');
+  const { data, isLoading } = useApi<AerobicTrendData | null>(`/aerobic${qs({ sport })}`);
+  const m = data?.model;
+  const ch = data?.change;
+  return (
+    <Card
+      className="mt-4"
+      title="Aerobic fitness"
+      subtitle={
+        m
+          ? `What you hold at ${m.refHr} bpm, read from the steady stretches of every ${sport} with ${sport === 'ride' ? 'power and ' : ''}heart rate — under standard conditions (15 °C, outdoors, rested). CTL counts your training; this measures what it did. The line is fitness with its ±1 sd band; each dot is one ${sport}, which on its own is noisy.`
+          : 'What your heart rate says about fitness, from steady riding and running.'
+      }
+      actions={<Segmented size="sm" value={sport} onChange={setSport} options={[{ value: 'ride', label: 'Ride' }, { value: 'run', label: 'Run' }]} />}
+    >
+      {isLoading ? (
+        <Spinner />
+      ) : !data || !m ? (
+        <Empty title="Not enough steady data yet">
+          This needs at least 8 {sport === 'ride' ? 'rides with power' : 'runs'} recorded with a heart-rate strap, each with 20 minutes or more of steady effort.
+        </Empty>
+      ) : (
+        <>
+          <div className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-4">
+            <Stat label={`At ${m.refHr} bpm`} value={outText(sport, data.current.value)} sub={`likely ${outText(sport, data.current.lo)}–${outText(sport, data.current.hi)}`} />
+            <Stat
+              label="12-week change"
+              value={ch ? `${ch.pct >= 0 ? '+' : '−'}${Math.abs(ch.pct).toFixed(0)}%` : '–'}
+              sub={ch ? `±${Math.max(1, Math.round(ch.sdPct))}% · since ${fmtDate(ch.from, 'd MMM')}` : 'needs 3+ weeks of data'}
+              title={ch ? `From ${outText(sport, ch.fromValue)} on ${fmtDate(ch.from, 'd MMM yyyy')}` : undefined}
+            />
+            <Stat label="Heat" value={`${m.heat.toFixed(1)} bpm`} sub="more per °C, from you" title="How much each degree raises your heart rate at the same output, learned from your rides" />
+            <Stat label="Fatigue" value={`${(m.fatigue * 10).toFixed(1)} bpm`} sub="less per 10 TSB below 0" title={`How much carried fatigue holds your heart rate down, learned from your data${m.indoor && sport === 'ride' ? `; indoors your heart rate reads ${Math.abs(m.indoor).toFixed(0)} bpm ${m.indoor < 0 ? 'lower' : 'higher'}` : ''}`} />
+          </div>
+          <AerobicChart sport={sport} points={data.points} height={300} />
+        </>
+      )}
+    </Card>
+  );
+}
+
 export function Fitness() {
   const t = useTokens();
   const { range } = useRange();
@@ -210,6 +257,7 @@ export function Fitness() {
       >
         {isLoading || !points ? <Spinner /> : <PmcChart points={points} events={visibleEvents} height={520} />}
       </Card>
+      <AerobicFitnessCard />
       <div className="mt-4 grid gap-4 xl:grid-cols-3">
         <Card title="Weekly ramp rate" subtitle="CTL gained per week — keep most weeks under 5–8">
           {points && <RampChart points={points.filter((p) => !p.projected).slice(-7 * 26)} />}

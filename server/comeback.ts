@@ -3,7 +3,8 @@ import type { PmcPoint, SeasonPlanConfig } from '../shared/types';
 import { byEffortDate, classifySession, detectPeaks, effortDate, summarizeBuild } from '../shared/analytics/comeback';
 import { capacityAt, daysToTarget, fitCapacity, ltlSeries, type CapacityDay, type CapacityModel } from '../shared/analytics/capacity';
 import { compareHrProfiles, hrProfile, type HrBins } from '../shared/analytics/hrprofile';
-import { activityHrBins } from './hrbins';
+import { activityHrBins } from './windows';
+import { aerobicThenNow } from './aerobic';
 import { generateSeasonPlan } from '../shared/analytics/plan';
 import { CURVE_DURATIONS } from '../shared/analytics/series';
 import { ACTIVITY_LIST_COLUMNS, getPreferences, getSetting, listThresholds, q, rowToActivity, setSetting, thresholdsFor } from './db';
@@ -331,13 +332,13 @@ export function months(date: string) {
 
 /** Steady-window bins per ride, computed from streams once and cached. */
 function ridesWithBins(from: string, to: string): { indoor: boolean; bins: HrBins }[] {
-  const rows = q.all<{ id: number; trainer: number; data: string | null }>(
-    `SELECT a.id, a.trainer, h.data FROM activities a LEFT JOIN hr_power h ON h.activity_id = a.id
+  const rows = q.all<{ id: number; trainer: number; local_date: string; data: string | null }>(
+    `SELECT a.id, a.trainer, a.local_date, h.data FROM activities a LEFT JOIN steady_windows h ON h.activity_id = a.id
      WHERE a.sport = 'ride' AND a.has_power = 1 AND a.has_hr = 1 AND a.local_date BETWEEN ? AND ?`,
     from,
     to,
   );
-  return rows.map((r) => ({ indoor: !!r.trainer, bins: activityHrBins(r.id, 'ride', r.data) }));
+  return rows.map((r) => ({ indoor: !!r.trainer, bins: activityHrBins(r.id, 'ride', r.local_date, r.data) }));
 }
 
 /**
@@ -365,6 +366,8 @@ export function hrCompare(date: string) {
     outdoorOnly,
     thenRides: use(thenRides).length,
     nowRides: use(nowRides).length,
+    // the same question on the aerobic model: heat, fatigue and indoor riding taken out
+    aerobic: aerobicThenNow('ride', date),
   };
 }
 

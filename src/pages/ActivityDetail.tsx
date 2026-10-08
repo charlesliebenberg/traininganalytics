@@ -7,6 +7,7 @@ import { useTokens } from '../lib/theme';
 import { Badge, Button, Card, Input, Segmented, Spinner, SportIcon, Stat, Empty, Select } from '../components/ui';
 import { RouteMap, type RouteMapHandle } from '../components/RouteMap';
 import { MiniProfile } from '../components/charts';
+import { InsightPanel, type ActivityInsights } from '../components/insights';
 import { StreamsChart, buildChannels, isPaceSport, type ChannelKey } from './activity/StreamsChart';
 import { ActivityCurveCard, BestEffortsCard, DecouplingCard, DistributionCard, QuadrantCard, SegmentsCard, SelectionStats, ZonesCard, findBest } from './activity/panels';
 import { fmtDate, fmtDistance, fmtDuration, fmtElevation, fmtNum, fmtPace, fmtSpeed, fmtTemp, SPORT_LABEL, TSS_METHOD_LABEL } from '../lib/format';
@@ -55,6 +56,7 @@ export function ActivityDetail() {
   const t = useTokens();
   const { data: a, isLoading, error } = useApi<DetailResponse>(`/activities/${id}`);
   const prefs = useApi<{ crankLength: number }>('/preferences');
+  const insights = useApi<ActivityInsights>(`/activities/${id}/insights`);
   const mapRef = useRef<RouteMapHandle>(null);
   const [xMode, setXMode] = useState<'time' | 'distance'>('time');
   const [smooth, setSmooth] = useState(5);
@@ -191,6 +193,13 @@ export function ActivityDetail() {
           <Stat key={m.label} {...m} />
         ))}
       </div>
+
+      {/* what it says about fitness: heart-rate evidence and efforts in context */}
+      {insights.data && (insights.data.aerobic || insights.data.efforts.length > 0) && (
+        <Card className="mt-4" title={`What this ${a.sport === 'run' ? 'run' : a.sport === 'ride' ? 'ride' : 'session'} says`}>
+          <InsightPanel insights={insights.data} />
+        </Card>
+      )}
 
       {a.planned && (
         <div className="mt-4">

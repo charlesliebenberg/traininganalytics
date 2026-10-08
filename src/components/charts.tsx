@@ -56,7 +56,7 @@ export function PmcChart({ points, events = [], height = 420, compact = false, s
       gridIndex: i,
       ...(tl ? { min: ts(points[0].date), max: ts(points[points.length - 1].date), splitNumber: 8 } : {}),
       ...axisStyle(t, { grid: false }),
-      axisLabel: { show: i === grids.length - 1, color: t.muted, fontSize: 11, hideOverlap: true, ...(tl ? { formatter: (v: number) => fmtDate(new Date(tl.fromX(v)), 'MMM yy') } : {}) },
+      axisLabel: { show: i === grids.length - 1, color: t.muted, fontSize: 11, hideOverlap: true, ...(tl ? { formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), 'MMM yy')) } : {}) },
       axisLine: { show: true, lineStyle: { color: t.lineStrong } },
     }));
     const breakBands = (labels: boolean) =>

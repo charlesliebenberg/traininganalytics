@@ -23,12 +23,13 @@ import {
   upsertThresholds,
   DEFAULT_THRESHOLDS,
 } from './db';
-import { aerobicTrend, aggregateCurve, dailyLoads, iso, modelHistory, pmc, powerModel, records, today, trends, type CurveType } from './aggregate';
+import { aggregateCurve, dailyLoads, iso, modelHistory, pmc, powerModel, records, today, trends, type CurveType } from './aggregate';
 import { linkPlanned, recalculate, recalculateAsync } from './ingest';
 import { importFile } from './importers/files';
 import { clearDemo, isDemo, loadDemo } from './demo';
 import { syncNow, syncStatus } from './sync';
 import * as comeback from './comeback';
+import { activityInsights, aerobicTrend, latestInsights } from './aerobic';
 import { snapshot } from './snapshot';
 import { SPORTS, estimateOn, estimateState, refreshEstimates, storedHrSeries, storedSeries } from './estimates';
 import type { ThresholdSport } from '../shared/analytics/thresholds';
@@ -225,6 +226,14 @@ api.get('/activities', (c) => {
   return c.json({ items: rows.map(rowToActivity), total: total?.n ?? 0, totals: total });
 });
 
+api.get('/activities/:id/insights', (c) => {
+  const r = activityInsights(Number(c.req.param('id')));
+  return r ? c.json(r) : c.json({ error: 'Not found' }, 404);
+});
+
+/** Aerobic fitness through time, from heart rate (rides: power; runs: grade-adjusted pace). */
+api.get('/aerobic', (c) => c.json(aerobicTrend(c.req.query('sport') === 'run' ? 'run' : 'ride')));
+
 api.get('/activities/:id', (c) => {
   const id = Number(c.req.param('id'));
   const a = getActivity(id);
@@ -300,8 +309,7 @@ api.get('/model/history', (c) => {
 api.get('/trends', (c) => {
   const { from, to } = range(c, 365);
   const bucket = c.req.query('bucket') === 'month' ? 'month' : 'week';
-  const aerobic = aerobicTrend(from, to, bucket);
-  return c.json({ buckets: trends(from, to, bucket).map((b) => ({ ...b, aerobic: aerobic.buckets[b.start] ?? null })), bands: aerobic.bands });
+  return c.json({ buckets: trends(from, to, bucket) });
 });
 
 api.get('/records', (c) => c.json(records()));
@@ -343,6 +351,7 @@ api.get('/dashboard', (c) => {
   const eventPoint = nextEvent ? points.find((p) => p.date === nextEvent.date) ?? null : null;
   const model = powerModel(iso(subDays(new Date(), 90)), t).model;
   return c.json({
+    latest: latestInsights(),
     today: todayPt,
     form: todayPt ? formZone(todayPt.tsb, todayPt.ctl) : null,
     pmc: points,

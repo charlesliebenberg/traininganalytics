@@ -44,7 +44,9 @@ export function makeTimeline(gaps: Gap[]) {
     });
   /** a break between two dates (a line shouldn't be drawn across it) */
   const breakBetween = (a: string, b: string) => breaks.some((g) => g.a > parseISO(a).getTime() && g.a < parseISO(b).getTime());
-  return { toX, fromX, breaks, hidden, breakBetween };
+  /** an axis position inside a squeezed break: a tick there would show a date nobody trained on */
+  const inBreak = (x: number) => breaks.some((g) => x > g.x0 && x < g.x1);
+  return { toX, fromX, breaks, hidden, breakBetween, inBreak };
 }
 export type Timeline = ReturnType<typeof makeTimeline>;
 

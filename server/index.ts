@@ -11,6 +11,7 @@ import { authEnabled, requireAuth, session } from './auth';
 import { startScheduler } from './sync';
 import { ingestEvents } from './ingest';
 import { scheduleEstimateRefresh, upgradeMetrics } from './estimates';
+import { warmAerobic } from './aerobic';
 import { log } from './db';
 
 const app = new Hono();
@@ -38,14 +39,28 @@ serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`Open ${config.publicUrl}`);
   if (config.production && !authEnabled()) console.warn('WARNING: APP_PASSWORD is not set — anyone who can reach this server can read and change your data.');
   startScheduler();
-  ingestEvents.onSaved.push(() => scheduleEstimateRefresh());
+  ingestEvents.onSaved.push(() => {
+    scheduleEstimateRefresh();
+    scheduleWarm();
+  });
   // after a metrics change, rebuild stored activities once (in the background); otherwise
   // just refresh the threshold estimates
   setTimeout(() => {
     upgradeMetrics()
       .then((did) => {
         if (!did) scheduleEstimateRefresh(0);
+        scheduleWarm();
       })
       .catch((e) => log(null, 'error', `Metrics upgrade failed: ${(e as Error).message}`));
   }, 3000);
 });
+
+/** Steady stretches for new activities and the aerobic models, computed off the request path. */
+let warmTimer: NodeJS.Timeout | null = null;
+function scheduleWarm() {
+  if (warmTimer) clearTimeout(warmTimer);
+  warmTimer = setTimeout(() => {
+    warmTimer = null;
+    warmAerobic().catch((e) => log(null, 'error', `Aerobic model failed: ${(e as Error).message}`));
+  }, 8000);
+}

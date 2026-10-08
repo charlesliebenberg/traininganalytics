@@ -15,6 +15,8 @@ import { estimateHrThresholds, estimateThreshold, limitDeclines } from './thresh
 import { byEffortDate, classifySession, detectPeaks, effortDate } from './comeback';
 import { daysToTarget, fitCapacity, loadForTarget, ltlSeries, projectCapacity, quantileLine, type CapacityDay } from './capacity';
 import { compareHrProfiles, hrPowerWindows, hrProfile } from './hrprofile';
+import { curveHr, fitAerobic, fitnessChange, kineticBins, outputAt, steadyWindows, WINDOW_SPECS, type AerobicActivity, type SteadyWindow } from './aerobic';
+import { rideEffortFindings, runEffortFindings, verdict } from './insights';
 import { addDays, differenceInCalendarDays, format, parseISO } from 'date-fns';
 const iso = (d: Date) => format(d, 'yyyy-MM-dd');
 import type { Thresholds } from '../types';
@@ -478,5 +480,136 @@ describe('threshold floors and heart-rate thresholds', () => {
     expect(e.lthr).toBe(180); // second highest: the 199 strap glitch doesn't set it
     expect(e.runLthr).toBe(180); // easy-only running doesn't drag run LTHR below the bike value
     expect(e.maxHr).toBe(195);
+  });
+});
+
+describe('aerobic fitness from heart rate', () => {
+  // deterministic noise
+  const rng = (seed: number) => () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+  const gauss = (r: () => number) => () => Math.sqrt(-2 * Math.log(r() + 1e-12)) * Math.cos(2 * Math.PI * r());
+  /** rides every other day for 200 days: fitness improves 10 bpm, weather and fatigue vary */
+  function synth(extra: Record<number, number> = {}): AerobicActivity[] {
+    const r = rng(7);
+    const g = gauss(r);
+    const acts: AerobicActivity[] = [];
+    for (let d = 0; d < 200; d += 2) {
+      const fitness = 5 - (10 * d) / 200;
+      const temp = 18 + 7 * Math.sin(d / 25) + 4 * g();
+      const tsb = -10 + 12 * g();
+      const day = 2.5 * g() + (extra[d] ?? 0);
+      const windows: SteadyWindow[] = [];
+      const n = 4 + Math.floor(r() * 16);
+      for (let i = 0; i < n; i++) {
+        const out = 160 + 130 * r();
+        windows.push({ t: 600 + i * 60, out, hr: 70 + 0.35 * out + fitness + 0.6 * (temp - 15) + 0.15 * tsb + day + 1.5 * g(), temp });
+      }
+      acts.push({ id: d + 1, date: format(addDays(new Date(2026, 0, 5), d), 'yyyy-MM-dd'), indoor: false, tsb, windows });
+    }
+    return acts;
+  }
+
+  it('learns heat and fatigue from the data and follows a fitness trend through them', () => {
+    const fit = fitAerobic(synth(), 'ride')!;
+    expect(fit.model.heat).toBeGreaterThan(0.4);
+    expect(fit.model.heat).toBeLessThan(0.8);
+    expect(fit.model.fatigue).toBeGreaterThan(0.08);
+    expect(fit.model.fatigue).toBeLessThan(0.22);
+    // first and last 20 days (true difference 9 bpm): the very ends of a smoother are its noisiest
+    const avg = (ps: typeof fit.points) => ps.reduce((t, p) => t + p.smooth.fitness.mean, 0) / ps.length;
+    const first = avg(fit.points.slice(0, 10));
+    const last = avg(fit.points.slice(-10));
+    expect(first - last).toBeGreaterThan(7);
+    expect(first - last).toBeLessThan(11.5);
+    // fitter = more output at the reference heart rate
+    expect(outputAt(fit.model, last)).toBeGreaterThan(outputAt(fit.model, first) + 15);
+    // a change over six weeks is known better than either level (shared evidence), and covers the truth
+    const j = fit.points.length - 1;
+    const i = j - 21;
+    const ch = fitnessChange(fit, i, j)!;
+    const indep = Math.hypot(fit.points[i].smooth.fitness.sd, fit.points[j].smooth.fitness.sd);
+    expect(ch.sd).toBeLessThan(indep);
+    const truth = -(10 * (fit.points[j].id - fit.points[i].id)) / 200;
+    expect(Math.abs(ch.diff - truth)).toBeLessThan(2.5 * ch.sd + 1);
+    // most rides are unremarkable
+    const zs = fit.points.map((p) => p.z).filter((z): z is number => z != null);
+    expect(zs.filter((z) => Math.abs(z) > 2.5).length).toBeLessThan(zs.length * 0.05);
+  });
+
+  it('flags a ride that cost far less heart rate than its history predicted', () => {
+    const fit = fitAerobic(synth({ 150: -12 }), 'ride')!;
+    const p = fit.points.find((x) => x.id === 151)!;
+    expect(p.z!).toBeLessThan(-2);
+    // one ride moves the estimate, but only part of the way: it could be a good day
+    expect(p.post.fitness.mean).toBeLessThan(p.prior!.fitness.mean);
+    expect(p.prior!.fitness.mean - p.post.fitness.mean).toBeLessThan(12 * 0.6);
+  });
+
+  it('reads a ride with no steady stretch from heart rate lagging power', () => {
+    const n = 5400;
+    // 2 minutes on, 2 minutes off: nothing steady for 10 minutes
+    const out = Array.from({ length: n }, (_, i) => (Math.floor(i / 120) % 2 ? 260 : 170));
+    // heart rate responds to power over ~40 s, settling 3 bpm under the curve
+    const curve: [number, number][] = [[150, 128], [200, 146], [250, 164], [300, 182]];
+    let h = 120;
+    const hr = out.map((p) => (h += (curveHr(curve, p) - 3 - h) * (1 - Math.exp(-1 / 40))));
+    expect(steadyWindows(out, hr, null, WINDOW_SPECS.ride)).toHaveLength(0);
+    const bins = kineticBins(out, hr, null, { tau: 40, skip: 600, bin: 10, out: [120, 330], hr: [100, 175] });
+    const sec = bins.reduce((t, b) => t + b.sec, 0);
+    const cost = bins.reduce((t, b) => t + (b.hr - curveHr(curve, b.out)) * b.sec, 0) / sec;
+    expect(sec).toBeGreaterThan(3600);
+    expect(Math.abs(cost + 3)).toBeLessThan(0.5);
+  });
+
+  it('extracts steady stretches with the heart rate they settled at', () => {
+    const n = 3600;
+    const out = Array.from({ length: n }, (_, i) => (i < 1800 ? 200 : 260));
+    const hr = Array.from({ length: n }, (_, i) => (i < 1800 ? 140 : 160));
+    const w = steadyWindows(out, hr, null, WINDOW_SPECS.ride);
+    expect(w.length).toBeGreaterThan(20);
+    // a window straddling the change isn't steady (one that only clips it is)
+    expect(w.some((x) => x.out > 215 && x.out < 245)).toBe(false);
+    expect(w.find((x) => x.out === 260)!.hr).toBe(160);
+  });
+});
+
+describe('efforts in context', () => {
+  const curve = (p: Record<number, number>) => CURVE_DURATIONS.map((d) => p[d] ?? null);
+  const history = [
+    { date: '2026-01-10', power: curve({ 60: 520, 300: 380, 1200: 330, 3600: 300 }), fatigue: { '2000': curve({ 300: 300, 1200: 260 }) } },
+    { date: '2026-08-01', power: curve({ 60: 480, 300: 340, 1200: 300, 3600: 260 }), fatigue: { '2000': curve({ 300: 240, 1200: 190 }) } },
+    { date: '2026-08-20', power: curve({ 60: 470, 300: 345, 1200: 305, 3600: 255 }), fatigue: { '2000': curve({ 300: 230, 1200: 185 }) } },
+    { date: '2026-09-10', power: curve({ 60: 490, 300: 350, 1200: 310, 3600: 262 }), fatigue: { '2000': curve({ 300: 244, 1200: 191 }) } },
+  ];
+
+  it('finds the best of 90 days, close calls and durability, without an all-time best', () => {
+    const cur = { date: '2026-10-01', power: curve({ 60: 485, 300: 355, 1200: 309, 3600: 294 }), fatigue: { '2000': curve({ 300: 287, 1200: 248 }) } };
+    const f = rideEffortFindings(cur, history, null);
+    expect(f.find((x) => x.duration === 3600)).toMatchObject({ kind: 'best90', value: 294, ref: 262 });
+    expect(f.find((x) => x.kind === 'durability')).toMatchObject({ duration: 1200, kj: 2000, value: 248, ref: 191 });
+    expect(f.some((x) => x.kind === 'pb')).toBe(false);
+    expect(verdict(null, f).title).toBe('Best of the last 90 days');
+  });
+
+  it('flags efforts beyond the current model and all-time bests first', () => {
+    const cur = { date: '2026-10-01', power: curve({ 60: 530, 300: 372, 1200: 312 }) };
+    const f = rideEffortFindings(cur, history, { cp: 300, wPrime: 20000 });
+    expect(f[0]).toMatchObject({ kind: 'pb', duration: 60 });
+    expect(f.find((x) => x.kind === 'model')).toMatchObject({ duration: 300, ref: 367 });
+  });
+
+  it('weighs heart-rate evidence both ways', () => {
+    expect(verdict({ z: -0.5, zFitness: -1.7 }, []).tone).toBe('up');
+    expect(verdict({ z: 1.9, zFitness: 0.6 }, []).title).toBe('Heart rate ran high for the effort');
+    expect(verdict({ z: 0.2, zFitness: -0.4 }, []).title).toBe('In line with your fitness');
+    expect(verdict(null, []).tone).toBe('none');
+  });
+
+  it('compares run distances by time', () => {
+    const f = runEffortFindings({ date: '2026-10-01', efforts: { '5k': 1290, '10k': 2700 } }, [
+      { date: '2026-08-01', efforts: { '5k': 1300, '10k': 2650 } },
+      { date: '2019-05-01', efforts: { '5k': 1250 } },
+    ]);
+    expect(f.find((x) => x.meters === 5000)).toMatchObject({ kind: 'best90' });
+    expect(f.find((x) => x.meters === 10000)).toMatchObject({ kind: 'near' });
   });
 });

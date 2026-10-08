@@ -270,7 +270,7 @@ function ModelHistory() {
           return `<b>${fmtDate(d.date)}</b><div style="opacity:.6;font-size:10px">42-day window</div>${tipRow(t.power, 'CP (model)', `${d.eftp} W`)}${tipRow(t.muted, 'FTP in use', `${d.ftp} W`)}${tipRow(t.series[2], "W′", `${(d.wPrime / 1000).toFixed(1)} kJ`)}${tipRow(t.series[1], 'Pmax', `${d.pmax} W`)}`;
         },
       },
-      xAxis: grids.map((_, i) => ({ type: 'value', gridIndex: i, min: x[0], max: x[x.length - 1], ...axisStyle(t, { grid: false }), axisLabel: { show: i === 2, color: t.muted, fontSize: 10, hideOverlap: true, formatter: (v: number) => fmtDate(new Date(tl.fromX(v)), 'd MMM yy') } })),
+      xAxis: grids.map((_, i) => ({ type: 'value', gridIndex: i, min: x[0], max: x[x.length - 1], ...axisStyle(t, { grid: false }), axisLabel: { show: i === 2, color: t.muted, fontSize: 10, hideOverlap: true, formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), 'd MMM yy')) } })),
       yAxis: [
         valueAxis(t, { gridIndex: 0, min: (v: { min: number }) => Math.floor((v.min - 10) / 10) * 10, name: 'W', nameTextStyle: { color: t.muted, fontSize: 10 } }),
         valueAxis(t, { gridIndex: 1, name: "W′ kJ", min: (v: { min: number }) => Math.floor(v.min / 1000) * 1000, axisLabel: { color: t.muted, fontSize: 10, formatter: (v: number) => (v / 1000).toFixed(0) }, nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -36] } }),

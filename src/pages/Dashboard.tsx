@@ -13,6 +13,7 @@ import { useTokens } from '../lib/theme';
 import { fmtDate, fmtDistance, fmtDuration, fmtNum, fmtPace, SPORT_LABEL } from '../lib/format';
 import { useStatus } from '../components/Layout';
 import { Onboarding } from './Onboarding';
+import { InsightPanel, type ActivityInsights } from '../components/insights';
 
 interface DashboardData {
   today: PmcPoint;
@@ -27,6 +28,25 @@ interface DashboardData {
   thresholds: Thresholds;
   ftpBasis: 'cp' | '20min' | '60min' | null;
   weekly: { start: string; sports: Record<string, { time: number; tss: number }> }[];
+  /** the most recent ride or run, and what it says about fitness */
+  latest: (ActivityInsights & { id: number }) | null;
+}
+
+/** The latest ride or run: what it says about fitness, in a few lines. */
+function LatestCard({ latest, activity }: { latest: NonNullable<DashboardData['latest']>; activity?: Activity }) {
+  return (
+    <Card
+      title={`Your latest ${activity?.sport === 'run' ? 'run' : 'ride'}`}
+      subtitle={activity ? `${activity.name} · ${fmtDate(activity.localDate, 'EEE d MMM')}` : undefined}
+      actions={
+        <Link to={`/activities/${latest.id}`} className="flex items-center gap-1 text-xs text-accent hover:underline">
+          Analysis <ArrowRight className="h-3 w-3" />
+        </Link>
+      }
+    >
+      <InsightPanel insights={latest} compact />
+    </Card>
+  );
 }
 
 function greeting() {
@@ -154,6 +174,9 @@ export function Dashboard() {
           </div>
         </Card>
         <div className="flex flex-col gap-4">
+          {data.latest && (data.latest.aerobic || data.latest.efforts.length > 0) && (
+            <LatestCard latest={data.latest} activity={data.recent.find((a) => a.id === data.latest!.id)} />
+          )}
           {data.nextEvent && (
             <Card title="Next goal event">
               <div className="flex items-start gap-3">

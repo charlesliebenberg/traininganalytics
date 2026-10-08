@@ -70,9 +70,25 @@ export function findings(o: Overview, peak: PeakCard, hr: HrCompareResponse | un
     items.push({ key: 'gap', label: 'The gap', value: pct(now.ftp / peak.ftp), caption: `of your ${name} FTP`, detail: `FTP estimate ${now.ftp} W now vs ${peak.ftp} W then.`, tone: 'neutral' });
   }
 
-  // 2. the aerobic engine: power at the same heart rate
+  // 2. the aerobic engine: power at the same heart rate — on the model when it can (heat,
+  // fatigue and indoor riding taken out of both eras), else from the raw profiles
   const c = hr?.comparison;
-  if (hr && c && c.ratio != null && c.shared.length >= 3) {
+  const am = hr?.aerobic;
+  const topEnd = c && c.thenTop && c.nowTop && (c.thenTop.hr > c.nowTop.hr || c.thenTop.power > c.nowTop.power * 1.05) ? { then: c.thenTop, now: c.nowTop } : null;
+  if (am) {
+    const back = am.ratio >= 0.95;
+    items.push({
+      key: 'engine',
+      label: 'Aerobic engine',
+      value: pct(am.ratio),
+      caption: `of your aerobic power then, at ${am.refHr} bpm`,
+      detail:
+        `With heat, fatigue and indoor riding taken out of both, you hold ${Math.round(am.now.value)} W at ${am.refHr} bpm, against ${Math.round(am.then.value)} W around ${name} (±${Math.max(1, Math.round(am.sd * 100))}%)${back ? ': the engine is largely back' : ''}.` +
+        (topEnd ? ` What's missing is the top end: then you held ${topEnd.then.power} W at ${topEnd.then.hr} bpm for 10+ minutes; lately your hardest steady efforts reach ${topEnd.now.power} W at ${topEnd.now.hr} bpm.` : '') +
+        ` Heart rate at a given effort drifts down with age — about ${Math.max(1, Math.round((0.7 * (Date.now() - Date.parse(am.thenDate))) / (365.25 * 86400000)))} bpm since then — which flatters today a little.`,
+      tone: back ? 'good' : 'neutral',
+    });
+  } else if (hr && c && c.ratio != null && c.shared.length >= 3) {
     const lo = c.shared[0].hr;
     const hi = c.shared[c.shared.length - 1].hr;
     const back = c.ratio >= 0.95;

@@ -1,26 +1,18 @@
 /**
  * Power at a given heart rate, from steady stretches of riding.
  *
- * Every ride with power and heart rate contributes steady 10-minute windows (no 30-s chunk
- * more than ±20 % off the window's mean, at least 100 W). Each window pairs its mean power
- * with the mean heart rate of its last 5 minutes — heart rate lags power by a minute or two,
- * so the first half settles it. Windows start after the first 10 minutes of a ride (warm-up)
- * and step a minute at a time.
+ * Every ride with power and heart rate contributes steady 10-minute stretches (see
+ * `steadyWindows`): each pairs its mean power with the heart rate of its last 5 minutes —
+ * heart rate lags power by a minute or two, so the first half settles it.
  *
  * Comparing two periods bin by bin (5 bpm) separates the aerobic engine (power at moderate
  * heart rates) from the top end (what can be sustained near threshold).
  */
 import type { Streams } from '../types';
 import { resample1Hz } from './series';
+import { binsFromWindows, steadyWindows, WINDOW_SPECS } from './aerobic';
 
 export const HR_BIN = 5;
-const WINDOW = 600;
-const SETTLE = 300;
-const STEP = 60;
-const SKIP = 600;
-const CHUNK = 30;
-const STEADY = 0.2;
-const MIN_POWER = 100;
 
 /** Steady-window powers keyed by heart-rate bin (bpm, multiples of 5). */
 export type HrBins = Record<string, number[]>;
@@ -28,50 +20,9 @@ export type HrBins = Record<string, number[]>;
 export function hrPowerWindows(s: Streams): HrBins {
   if (!s.watts || !s.heartrate || s.time.length < 2) return {};
   const n = s.time[s.time.length - 1] + 1;
-  if (n < SKIP + WINDOW) return {};
   const P = resample1Hz(s.time, s.watts, n, { gapValue: 0 }).map((v) => v ?? 0);
   const H = resample1Hz(s.time, s.heartrate, n, { hold: true });
-  return hrOutputWindows(P, H, MIN_POWER, 0);
-}
-
-/**
- * The same steady-window pairing for any 1 Hz output (power in W, or grade-adjusted running
- * speed in m/s), on a uniform time grid. `decimals` rounds the stored values.
- */
-export function hrOutputWindows(P: ArrayLike<number>, H: ArrayLike<number | null>, minOutput: number, decimals: number): HrBins {
-  const out: HrBins = {};
-  const n = Math.min(P.length, H.length);
-  if (n < SKIP + WINDOW) return out;
-  const f = 10 ** decimals;
-  // prefix sums for fast window means
-  const ps = new Float64Array(n + 1);
-  for (let i = 0; i < n; i++) ps[i + 1] = ps[i] + P[i];
-  const mean = (a: number, b: number) => (ps[b] - ps[a]) / (b - a);
-  for (let st = SKIP; st + WINDOW <= n; st += STEP) {
-    const pm = mean(st, st + WINDOW);
-    if (pm < minOutput) continue;
-    let steady = true;
-    for (let c = st; c < st + WINDOW; c += CHUNK) {
-      if (Math.abs(mean(c, c + CHUNK) - pm) > STEADY * pm) {
-        steady = false;
-        break;
-      }
-    }
-    if (!steady) continue;
-    let hs = 0;
-    let hn = 0;
-    for (let i = st + SETTLE; i < st + WINDOW; i++) {
-      const h = H[i];
-      if (h != null && h > 40) {
-        hs += h;
-        hn++;
-      }
-    }
-    if (hn < (WINDOW - SETTLE) * 0.9) continue;
-    const bin = String(Math.round(hs / hn / HR_BIN) * HR_BIN);
-    (out[bin] ??= []).push(Math.round(pm * f) / f);
-  }
-  return out;
+  return binsFromWindows(steadyWindows(P, H, null, WINDOW_SPECS.ride), HR_BIN);
 }
 
 export interface HrProfilePoint {

@@ -104,6 +104,8 @@ export interface HrCompareResponse {
   outdoorOnly: boolean;
   thenRides: number;
   nowRides: number;
+  /** then vs now on the aerobic model (heat-, fatigue- and indoor-adjusted) */
+  aerobic: { refHr: number; then: { value: number; lo: number; hi: number }; now: { value: number; lo: number; hi: number }; thenDate: string; ratio: number; sd: number } | null;
 }
 
 export interface PreviewWeek extends SeasonWeek {

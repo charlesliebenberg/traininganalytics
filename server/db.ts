@@ -89,8 +89,9 @@ CREATE TABLE IF NOT EXISTS threshold_estimates (
 CREATE TABLE IF NOT EXISTS sync_log (
   id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL DEFAULT (datetime('now')), provider TEXT, level TEXT NOT NULL, message TEXT NOT NULL
 );
--- steady-window power per heart-rate bin, derived from streams on first use (see hrprofile.ts)
-CREATE TABLE IF NOT EXISTS hr_power (activity_id INTEGER PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE, data TEXT NOT NULL);
+-- steady stretches (output and the heart rate it settled at) per activity, from streams on first use (see windows.ts)
+DROP TABLE IF EXISTS hr_power;
+CREATE TABLE IF NOT EXISTS steady_windows (activity_id INTEGER PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE, data TEXT NOT NULL);
 `);
 
 // Repair: thresholds imported from a Strava profile used to be stored with the 1970 placeholder date.
@@ -363,7 +364,7 @@ export function getCurves(id: number): ActivityCurves | null {
 export function saveStreams(activityId: number, streams: Streams) {
   const blob = gzipSync(Buffer.from(JSON.stringify(streams)));
   q.run('INSERT INTO streams(activity_id, data) VALUES(?, ?) ON CONFLICT(activity_id) DO UPDATE SET data = excluded.data', activityId, blob);
-  q.run('DELETE FROM hr_power WHERE activity_id = ?', activityId);
+  q.run('DELETE FROM steady_windows WHERE activity_id = ?', activityId);
 }
 
 export function loadStreams(activityId: number): Streams | null {

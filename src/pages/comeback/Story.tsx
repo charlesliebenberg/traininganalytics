@@ -75,7 +75,7 @@ export function Story({ peaks, selected, onSelect }: { peaks: PeakCard[]; select
         max: x1,
         splitNumber: 8,
         ...axisStyle(t, { grid: false }),
-        axisLabel: { show: i === 1, color: t.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => fmtDate(new Date(tl.fromX(v)), 'MMM yy') },
+        axisLabel: { show: i === 1, color: t.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), 'MMM yy')) },
       })),
       yAxis: [
         valueAxis(t, { gridIndex: 0, min: yMin }),
