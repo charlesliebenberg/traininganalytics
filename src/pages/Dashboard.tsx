@@ -174,7 +174,7 @@ export function Dashboard() {
           </div>
         </Card>
         <div className="flex flex-col gap-4">
-          {data.latest && (data.latest.aerobic || data.latest.efforts.length > 0) && (
+          {data.latest && (data.latest.aerobic || data.latest.efforts.length > 0 || data.latest.fitness) && (
             <LatestCard latest={data.latest} activity={data.recent.find((a) => a.id === data.latest!.id)} />
           )}
           {data.nextEvent && (
