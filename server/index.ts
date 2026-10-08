@@ -22,6 +22,8 @@ app.use('/api/*', compress());
 app.use('/api/*', requireAuth);
 app.route('/api/session', session);
 app.route('/api', api);
+// an unknown API path is an error, not the app's HTML shell (which a client would take for success)
+app.all('/api/*', (c) => c.json({ error: 'Not found' }, 404));
 
 // When the frontend has been built (single-service deploys, `npm start` locally), serve it too.
 const dist = resolve(process.cwd(), 'dist');
