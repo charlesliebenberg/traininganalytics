@@ -135,7 +135,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
   weekStart: 1,
   athleteName: 'Athlete',
   crankLength: 172.5,
-  autoThresholds: { ride: true, run: true, swim: true },
+  autoThresholds: { ride: true, run: true, swim: true, hr: true },
 };
 
 let prefCache: Preferences | null = null;
@@ -189,7 +189,7 @@ export function listThresholds(): Thresholds[] {
 }
 
 /** Weekly rolling estimates per sport, sorted by date (loaded from threshold_estimates). */
-type EstimateRow = { date: string; threshold: number; wPrime: number };
+type EstimateRow = { date: string; threshold: number; wPrime: number; cp?: number; lthr?: number | null; runLthr?: number | null; maxHr?: number | null };
 let estimateCache: Record<string, EstimateRow[]> | null = null;
 
 export function estimatesFor(sport: string): EstimateRow[] {
@@ -197,23 +197,33 @@ export function estimatesFor(sport: string): EstimateRow[] {
     estimateCache = {};
     for (const r of q.all('SELECT sport, date, data FROM threshold_estimates ORDER BY date')) {
       const d = JSON.parse(r.data);
-      (estimateCache[r.sport] ??= []).push({ date: r.date, threshold: d.threshold, wPrime: d.wPrime });
+      (estimateCache[r.sport] ??= []).push({ date: r.date, threshold: d.threshold, wPrime: d.wPrime, cp: d.cp, lthr: d.lthr, runLthr: d.runLthr, maxHr: d.maxHr });
     }
   }
   return estimateCache[sport] ?? [];
 }
 export const resetEstimateCache = () => (estimateCache = null);
 
-/** Latest estimate on or before `date`; before the first estimate, the first one (better than a default). */
+const STALE_DAYS = 56;
+const COVER_DAYS = 182;
+
+/**
+ * The estimate in effect on `date`: the latest one on or before it. Before the first
+ * estimate, the first one (better than a default). And after a break long enough to empty
+ * the 6-month window, the first estimate after it, as long as its window covers the date:
+ * the first rides back otherwise get the fitness from before the break (an FTP years old).
+ */
 function estimateAt(sport: string, date: string, allowBackfill: boolean): EstimateRow | null {
   const list = estimatesFor(sport);
   if (!list.length) return null;
-  let found: EstimateRow | null = null;
-  for (const e of list) {
-    if (e.date <= date) found = e;
-    else break;
-  }
-  return found ?? (allowBackfill ? list[0] : null);
+  let i = -1;
+  while (i + 1 < list.length && list[i + 1].date <= date) i++;
+  const prev = i >= 0 ? list[i] : null;
+  const next = list[i + 1] ?? null;
+  const days = (a: string, b: string) => (Date.parse(b) - Date.parse(a)) / 86400000;
+  if (prev && days(prev.date, date) <= STALE_DAYS) return prev;
+  if (next && days(date, next.date) <= COVER_DAYS && (prev || allowBackfill)) return next;
+  return prev ?? (allowBackfill ? list[0] : null);
 }
 
 export function manualThresholds(date: string): Thresholds | null {
@@ -232,7 +242,7 @@ export function thresholdsFor(date: string): Thresholds {
   const manual = manualThresholds(date);
   const base: Thresholds = { ...(manual ?? DEFAULT_THRESHOLDS) };
   const src = manual ? 'manual' : 'default';
-  const sources: NonNullable<Thresholds['sources']> = { ftp: src, run: src, swim: src };
+  const sources: NonNullable<Thresholds['sources']> = { ftp: src, run: src, swim: src, hr: src };
   const auto = getPreferences().autoThresholds;
   // if the athlete entered values themselves, use them before the first estimate exists
   const backfill = !manual;
@@ -240,6 +250,7 @@ export function thresholdsFor(date: string): Thresholds {
     const e = estimateAt('ride', date, backfill);
     if (e) {
       base.ftp = Math.round(e.threshold);
+      if (e.cp && e.cp > 0) base.cp = Math.round(e.cp);
       if (e.wPrime >= 3000 && e.wPrime <= 60000) base.wPrime = Math.round(e.wPrime);
       sources.ftp = 'auto';
     }
@@ -256,6 +267,16 @@ export function thresholdsFor(date: string): Thresholds {
     if (e) {
       base.swimCss = e.threshold;
       sources.swim = 'auto';
+    }
+  }
+  // heart-rate thresholds from sustained efforts (best 30 min) and observed maxima
+  if (auto.hr) {
+    const e = estimateAt('hr', date, true);
+    if (e) {
+      if (e.lthr) base.lthr = Math.round(e.lthr);
+      if (e.runLthr) base.runLthr = Math.round(e.runLthr);
+      if (e.maxHr) base.maxHr = Math.round(e.maxHr);
+      sources.hr = 'auto';
     }
   }
   return { ...base, sources };

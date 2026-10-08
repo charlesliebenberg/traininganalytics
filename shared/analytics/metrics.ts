@@ -14,7 +14,7 @@ import {
 } from './series';
 import { fatigueCurves, normalizedPower, npCurve, powerCurve, tssFromIf, wPrimeBalance } from './power';
 import { decoupling, hrTss, trimp } from './heartrate';
-import { bestEfforts, deriveGrade, gradeAdjustedSpeed, normalizedGradedSpeed, swimTss } from './running';
+import { bestEfforts, cleanRunSpeed, deriveGrade, distanceFromSpeed, gradeAdjustedSpeed, normalizedGradedSpeed, swimTss } from './running';
 import { HR_ZONES, PACE_ZONES, POWER_ZONES, SEILER_HR_BOUNDS, SEILER_ZONES, timeInZones } from './zones';
 
 export interface RawSamples {
@@ -174,6 +174,45 @@ const DEFAULT_TSS_PER_HOUR: Partial<Record<Sport, number>> = {
   other: 40,
 };
 
+/** A stop shorter than this keeps its samples (traffic lights, coasting without data). */
+const STOP_MIN_S = 20;
+
+/**
+ * Which samples count as moving. Power, cadence or speed means activity; only stretches of
+ * 20+ s with none of them count as stopped, so café stops and pauses drop out while coasting
+ * and traffic lights stay in (as they would on a device without auto-pause). The device's
+ * own "moving" flag is used only when there are no such channels: it marks indoor rides
+ * without a speed sensor as stationary even while the rider holds 250 W.
+ */
+export function movingMask(s: Pick<Streams, 'time' | 'watts' | 'cadence' | 'speed' | 'moving' | 'heartrate'>): number[] {
+  const n = s.time.length;
+  const channels = !!(s.watts || s.cadence || s.speed);
+  const active = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    active[i] = channels
+      ? (s.watts?.[i] ?? 0) > 0 || (s.cadence?.[i] ?? 0) > 0 || (s.speed?.[i] ?? 0) > 0.5
+        ? 1
+        : 0
+      : s.moving
+        ? (s.moving[i] ? 1 : 0)
+        : s.heartrate?.[i] != null
+          ? 1
+          : 0;
+  }
+  const out = new Array<number>(n).fill(1);
+  for (let i = 0; i < n; ) {
+    if (active[i]) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < n && !active[j]) j++;
+    if (j - i >= STOP_MIN_S) out.fill(0, i, j);
+    i = j;
+  }
+  return out;
+}
+
 export function isBike(sport: Sport) {
   return sport === 'ride';
 }
@@ -184,11 +223,14 @@ export function isFoot(sport: Sport) {
 /** Compute every derived metric for an activity from its 1 Hz streams. */
 export function computeMetrics(s: Streams, sport: Sport, th: Thresholds): ComputedMetrics {
   const n = s.time.length;
-  const mask = s.moving ?? null;
-  const movingTime = mask ? mask.reduce((a, b) => a + (b ? 1 : 0), 0) : n;
+  const mask = movingMask(s);
+  const movingTime = mask.reduce((a, b) => a + b, 0);
   const hasPower = hasData(s.watts, 30);
   const hasHr = hasData(s.heartrate, 30);
-  const hasGps = hasData(s.lat, 10);
+  // position fixes, not positive values: south of the equator latitudes are negative
+  let fixes = 0;
+  if (s.lat && s.lng) for (let i = 0; i < s.lat.length && fixes < 10; i++) if (s.lat[i] != null && s.lng[i] != null && (s.lat[i] !== 0 || s.lng[i] !== 0)) fixes++;
+  const hasGps = fixes >= 10;
   const lastDist = s.distance ? maxDefined(s.distance) : null;
   const distance = lastDist && lastDist > 0 ? lastDist : null;
   const lthr = sport === 'run' ? th.runLthr || th.lthr : th.lthr;
@@ -203,17 +245,23 @@ export function computeMetrics(s: Streams, sport: Sport, th: Thresholds): Comput
   const zones: NonNullable<Activity['zones']> = {};
 
   if (hasPower && s.watts) {
-    np = normalizedPower(s.watts);
-    avgPower = meanDefined(s.watts, null);
+    // NP and average power over moving time: a café stop is not 40 minutes of zero watts
+    const moving = s.watts.filter((_, i) => mask[i]);
+    np = normalizedPower(moving);
+    avgPower = moving.length ? moving.reduce((a, b) => a + (b ?? 0), 0) / moving.length : null;
     maxPower = maxDefined(s.watts);
     work = s.watts.reduce((a, b) => a + (b ?? 0), 0) / 1000;
     vi = np && avgPower ? np / avgPower : null;
     curves.power = powerCurve(s.watts);
     curves.np = npCurve(s.watts);
     curves.fatigue = fatigueCurves(s.watts);
-    zones.power = timeInZones(s.watts, th.ftp, POWER_ZONES, mask);
-    const wb = wPrimeBalance(s.watts, th.ftp, th.wPrime);
-    wbalMin = Math.min(...wb);
+    // zones and W′ balance use the bike FTP / CP: meaningless for running power
+    if (isBike(sport)) {
+      zones.power = timeInZones(s.watts, th.ftp, POWER_ZONES, mask);
+      // W′ balance is a critical-power model: it needs CP, not FTP
+      const wb = wPrimeBalance(s.watts, th.cp ?? th.ftp, th.wPrime);
+      wbalMin = Math.min(...wb);
+    }
   }
   if (hasHr && s.heartrate) {
     const hrFilled = fillGaps(s.heartrate);
@@ -232,10 +280,13 @@ export function computeMetrics(s: Streams, sport: Sport, th: Thresholds): Comput
   // running: grade adjusted pace
   let gap: number[] | null = null;
   let ngs: number | null = null;
+  // runs: GPS glitches out of the speed used for pace, curves and best efforts
+  const runSpeed = sport === 'run' && s.speed ? cleanRunSpeed(s.speed) : null;
   if (isFoot(sport) && s.speed && distance) {
-    gap = s.grade ? gradeAdjustedSpeed(s.speed, s.grade) : s.speed.map((v) => v ?? 0);
+    const speed = runSpeed ?? s.speed.map((v) => v ?? 0);
+    gap = s.grade ? gradeAdjustedSpeed(speed, s.grade) : speed;
     ngs = normalizedGradedSpeed(gap, mask);
-    curves.speed = meanMax(toFloat(s.speed)).map((v) => round(v, 2));
+    curves.speed = meanMax(Float64Array.from(speed)).map((v) => round(v, 2));
     if (th.runThresholdSpeed) zones.pace = timeInZones(gap, th.runThresholdSpeed, PACE_ZONES, mask);
   }
   if (sport === 'swim' && s.speed) curves.speed = meanMax(toFloat(s.speed)).map((v) => round(v, 2));
@@ -254,7 +305,7 @@ export function computeMetrics(s: Streams, sport: Sport, th: Thresholds): Comput
   let method: TssMethod = 'none';
   if (isBike(sport) && np && th.ftp) {
     intensity = np / th.ftp;
-    tss = tssFromIf(n, intensity);
+    tss = tssFromIf(movingTime, intensity);
     method = 'power';
   } else if (sport === 'run' && ngs && th.runThresholdSpeed) {
     intensity = ngs / th.runThresholdSpeed;
@@ -266,7 +317,7 @@ export function computeMetrics(s: Streams, sport: Sport, th: Thresholds): Comput
     method = 'swim';
   } else if (!isBike(sport) && np && th.ftp) {
     intensity = np / th.ftp;
-    tss = tssFromIf(n, intensity);
+    tss = tssFromIf(movingTime, intensity);
     method = 'power';
   }
   if (tss == null && hasHr) {
@@ -281,16 +332,17 @@ export function computeMetrics(s: Streams, sport: Sport, th: Thresholds): Comput
     method = 'estimate';
   }
 
-  // efficiency & decoupling
+  // efficiency & decoupling — Pw:HR / Pa:HR drift only means something for a steady hour or
+  // so: on intervals, or across a long stop, it measures the session's shape, not the athlete
   let ef: number | null = null;
   let dec: number | null = null;
   if (hasHr && avgHr) {
     if (np && isBike(sport)) {
       ef = np / avgHr;
-      dec = decoupling(s.watts!, s.heartrate!, mask);
+      if (movingTime >= 3600 && (vi ?? 9) <= 1.25) dec = decoupling(s.watts!, s.heartrate!, mask);
     } else if (ngs && gap) {
       ef = (ngs * 60) / avgHr; // metres per minute per beat
-      dec = decoupling(gap, s.heartrate!, mask);
+      if (movingTime >= 2700) dec = decoupling(gap, s.heartrate!, mask);
     }
   }
 
@@ -329,7 +381,7 @@ export function computeMetrics(s: Streams, sport: Sport, th: Thresholds): Comput
     hasHr,
     hasGps,
     zones: Object.keys(zones).length ? zones : null,
-    bestEfforts: isFoot(sport) && s.distance ? bestEfforts(s.distance) : null,
+    bestEfforts: runSpeed ? bestEfforts(distanceFromSpeed(runSpeed)) : isFoot(sport) && s.distance ? bestEfforts(s.distance) : null,
     ftpUsed: hasPower ? th.ftp : null,
     curves,
     polyline,

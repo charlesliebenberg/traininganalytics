@@ -26,19 +26,30 @@ const MIN_POWER = 100;
 export type HrBins = Record<string, number[]>;
 
 export function hrPowerWindows(s: Streams): HrBins {
-  const out: HrBins = {};
-  if (!s.watts || !s.heartrate || s.time.length < 2) return out;
+  if (!s.watts || !s.heartrate || s.time.length < 2) return {};
   const n = s.time[s.time.length - 1] + 1;
-  if (n < SKIP + WINDOW) return out;
+  if (n < SKIP + WINDOW) return {};
   const P = resample1Hz(s.time, s.watts, n, { gapValue: 0 }).map((v) => v ?? 0);
   const H = resample1Hz(s.time, s.heartrate, n, { hold: true });
+  return hrOutputWindows(P, H, MIN_POWER, 0);
+}
+
+/**
+ * The same steady-window pairing for any 1 Hz output (power in W, or grade-adjusted running
+ * speed in m/s), on a uniform time grid. `decimals` rounds the stored values.
+ */
+export function hrOutputWindows(P: ArrayLike<number>, H: ArrayLike<number | null>, minOutput: number, decimals: number): HrBins {
+  const out: HrBins = {};
+  const n = Math.min(P.length, H.length);
+  if (n < SKIP + WINDOW) return out;
+  const f = 10 ** decimals;
   // prefix sums for fast window means
   const ps = new Float64Array(n + 1);
   for (let i = 0; i < n; i++) ps[i + 1] = ps[i] + P[i];
   const mean = (a: number, b: number) => (ps[b] - ps[a]) / (b - a);
   for (let st = SKIP; st + WINDOW <= n; st += STEP) {
     const pm = mean(st, st + WINDOW);
-    if (pm < MIN_POWER) continue;
+    if (pm < minOutput) continue;
     let steady = true;
     for (let c = st; c < st + WINDOW; c += CHUNK) {
       if (Math.abs(mean(c, c + CHUNK) - pm) > STEADY * pm) {
@@ -58,7 +69,7 @@ export function hrPowerWindows(s: Streams): HrBins {
     }
     if (hn < (WINDOW - SETTLE) * 0.9) continue;
     const bin = String(Math.round(hs / hn / HR_BIN) * HR_BIN);
-    (out[bin] ??= []).push(Math.round(pm));
+    (out[bin] ??= []).push(Math.round(pm * f) / f);
   }
   return out;
 }

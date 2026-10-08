@@ -6,6 +6,7 @@ import { flatten } from '../../shared/analytics/workout';
 import { Chart, axisStyle, tipRow, tooltipStyle, valueAxis, legendStyle, type EChartsOption } from './Chart';
 import { alpha, useTokens, type Tokens } from '../lib/theme';
 import { fmtDate, fmtDurLabel, fmtDuration } from '../lib/format';
+import { breakNames, gapsInDaily, makeTimeline } from '../lib/timeline';
 
 // ---------- form-zone colours (state, so status palette) ----------
 export function formColor(t: Tokens, id: string): string {
@@ -27,8 +28,12 @@ export function formColor(t: Tokens, id: string): string {
 export function PmcChart({ points, events = [], height = 420, compact = false, showTss = true }: { points: PmcPoint[]; events?: RaceEvent[]; height?: number; compact?: boolean; showTss?: boolean }) {
   const t = useTokens();
   const option = useMemo<EChartsOption>(() => {
-    const ts = (d: string) => parseISO(d).getTime();
     const actual = points.filter((p) => !p.projected);
+    // long breaks (90+ days without load) are squeezed, so years of history read continuously
+    const gaps = gapsInDaily(actual, (p) => p.tss === 0);
+    const tl = gaps.length ? makeTimeline(gaps) : null;
+    const ts = (d: string) => (tl ? tl.toX(parseISO(d).getTime()) : parseISO(d).getTime());
+    const byX = new Map(points.map((p) => [ts(p.date), p]));
     const lastActual = actual[actual.length - 1];
     const proj = points.filter((p) => p.projected);
     const projWithJoin = lastActual && proj.length ? [lastActual, ...proj] : proj;
@@ -47,12 +52,24 @@ export function PmcChart({ points, events = [], height = 420, compact = false, s
       ...(showTss ? [{ left: 44, right: 16, top: top + h1 + h2 + gap * 2, height: h3 }] : []),
     ];
     const xAxes = grids.map((_, i) => ({
-      type: 'time' as const,
+      type: (tl ? 'value' : 'time') as 'value',
       gridIndex: i,
+      ...(tl ? { min: ts(points[0].date), max: ts(points[points.length - 1].date), splitNumber: 8 } : {}),
       ...axisStyle(t, { grid: false }),
-      axisLabel: { show: i === grids.length - 1, color: t.muted, fontSize: 11, hideOverlap: true },
+      axisLabel: { show: i === grids.length - 1, color: t.muted, fontSize: 11, hideOverlap: true, ...(tl ? { formatter: (v: number) => fmtDate(new Date(tl.fromX(v)), 'MMM yy') } : {}) },
       axisLine: { show: true, lineStyle: { color: t.lineStrong } },
     }));
+    const breakBands = (labels: boolean) =>
+      tl
+        ? {
+            markArea: {
+              silent: true,
+              itemStyle: { color: alpha(t.muted, 0.1) },
+              label: { show: labels, color: t.muted, fontSize: 10, position: 'insideTop' as const },
+              data: tl.breaks.map((g, i, all) => [{ xAxis: g.x0, name: breakNames(all)[i] }, { xAxis: g.x1 }]),
+            },
+          }
+        : {};
     const todayTs = lastActual ? ts(lastActual.date) : Date.now();
     const evLines = events.map((e) => ({
       xAxis: ts(e.date),
@@ -65,8 +82,8 @@ export function PmcChart({ points, events = [], height = 420, compact = false, s
     }));
     const series: any[] = [
       { ...line(t.ctl), name: 'Fitness (CTL)', xAxisIndex: 0, yAxisIndex: 0, data: actual.map((p) => [ts(p.date), p.ctl]), areaStyle: { color: alpha(t.ctl, 0.08) }, markLine: evLines.length || proj.length ? { symbol: 'none', silent: true, data: [...evLines, ...(proj.length ? [{ xAxis: todayTs, lineStyle: { color: t.muted, type: 'solid' as const, width: 1 }, label: { formatter: 'Today', color: t.muted, fontSize: 10, position: 'insideEndTop' as const } }] : [])] } : undefined },
-      { ...line(t.atl), name: 'Fatigue (ATL)', xAxisIndex: 0, yAxisIndex: 0, data: actual.map((p) => [ts(p.date), p.atl]), lineStyle: { width: 1.5, color: t.atl } },
-      { type: 'bar', name: 'Form (TSB)', xAxisIndex: 1, yAxisIndex: 1, data: tsbData, barMaxWidth: 6, barCategoryGap: '10%', itemStyle: { color: t.good } },
+      { ...line(t.atl), name: 'Fatigue (ATL)', xAxisIndex: 0, yAxisIndex: 0, data: actual.map((p) => [ts(p.date), p.atl]), lineStyle: { width: 1.5, color: t.atl }, ...breakBands(true) },
+      { type: 'bar', name: 'Form (TSB)', xAxisIndex: 1, yAxisIndex: 1, data: tsbData, barMaxWidth: 6, barCategoryGap: '10%', itemStyle: { color: t.good }, ...breakBands(false) },
     ];
     if (projWithJoin.length) {
       series.push(
@@ -83,6 +100,7 @@ export function PmcChart({ points, events = [], height = 420, compact = false, s
         yAxisIndex: 2,
         barMaxWidth: 6,
         data: points.map((p) => ({ value: [ts(p.date), Math.round(p.tss)], itemStyle: { color: p.projected ? alpha(t.muted, 0.45) : alpha(t.ink2, 0.75), borderRadius: [2, 2, 0, 0] } })),
+        ...breakBands(false),
       });
     }
     return {
@@ -97,9 +115,7 @@ export function PmcChart({ points, events = [], height = 420, compact = false, s
         formatter: (ps: any) => {
           const arr = Array.isArray(ps) ? ps : [ps];
           const x = arr[0]?.value?.[0] ?? arr[0]?.axisValue;
-          const d = new Date(x);
-          const key = d.toISOString().slice(0, 10);
-          const p = points.find((pp) => parseISO(pp.date).getTime() === x) ?? points.find((pp) => pp.date === key);
+          const p = byX.get(x);
           if (!p) return '';
           const z = formZone(p.tsb, p.ctl);
           return `<div style="font-weight:600;margin-bottom:4px">${fmtDate(p.date)}${p.projected ? ' · projected' : ''}</div>

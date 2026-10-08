@@ -49,6 +49,8 @@ export interface ThresholdEstimate {
   threshold: number;
   /** threshold straight from this window's fit */
   raw: number;
+  /** which rule set the FTP: the CP fit, 95 % of the best 20 min, or the best 60 min */
+  basis?: 'cp' | '20min' | '60min';
   r2: number;
   points: EffortPoint[];
   /** number of activities with curve data in the window */
@@ -184,7 +186,64 @@ export function estimateThreshold(
     cp = ref.cp;
     wPrime = ref.wPrime;
   }
-  const threshold = cp * cfg.factor;
+  let threshold = cp * cfg.factor;
+  let basis: ThresholdEstimate['basis'] = 'cp';
+  if (sport === 'ride') {
+    // FTP can't be below what was actually sustained: 95 % of the best 20 min (the classic
+    // field test, capped at CP — for riders with a big W′ it overshoots) and the best
+    // 60 min are floors. Without all-out efforts the CP fit times 0.96 alone runs low: a
+    // 3 × 20 min session at 107 % of "FTP", below threshold heart rate, is the giveaway.
+    const at = (t: number) => {
+      const i = durations.indexOf(t);
+      return i >= 0 ? curve.values[i] ?? null : null;
+    };
+    const p20 = at(1200);
+    const p60 = at(3600);
+    if (p20 && Math.min(p20 * 0.95, cp) > threshold) {
+      threshold = Math.min(p20 * 0.95, cp);
+      basis = '20min';
+    }
+    if (p60 && p60 > threshold) {
+      threshold = p60;
+      basis = '60min';
+    }
+  }
   if (threshold < cfg.min || threshold > cfg.max) return null;
-  return { sport, ...meta, cp, wPrime, threshold, raw: threshold, r2: fit.r2, points: picks };
+  return { sport, ...meta, cp, wPrime, threshold, raw: threshold, r2: fit.r2, points: picks, basis };
+}
+
+// ---------- heart-rate thresholds ----------
+
+export interface HrThresholds {
+  lthr: number | null;
+  runLthr: number | null;
+  maxHr: number | null;
+}
+
+/** The second-highest value (robust to one bad reading), or the highest when there are few. */
+const robustTop = (xs: number[]) => {
+  const s = xs.filter((x) => Number.isFinite(x) && x > 0).sort((a, b) => b - a);
+  return s.length >= 4 ? s[1] : s.length ? s[0] : null;
+};
+
+/**
+ * Heart-rate thresholds from what the athlete has actually sustained, the way a field test
+ * would measure them:
+ *  - LTHR ≈ the heart rate held through 30 minutes of hard effort (Friel's 30-min test): the
+ *    second-highest best-30-min average among the window's rides (the highest when there are
+ *    only a few), so one strap glitch can't set it
+ *  - run LTHR the same from runs, but never below the bike value: running usually sits a
+ *    few beats higher, and a block of easy running would otherwise drag it down
+ *  - max HR: the second-highest activity maximum (a single spike can't set it), and at
+ *    least a few beats above LTHR
+ */
+export function estimateHrThresholds(rideBest30: number[], runBest30: number[], maxima: number[]): HrThresholds {
+  const plausible = (x: number | null) => (x != null && x >= 110 && x <= 215 ? x : null);
+  const lthr = plausible(robustTop(rideBest30));
+  const runOwn = plausible(robustTop(runBest30));
+  const runLthr = runOwn != null || lthr != null ? Math.max(runOwn ?? 0, lthr ?? 0) : null;
+  const top = maxima.filter((x) => x > 0).length >= 5 ? plausible(robustTop(maxima)) : null;
+  const floor = Math.max(lthr ?? 0, runLthr ?? 0) + 5;
+  const maxHr = top != null ? Math.max(top, floor) : null;
+  return { lthr, runLthr, maxHr };
 }

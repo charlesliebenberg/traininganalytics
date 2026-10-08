@@ -5,7 +5,7 @@ import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '
 import { useApi } from '../../lib/api';
 import { alpha, useTokens } from '../../lib/theme';
 import { fmtDate } from '../../lib/format';
-import { makeTimeline, monthsText } from '../../lib/timeline';
+import { breakNames, makeTimeline, monthsText } from '../../lib/timeline';
 import { peakName, type PeakCard, type Story as StoryData } from './types';
 
 const DAY = 86400_000;
@@ -53,7 +53,7 @@ export function Story({ peaks, selected, onSelect }: { peaks: PeakCard[]; select
       silent: true,
       itemStyle: { color: alpha(t.muted, 0.1) },
       label: { show: labels, color: t.muted, fontSize: 10, position: 'insideBottom' },
-      data: tl.breaks.map((g) => [{ xAxis: g.x0, name: `${monthsText(g.days)}\noff` }, { xAxis: g.x1 }]),
+      data: tl.breaks.map((g, i, all) => [{ xAxis: g.x0, name: breakNames(all)[i] }, { xAxis: g.x1 }]),
     });
     return {
       animation: false,

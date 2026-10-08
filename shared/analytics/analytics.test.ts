@@ -3,15 +3,15 @@ import { CURVE_DURATIONS, meanMax, resample1Hz } from './series';
 import { detectIntervals, fatigueCurves, normalizedPower, npCurve, wPrimeBalance, matchesBurned } from './power';
 import { fitCp2, fitPowerDuration, ompd } from './models';
 import { computePmc, dailyTssForCtl, formZone } from './pmc';
-import { bestEfforts, gradeCostFactor } from './running';
-import { hrTss } from './heartrate';
+import { bestEfforts, cleanRunSpeed, distanceFromSpeed, gradeCostFactor } from './running';
+import { decoupling, hrTss } from './heartrate';
 import { timeInZones, POWER_ZONES, polarizationIndex } from './zones';
 import { toZwo, workoutMetrics } from './workout';
-import { generateSeasonPlan, generateWeekWorkouts } from './plan';
+import { generateSeasonPlan, generateWeekWorkouts, planReach } from './plan';
 import { decodePolyline, encodePolyline } from '../polyline';
-import { computeMetrics, normalizeStreams } from './metrics';
+import { computeMetrics, movingMask, normalizeStreams } from './metrics';
 import { BUILTIN_WORKOUTS } from '../library';
-import { estimateThreshold, limitDeclines } from './thresholds';
+import { estimateHrThresholds, estimateThreshold, limitDeclines } from './thresholds';
 import { byEffortDate, classifySession, detectPeaks, effortDate } from './comeback';
 import { daysToTarget, fitCapacity, loadForTarget, ltlSeries, projectCapacity, quantileLine, type CapacityDay } from './capacity';
 import { compareHrProfiles, hrPowerWindows, hrProfile } from './hrprofile';
@@ -174,6 +174,27 @@ describe('workouts & plans', () => {
     const total = wk.reduce((a, w) => a + w.tss, 0);
     expect(Math.abs(total - weeks[6].tss) / weeks[6].tss).toBeLessThan(0.25);
   });
+  const race = { startDate: '2026-10-05', raceDate: '2027-01-28', startCtl: 87, startAtl: 80, targetCtl: 102, maxRamp: 5, pattern: '3:1', taperWeeks: 2, maxWeeklyHours: 0, sport: 'ride', tssPerHour: 55 } as const;
+  it('lands race-day fitness on the target, building past it to pay for the taper', () => {
+    const weeks = generateSeasonPlan(race);
+    const raceDay = weeks[weeks.length - 1].ctl;
+    expect(raceDay).toBeGreaterThanOrEqual(102);
+    expect(raceDay).toBeLessThan(103.5);
+    expect(Math.max(...weeks.map((w) => w.ctl))).toBeGreaterThan(110);
+    expect(planReach(race)).toBeNull();
+  });
+  it('says what limits a plan that cannot reach its target', () => {
+    // 12 h a week at 55 TSS/h cannot even hold CTL 87 through recovery weeks and a taper
+    const hours = planReach({ ...race, maxWeeklyHours: 12 })!;
+    expect(hours.achieved).toBeLessThan(90);
+    expect(hours.hoursNeeded).toBeGreaterThan(14);
+    expect(hours.hoursNeeded).toBeLessThan(20);
+    expect(generateSeasonPlan({ ...race, maxWeeklyHours: hours.hoursNeeded! }).at(-1)!.ctl).toBeGreaterThanOrEqual(101);
+    // six weeks is too short at +5 CTL a week, whatever the hours
+    const ramp = planReach({ ...race, raceDate: '2026-11-19' })!;
+    expect(ramp.hoursNeeded).toBeNull();
+    expect(ramp.rampNeeded).toBeGreaterThan(5);
+  });
 });
 
 describe('streams', () => {
@@ -227,7 +248,9 @@ describe('threshold estimation', () => {
     expect(e.points).toHaveLength(3);
     expect(e.cp).toBeCloseTo(280, 0);
     expect(e.wPrime).toBeCloseTo(20000, -2);
-    expect(e.threshold).toBeCloseTo(280 * 0.96, 0);
+    // a maximal 20 min on the CP curve: FTP is CP (95 % of 20 min, capped at CP)
+    expect(e.threshold).toBeCloseTo(280, 0);
+    expect(e.basis).toBe('20min');
     expect(e.points.every((p) => p.score > 0.99)).toBe(true);
   });
   it('estimates critical speed for running', () => {
@@ -367,5 +390,93 @@ describe('heart-rate power profile', () => {
     const c = compareHrProfiles(then, now);
     expect(c.ratio).toBeCloseTo(0.9, 2);
     expect(c.thenTop!.hr).toBe(170);
+  });
+});
+
+describe('metrics on real-world recordings', () => {
+  const time = (n: number) => Array.from({ length: n }, (_, i) => i);
+
+  it('excludes long stops from NP, average power and TSS, but keeps short ones', () => {
+    // 1 h at 250 W, a 45-min café stop recorded as zeros, 1 h at 250 W with a 10-s coast
+    const watts = [...new Array(3600).fill(250), ...new Array(2700).fill(0), ...new Array(1800).fill(250), ...new Array(10).fill(0), ...new Array(1790).fill(250)];
+    const n = watts.length;
+    const speed = watts.map((w) => (w ? 9 : 0));
+    const m = computeMetrics({ time: time(n), watts, speed, moving: null }, 'ride', { ...TH, ftp: 250 });
+    expect(m.movingTime).toBe(7200);
+    expect(m.np).toBeGreaterThan(247);
+    expect(m.avgPower).toBeGreaterThan(248);
+    // two hours at FTP — not almost three
+    expect(m.tss).toBeGreaterThan(195);
+    expect(m.tss).toBeLessThan(205);
+  });
+
+  it('finds GPS south of the equator and west of Greenwich', () => {
+    const n = 600;
+    const sydney = computeMetrics({ time: time(n), speed: new Array(n).fill(8), lat: Array.from({ length: n }, (_, i) => -33.86 - i * 1e-4), lng: Array.from({ length: n }, (_, i) => 151.2 + i * 1e-4) }, 'ride', TH);
+    expect(sydney.hasGps).toBe(true);
+    expect(decodePolyline(sydney.polyline!)[0][0]).toBeCloseTo(-33.86, 4);
+    const nyc = computeMetrics({ time: time(n), speed: new Array(n).fill(8), lat: new Array(n).fill(40.7), lng: new Array(n).fill(-74) }, 'ride', TH);
+    expect(nyc.hasGps).toBe(true);
+    const none = computeMetrics({ time: time(n), speed: new Array(n).fill(8), lat: new Array(n).fill(0), lng: new Array(n).fill(0) }, 'ride', TH);
+    expect(none.hasGps).toBe(false);
+  });
+
+  it('counts an indoor ride without a speed sensor as moving', () => {
+    const n = 3600;
+    const mask = movingMask({ time: time(n), watts: new Array(n).fill(200), speed: new Array(n).fill(0), cadence: new Array(n).fill(85), moving: new Array(n).fill(0), heartrate: null });
+    expect(mask.reduce((a, b) => a + b, 0)).toBe(n);
+  });
+
+  it('uses CP, not FTP, for W′ balance', () => {
+    const n = 3600;
+    // 20 min at 307 W: above an FTP of 286, but inside what CP 298 / W′ 22 kJ allows
+    const watts = [...new Array(600).fill(180), ...new Array(1200).fill(307), ...new Array(1800).fill(180)];
+    const m = computeMetrics({ time: time(n), watts, speed: new Array(n).fill(9) }, 'ride', { ...TH, ftp: 286, cp: 298, wPrime: 22000 });
+    expect(m.wbalMin!).toBeGreaterThan(0);
+  });
+
+  it('only reports decoupling when both halves are ridden alike', () => {
+    const n = 5400;
+    const hr = Array.from({ length: n }, (_, i) => 140 + (i / n) * 8);
+    const steadyW = new Array(n).fill(200);
+    expect(decoupling(steadyW, hr)).not.toBeNull();
+    // hard first half, easy second half: the drift would only describe the session
+    const shaped = Array.from({ length: n }, (_, i) => (i < n / 2 ? 260 : 160));
+    expect(decoupling(shaped, hr)).toBeNull();
+    // even 7 % easier: heart rate doesn't fall in proportion, so it would read as drift
+    expect(decoupling(Array.from({ length: n }, (_, i) => (i < n / 2 ? 200 : 186)), hr)).toBeNull();
+  });
+
+  it('removes GPS glitches from running speed but keeps genuine surges', () => {
+    // a 20-min run at 3 m/s, with a jerky 60-s GPS glitch at the start and a real 5-min surge
+    const base = new Array(1200).fill(3);
+    for (let i = 5; i < 65; i++) base[i] = [6, 15, 4, 11, 7, 13][i % 6];
+    for (let i = 600; i < 900; i++) base[i] = 4.6;
+    const clean = cleanRunSpeed(base);
+    expect(Math.max(...clean.slice(5, 65))).toBeLessThanOrEqual(4.6);
+    expect(clean.slice(600, 900).every((v) => v === 4.6)).toBe(true);
+    const be = bestEfforts(distanceFromSpeed(clean));
+    // the best 400 m is the surge (≈ 87 s), not a glitch
+    expect(be['400m']).toBeGreaterThan(85);
+  });
+});
+
+describe('threshold floors and heart-rate thresholds', () => {
+  it('never puts FTP below 95 % of the best 20 minutes or the best hour', () => {
+    // a curve whose short efforts are weak relative to a strong 20 min (no all-out 3–10 min)
+    const values = CURVE_DURATIONS.map((t) => (t < 180 ? 600 : t <= 1800 ? 300 + 4000 / t : t <= 3600 ? 295 : null));
+    const e = estimateThreshold('ride', { values }, { date: '2026-10-05', windowFrom: '2026-04-06', windowTo: '2026-10-04', activities: 40 })!;
+    const p20 = values[CURVE_DURATIONS.indexOf(1200)]!;
+    expect(e.threshold).toBeGreaterThanOrEqual(Math.min(p20 * 0.95, e.cp) - 1e-9);
+    expect(e.threshold).toBeGreaterThanOrEqual(295);
+    expect(e.threshold).toBeGreaterThan(e.cp * 0.96);
+    expect(['20min', '60min']).toContain(e.basis);
+  });
+
+  it('takes LTHR from sustained efforts, robust to one bad reading', () => {
+    const e = estimateHrThresholds([180, 199, 176, 150, 172], [160, 158, 155, 150], [195, 194, 210, 190, 188]);
+    expect(e.lthr).toBe(180); // second highest: the 199 strap glitch doesn't set it
+    expect(e.runLthr).toBe(180); // easy-only running doesn't drag run LTHR below the bike value
+    expect(e.maxHr).toBe(195);
   });
 });

@@ -23,19 +23,19 @@ import {
   upsertThresholds,
   DEFAULT_THRESHOLDS,
 } from './db';
-import { aggregateCurve, dailyLoads, iso, modelHistory, pmc, powerModel, records, today, trends, type CurveType } from './aggregate';
-import { linkPlanned, recalculate } from './ingest';
+import { aerobicTrend, aggregateCurve, dailyLoads, iso, modelHistory, pmc, powerModel, records, today, trends, type CurveType } from './aggregate';
+import { linkPlanned, recalculate, recalculateAsync } from './ingest';
 import { importFile } from './importers/files';
 import { clearDemo, isDemo, loadDemo } from './demo';
 import { syncNow, syncStatus } from './sync';
 import * as comeback from './comeback';
 import { snapshot } from './snapshot';
-import { SPORTS, estimateOn, estimateState, refreshEstimates, storedSeries } from './estimates';
+import { SPORTS, estimateOn, estimateState, refreshEstimates, storedHrSeries, storedSeries } from './estimates';
 import type { ThresholdSport } from '../shared/analytics/thresholds';
 import { stravaAuthUrl, stravaDisconnect, stravaExchangeCode, stravaHandleWebhook, stravaWebhookSubscribe } from './providers/strava';
 import { BUILTIN_WORKOUTS } from '../shared/library';
 import { workoutMetrics } from '../shared/analytics/workout';
-import { generateSeasonPlan, generateWeekWorkouts } from '../shared/analytics/plan';
+import { generateSeasonPlan, generateWeekWorkouts, planReach } from '../shared/analytics/plan';
 import { formZone } from '../shared/analytics/pmc';
 import type { SeasonPlanConfig, Thresholds, WorkoutStructure } from '../shared/types';
 
@@ -80,11 +80,13 @@ api.put('/preferences', async (c) => {
   const body = await c.req.json();
   const before = getPreferences().autoThresholds;
   const next = setPreferences(body);
-  // switching a sport between auto and manual changes its thresholds everywhere
+  // switching a sport (or heart rate) between auto and manual changes its thresholds everywhere
   const toggled = SPORTS.filter((s) => before[s] !== next.autoThresholds[s]);
-  if (toggled.length) {
-    const ids = q.all(`SELECT id FROM activities WHERE sport IN (${toggled.map(() => '?').join(',')})`, ...toggled).map((r) => r.id as number);
-    runJob('recalculate', (progress) => recalculate({ ids }, (d, t) => progress(d / t, `Recalculating ${d}/${t}`))).catch(() => {});
+  const hr = before.hr !== next.autoThresholds.hr;
+  if (toggled.length || hr) {
+    const where = [toggled.length ? `sport IN (${toggled.map(() => '?').join(',')})` : null, hr ? 'has_hr = 1' : null].filter(Boolean).join(' OR ');
+    const ids = q.all(`SELECT id FROM activities WHERE ${where}`, ...toggled).map((r) => r.id as number);
+    runJob('recalculate', (progress) => recalculateAsync({ ids }, (d, t) => progress(d / t, `Recalculating ${d}/${t}`))).catch(() => {});
   }
   return c.json(next);
 });
@@ -113,17 +115,25 @@ api.delete('/comeback/pins/:date', (c) => {
 });
 
 // ---------- automatic threshold estimates ----------
-api.get('/estimates', (c) => {
-  const sport = (c.req.query('sport') ?? 'ride') as ThresholdSport;
-  const manual = listThresholds().map((t) => ({ date: t.date, value: sport === 'ride' ? t.ftp : sport === 'run' ? t.runThresholdSpeed : t.swimCss }));
-  // stretches of 90+ days without a single activity in this sport (injury, off-season, other sports)
-  const dates = q.all('SELECT DISTINCT local_date AS d FROM activities WHERE sport = ? ORDER BY local_date', sport).map((r) => r.d as string);
+/** Stretches of 90+ days between activity dates (injury, off-season, other sports). */
+function dateGaps(dates: string[]) {
   const gaps: { from: string; to: string; days: number }[] = [];
   for (let i = 1; i < dates.length; i++) {
     const days = differenceInCalendarDays(parseISO(dates[i]), parseISO(dates[i - 1]));
     if (days >= 90) gaps.push({ from: iso(addDays(parseISO(dates[i - 1]), 1)), to: iso(subDays(parseISO(dates[i]), 1)), days: days - 1 });
   }
-  return c.json({ sport, auto: getPreferences().autoThresholds[sport], series: storedSeries(sport), manual, gaps, firstActivity: dates[0] ?? null, state: estimateState(), current: thresholdsFor(today()) });
+  return gaps;
+}
+api.get('/estimates', (c) => {
+  const sport = (c.req.query('sport') ?? 'ride') as ThresholdSport;
+  const manual = listThresholds().map((t) => ({ date: t.date, value: sport === 'ride' ? t.ftp : sport === 'run' ? t.runThresholdSpeed : t.swimCss }));
+  const dates = q.all('SELECT DISTINCT local_date AS d FROM activities WHERE sport = ? ORDER BY local_date', sport).map((r) => r.d as string);
+  return c.json({ sport, auto: getPreferences().autoThresholds[sport], series: storedSeries(sport), manual, gaps: dateGaps(dates), firstActivity: dates[0] ?? null, state: estimateState(), current: thresholdsFor(today()) });
+});
+api.get('/estimates/hr', (c) => {
+  const manual = listThresholds().map((t) => ({ date: t.date, lthr: t.lthr, runLthr: t.runLthr, maxHr: t.maxHr }));
+  const dates = q.all('SELECT DISTINCT local_date AS d FROM activities WHERE has_hr = 1 ORDER BY local_date').map((r) => r.d as string);
+  return c.json({ auto: getPreferences().autoThresholds.hr, series: storedHrSeries(), manual, gaps: dateGaps(dates), firstActivity: dates[0] ?? null, state: estimateState(), current: thresholdsFor(today()) });
 });
 api.get('/estimates/detail', (c) => {
   const sport = (c.req.query('sport') ?? 'ride') as ThresholdSport;
@@ -157,7 +167,16 @@ api.post('/estimates/refresh', async (c) => {
   return c.json({ started: true });
 });
 
-api.get('/thresholds', (c) => c.json({ history: listThresholds(), current: thresholdsFor(today()), manual: manualThresholds(today()) ?? DEFAULT_THRESHOLDS, defaults: DEFAULT_THRESHOLDS }));
+api.get('/thresholds', (c) =>
+  c.json({
+    history: listThresholds(),
+    current: thresholdsFor(today()),
+    manual: manualThresholds(today()) ?? DEFAULT_THRESHOLDS,
+    defaults: DEFAULT_THRESHOLDS,
+    // which rule set the automatic FTP: the CP fit, 95 % of the best 20 min, or the best hour
+    ftpBasis: storedSeries('ride').filter((e) => e.date <= today()).pop()?.basis ?? null,
+  }),
+);
 api.put('/thresholds', async (c) => {
   const t = (await c.req.json()) as Thresholds;
   if (!t.date) t.date = today();
@@ -170,7 +189,7 @@ api.delete('/thresholds/:date', (c) => {
 });
 api.post('/recalculate', async (c) => {
   const body = await c.req.json().catch(() => ({}));
-  runJob('recalculate', (progress) => recalculate({ from: body.from }, (d, t) => progress(d / t, `Recalculating ${d}/${t}`))).catch(() => {});
+  runJob('recalculate', (progress) => recalculateAsync({ from: body.from }, (d, t) => progress(d / t, `Recalculating ${d}/${t}`))).catch(() => {});
   return c.json({ started: true });
 });
 
@@ -280,7 +299,9 @@ api.get('/model/history', (c) => {
 
 api.get('/trends', (c) => {
   const { from, to } = range(c, 365);
-  return c.json(trends(from, to, c.req.query('bucket') === 'month' ? 'month' : 'week'));
+  const bucket = c.req.query('bucket') === 'month' ? 'month' : 'week';
+  const aerobic = aerobicTrend(from, to, bucket);
+  return c.json({ buckets: trends(from, to, bucket).map((b) => ({ ...b, aerobic: aerobic.buckets[b.start] ?? null })), bands: aerobic.bands });
 });
 
 api.get('/records', (c) => c.json(records()));
@@ -289,7 +310,8 @@ api.get('/heatmap', (c) => {
   const { from, to } = range(c, 3650);
   const sport = c.req.query('sport');
   const rows = q.all(
-    `SELECT id, sport, name, local_date, polyline FROM activities WHERE polyline IS NOT NULL AND local_date BETWEEN ? AND ? ${sport ? 'AND sport = ?' : ''}`,
+    // virtual rides (Zwift and the like) are drawn on made-up or borrowed maps: not where you rode
+    `SELECT id, sport, name, local_date, polyline FROM activities WHERE polyline IS NOT NULL AND trainer = 0 AND local_date BETWEEN ? AND ? ${sport ? 'AND sport = ?' : ''}`,
     from,
     to,
     ...(sport ? [sport] : []),
@@ -331,6 +353,8 @@ api.get('/dashboard', (c) => {
     nextEvent: nextEvent ? { ...rowToEvent(nextEvent), projected: eventPoint } : null,
     model,
     thresholds: thresholdsFor(t),
+    // which rule set the automatic FTP (CP fit, best 20 min, best hour)
+    ftpBasis: storedSeries('ride').filter((e) => e.date <= t).pop()?.basis ?? null,
     weekly: trends(iso(subDays(new Date(), 7 * 16)), t, 'week').map((b) => ({ start: b.start, sports: b.sports })),
   });
 });
@@ -490,16 +514,29 @@ api.get('/plans/defaults', (c) => {
   const t = today();
   const pt = pmc(iso(subDays(new Date(), 1)), t).pop();
   const aRace = q.get("SELECT * FROM events WHERE date > ? AND priority = 'A' ORDER BY date LIMIT 1", t);
+  // hours and TSS per hour from the athlete's own recent training, so the plan's weekly
+  // loads convert to hours they actually ride
+  const recent = q.get(
+    'SELECT SUM(COALESCE(tss_override, tss, 0)) AS tss, SUM(moving_time) AS time FROM activities WHERE local_date >= ? AND COALESCE(tss_override, tss) IS NOT NULL',
+    iso(subDays(new Date(), 56)),
+  );
+  const hours = recent?.time ? recent.time / 3600 : 0;
+  const tssPerHour = recent && hours >= 8 ? Math.round(Math.max(35, Math.min(90, recent.tss / hours))) : undefined;
+  const biggestWeek = q.get(
+    "SELECT MAX(h) AS h FROM (SELECT SUM(moving_time) / 3600.0 AS h FROM activities WHERE local_date >= ? GROUP BY strftime('%Y-%W', local_date))",
+    iso(subDays(new Date(), 84)),
+  )?.h;
   return c.json({
     startDate: t,
     raceDate: aRace?.date ?? iso(addDays(new Date(), 16 * 7)),
     startCtl: Math.round(pt?.ctl ?? 40),
     startAtl: Math.round(pt?.atl ?? 40),
-    targetCtl: Math.round((pt?.ctl ?? 40) + 20),
+    targetCtl: Math.round((pt?.ctl ?? 40) + 15),
     maxRamp: 5,
     pattern: '3:1',
     taperWeeks: 2,
-    maxWeeklyHours: 12,
+    maxWeeklyHours: biggestWeek ? Math.max(6, Math.min(30, Math.ceil(biggestWeek))) : 12,
+    tssPerHour,
     sport: 'ride',
     eventId: aRace?.id ?? null,
   });
@@ -509,7 +546,7 @@ api.post('/plans/preview', async (c) => {
   const cfg = (await c.req.json()) as SeasonPlanConfig;
   const events = q.all('SELECT * FROM events WHERE date BETWEEN ? AND ?', cfg.startDate, cfg.raceDate).map(rowToEvent);
   const prefs = getPreferences();
-  return c.json(generateSeasonPlan(cfg, events, prefs.ctlDays, prefs.atlDays));
+  return c.json({ weeks: generateSeasonPlan(cfg, events, prefs.ctlDays, prefs.atlDays), reach: planReach(cfg, prefs.ctlDays, prefs.atlDays) });
 });
 
 api.post('/plans', async (c) => {

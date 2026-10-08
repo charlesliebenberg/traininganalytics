@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { parseISO } from 'date-fns';
 import { RefreshCw, Info, ChevronLeft, ChevronRight, Play, Pause } from 'lucide-react';
@@ -9,7 +9,7 @@ import { alpha, useTokens } from '../lib/theme';
 import { fmtDate, fmtDurLabel, fmtDuration, fmtPace, iso } from '../lib/format';
 import { Badge, Button, Card, Empty, PageHeader, Segmented, Spinner, Stat, Toggle } from '../components/ui';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
-import { makeTimeline, monthsText, type Gap, type Timeline } from '../lib/timeline';
+import { breakNames, makeTimeline, monthsText, type Gap, type Timeline } from '../lib/timeline';
 
 interface SeriesResponse {
   sport: ThresholdSport;
@@ -34,6 +34,8 @@ const LABEL: Record<ThresholdSport, { name: string; model: string; cp: string; w
   swim: { name: 'Swim CSS', model: 'critical swim speed', cp: 'Critical speed', wp: 'D′' },
 };
 const BAND = ['Short', 'Medium', 'Long'];
+/** Which rule set the automatic FTP that week. */
+const BASIS: Record<string, string> = { cp: `${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP`, '20min': '95% of 20 min', '60min': 'best hour' };
 
 /** Formatting helpers per sport: power in W, run pace /km, swim pace /100m. */
 function fmt(sport: ThresholdSport) {
@@ -84,7 +86,7 @@ function HistoryChart({ sport, data, series, timeline, selected, onSelect }: { s
           const x = ps[0].value?.[0];
           const e = s.find((z) => X(z.date) === x);
           if (!e) return '';
-          return `<b>From ${fmtDate(e.date, 'd MMM yyyy')}</b><div style="opacity:.6;font-size:11px;margin-bottom:4px">window ${fmtDate(e.windowFrom, 'd MMM')} – ${fmtDate(e.windowTo, 'd MMM yyyy')}</div>${tipRow(t.accent, 'Applied', f.value(e.threshold))}${tipRow(t.muted, 'Raw fit', f.value(e.raw))}${tipRow('transparent', LABEL[sport].wp, wpText(sport, e.wPrime))}<div style="opacity:.6;font-size:11px;margin-top:4px">Click to inspect the fit</div>`;
+          return `<b>From ${fmtDate(e.date, 'd MMM yyyy')}</b><div style="opacity:.6;font-size:11px;margin-bottom:4px">window ${fmtDate(e.windowFrom, 'd MMM')} – ${fmtDate(e.windowTo, 'd MMM yyyy')}</div>${tipRow(t.accent, 'Applied', f.value(e.threshold))}${tipRow(t.muted, 'Raw fit', f.value(e.raw))}${sport === 'ride' && e.basis ? tipRow('transparent', 'Set by', BASIS[e.basis]) : ''}${tipRow('transparent', LABEL[sport].wp, wpText(sport, e.wPrime))}<div style="opacity:.6;font-size:11px;margin-top:4px">Click to inspect the fit</div>`;
         },
       },
       xAxis: {
@@ -116,7 +118,7 @@ function HistoryChart({ sport, data, series, timeline, selected, onSelect }: { s
                 silent: true,
                 itemStyle: { color: alpha(t.muted, 0.12) },
                 label: { show: true, position: 'insideTop', color: t.muted, fontSize: 10, lineHeight: 13, formatter: (p: any) => p.name },
-                data: timeline.breaks.map((g) => [{ xAxis: g.x0, name: `${monthsText(g.days)}\noff` }, { xAxis: g.x1 }]),
+                data: timeline.breaks.map((g, i, all) => [{ xAxis: g.x0, name: breakNames(all)[i] }, { xAxis: g.x1 }]),
               }
             : undefined,
         },
@@ -295,16 +297,30 @@ function LinearFitChart({ sport, e, yMax }: { sport: ThresholdSport; e: Threshol
   return <Chart option={option} height={260} />;
 }
 
+type View = ThresholdSport | 'hr';
+
 export function Thresholds() {
+  const [view, setView] = useState<View>('ride');
+  const tabs = <Segmented value={view} onChange={setView} options={[{ value: 'ride', label: 'Bike FTP' }, { value: 'run', label: 'Run pace' }, { value: 'swim', label: 'Swim CSS' }, { value: 'hr', label: 'Heart rate' }]} />;
+  return view === 'hr' ? <HeartRateThresholds tabs={tabs} /> : <SportThresholds key={view} sport={view} tabs={tabs} />;
+}
+
+function RecomputeButton({ running }: { running: boolean }) {
+  const refresh = useAction(() => http('/estimates/refresh', { method: 'POST' }));
+  return (
+    <Button icon={<RefreshCw className={`h-4 w-4 ${running ? 'animate-spin' : ''}`} />} loading={refresh.isPending} onClick={() => refresh.mutate(undefined)} title="Recompute all estimates and recalculate activities">
+      Recompute
+    </Button>
+  );
+}
+
+function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNode }) {
   const t = useTokens();
-  const [sport, setSport] = useState<ThresholdSport>('ride');
   const { data, isLoading } = useApi<SeriesResponse>(`/estimates${qs({ sport })}`, { refetchInterval: (q) => ((q.state.data as SeriesResponse | undefined)?.state.running ? 3000 : false) });
   const [selected, setSelected] = useState<string | null>(null);
-  useEffect(() => setSelected(null), [sport]);
   const curves = useApi<CurvesResponse>(data?.series.length ? `/estimates/curves${qs({ sport, n: data.series.length, last: data.series[data.series.length - 1].date })}` : null, { staleTime: 5 * 60_000 });
   const prefs = useApi<Preferences>('/preferences');
   const setAuto = useAction((v: boolean) => http('/preferences', { method: 'PUT', json: { autoThresholds: { ...prefs.data!.autoThresholds, [sport]: v } } }));
-  const refresh = useAction(() => http('/estimates/refresh', { method: 'POST' }));
   const f = fmt(sport);
   const today = iso(new Date());
   const timeline = useMemo(() => makeTimeline(data?.gaps ?? []), [data?.gaps]);
@@ -348,10 +364,8 @@ export function Thresholds() {
         subtitle={`FTP, run threshold pace and swim CSS estimated weekly from your last ${Math.round(WINDOW_DAYS / 30)} months of best efforts`}
         actions={
           <>
-            <Segmented value={sport} onChange={setSport} options={[{ value: 'ride', label: 'Bike FTP' }, { value: 'run', label: 'Run pace' }, { value: 'swim', label: 'Swim CSS' }]} />
-            <Button icon={<RefreshCw className={`h-4 w-4 ${data?.state.running ? 'animate-spin' : ''}`} />} loading={refresh.isPending} onClick={() => refresh.mutate(undefined)} title="Recompute all estimates and recalculate activities">
-              Recompute
-            </Button>
+            {tabs}
+            <RecomputeButton running={!!data?.state.running} />
           </>
         }
       />
@@ -366,8 +380,8 @@ export function Thresholds() {
       ) : (
         <>
           <div className="card mb-4 grid grid-cols-2 gap-4 p-5 sm:grid-cols-3 xl:grid-cols-6">
-            <Stat label={`Current ${ESTIMATE_CONFIG[sport].label}`} accent={t.accent} value={current ? f.value(current.threshold) : '–'} sub={current ? `from ${fmtDate(current.date, 'd MMM')}` : undefined} />
-            <Stat label={LABEL[sport].cp} value={current ? f.value(current.cp) : '–'} sub={sport === 'ride' ? `FTP = ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP` : 'threshold = CS'} />
+            <Stat label={`Current ${ESTIMATE_CONFIG[sport].label}`} accent={t.accent} value={current ? f.value(current.threshold) : '–'} sub={current ? (sport === 'ride' && current.basis ? `${fmtDate(current.date, 'd MMM')} · ${current.threshold > current.raw + 1e-9 ? 'decline-limited' : BASIS[current.basis]}` : `from ${fmtDate(current.date, 'd MMM')}`) : undefined} title={sport === 'ride' && current?.basis ? `Set by ${current.threshold > current.raw + 1e-9 ? 'the 1%-a-week decline limit' : current.basis === 'cp' ? 'the critical-power fit' : current.basis === '20min' ? '95% of your best 20 minutes' : 'your best hour'}` : undefined} />
+            <Stat label={LABEL[sport].cp} value={current ? f.value(current.cp) : '–'} sub={sport === 'ride' ? 'used for W′ balance' : 'threshold = CS'} />
             <Stat label={LABEL[sport].wp} value={current ? wpText(sport, current.wPrime) : '–'} sub={sport === 'ride' ? 'anaerobic capacity' : 'distance above CS'} />
             <Stat label="Manual value" value={manualNow?.value ? f.value(manualNow.value) : '–'} sub="Settings → Athlete" />
             <Stat label="Weeks estimated" value={series.length} sub={data.state.running ? 'recomputing…' : data.state.lastRun ? `updated ${fmtDate(data.state.lastRun, 'd MMM HH:mm')}` : undefined} />
@@ -459,12 +473,194 @@ export function Thresholds() {
               </li>
               <li>
                 Fit the {LABEL[sport].model} model through those three points (a straight line in {sport === 'ride' ? 'work' : 'distance'} vs time).{' '}
-                {sport === 'ride' ? `FTP = ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP, because CP from 3–30 min efforts sits slightly above one-hour power.` : sport === 'run' ? 'Threshold pace = critical speed.' : 'CSS is the critical speed.'}
+                {sport === 'ride'
+                  ? `FTP = ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP, because CP from 3–30 min efforts sits slightly above one-hour power. Two floors catch a fit that runs low: 95% of your best 20 minutes (never above CP), and your best hour — FTP can't sit below an hour you've actually ridden.`
+                  : sport === 'run'
+                    ? 'Threshold pace = critical speed.'
+                    : 'CSS is the critical speed.'}
               </li>
               <li>
                 Fitness is lost slowly, but a big effort leaves the window all at once. So the applied value can drop by at most {Math.round(MAX_WEEKLY_DECLINE * 100)}% per week. Rises apply immediately.
               </li>
-              <li>Each activity uses the estimate that was current on its date. Heart-rate thresholds (LTHR, max HR) stay manual.</li>
+              <li>Each activity uses the estimate that was current on its date. Heart-rate thresholds (LTHR, max HR) have their own tab.</li>
+            </ol>
+          </Card>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------- heart rate ----------
+interface HrValues {
+  lthr: number | null;
+  runLthr: number | null;
+  maxHr: number | null;
+}
+interface HrWeek extends HrValues {
+  date: string;
+  rides: number;
+  runs: number;
+  /** what that week's own windows measured, before the best value is carried forward */
+  raw?: HrValues;
+}
+interface HrResponse {
+  auto: boolean;
+  series: HrWeek[];
+  manual: { date: string; lthr: number; runLthr: number; maxHr: number }[];
+  gaps: Gap[];
+  state: { running: boolean; lastRun: string | null };
+}
+
+const HR_LINES = [
+  { key: 'lthr', name: 'Bike LTHR', window: '6 months of rides' },
+  { key: 'runLthr', name: 'Run LTHR', window: '6 months of runs' },
+  { key: 'maxHr', name: 'Max HR', window: '12 months' },
+] as const;
+
+function HrHistoryChart({ series, timeline }: { series: HrWeek[]; timeline: Timeline }) {
+  const t = useTokens();
+  const option = useMemo(() => {
+    const X = (d: string) => timeline.toX(parseISO(d).getTime());
+    const firstDate = series[0]?.date ?? iso(new Date());
+    const lastDate = series.length ? series[series.length - 1].date : iso(new Date());
+    // bike and run LTHR often coincide (run is never below bike): dash the run line so both show
+    const style = { lthr: { color: t.accent, type: 'solid' as const }, runLthr: { color: t.series[1], type: 'dashed' as const }, maxHr: { color: t.ink2, type: 'solid' as const } };
+    const line = (k: keyof HrValues) => {
+      const out: (number | null)[][] = [];
+      series.forEach((e, i) => {
+        if (i && timeline.breakBetween(series[i - 1].date, e.date)) out.push([null, null]);
+        out.push([X(e.date), e[k] == null ? null : Math.round(e[k]! * 10) / 10]);
+      });
+      return out;
+    };
+    const byX = new Map(series.map((e) => [X(e.date), e]));
+    return {
+      animation: false,
+      grid: { left: 52, right: 16, top: 34, bottom: 30 },
+      legend: { ...legendStyle(t), data: HR_LINES.map((l) => l.name) },
+      tooltip: {
+        trigger: 'axis',
+        ...tooltipStyle(t),
+        formatter: (ps: any) => {
+          const e = byX.get(ps[0]?.value?.[0]);
+          if (!e) return '';
+          const row = (l: (typeof HR_LINES)[number]) => {
+            const v = e[l.key];
+            const m = e.raw?.[l.key];
+            return v == null ? '' : tipRow(style[l.key].color, l.name, `${Math.round(v)}${m != null && Math.round(m) !== Math.round(v) ? ` <span style="opacity:.6">(measured ${Math.round(m)})</span>` : ''}`);
+          };
+          return `<b>From ${fmtDate(e.date, 'd MMM yyyy')}</b>${HR_LINES.map(row).join('')}<div style="opacity:.6;font-size:11px;margin-top:4px">${e.rides} rides · ${e.runs} runs with heart rate in the 6-month window</div>`;
+        },
+      },
+      xAxis: {
+        type: 'value',
+        min: X(firstDate) - 7 * DAY,
+        max: X(lastDate) + 7 * DAY,
+        ...axisStyle(t, { grid: false }),
+        splitNumber: 8,
+        axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => fmtDate(new Date(timeline.fromX(v)), 'MMM yy') },
+      },
+      yAxis: valueAxis(t, { scale: true, name: 'bpm', nameTextStyle: { color: t.muted, fontSize: 10 }, axisLabel: { color: t.muted, fontSize: 11 } }),
+      series: [
+        ...HR_LINES.map((l, i) => ({
+          type: 'line',
+          name: l.name,
+          step: 'end',
+          showSymbol: false,
+          connectNulls: false,
+          data: line(l.key),
+          lineStyle: { color: style[l.key].color, width: l.key === 'lthr' ? 2.5 : 1.8, type: style[l.key].type },
+          itemStyle: { color: style[l.key].color },
+          markArea:
+            i === 0 && timeline.breaks.length
+              ? {
+                  silent: true,
+                  itemStyle: { color: alpha(t.muted, 0.12) },
+                  label: { show: true, position: 'insideTop', color: t.muted, fontSize: 10, lineHeight: 13, formatter: (p: any) => p.name },
+                  data: timeline.breaks.map((g, i, all) => [{ xAxis: g.x0, name: breakNames(all)[i] }, { xAxis: g.x1 }]),
+                }
+              : undefined,
+        })),
+        // what each week's window measured on its own: the evidence behind the lines
+        ...HR_LINES.map((l) => ({
+          type: 'scatter',
+          name: l.name,
+          symbolSize: 4,
+          silent: true,
+          z: 1,
+          data: series.filter((e) => e.raw?.[l.key] != null).map((e) => [X(e.date), Math.round(e.raw![l.key]!)]),
+          itemStyle: { color: alpha(style[l.key].color, 0.35) },
+          tooltip: { show: false },
+        })),
+      ],
+    };
+  }, [series, timeline, t]);
+  return <Chart option={option} height={300} />;
+}
+
+function HeartRateThresholds({ tabs }: { tabs: ReactNode }) {
+  const t = useTokens();
+  const { data, isLoading } = useApi<HrResponse>('/estimates/hr', { refetchInterval: (q) => ((q.state.data as HrResponse | undefined)?.state.running ? 3000 : false) });
+  const prefs = useApi<Preferences>('/preferences');
+  const setAuto = useAction((v: boolean) => http('/preferences', { method: 'PUT', json: { autoThresholds: { ...prefs.data!.autoThresholds, hr: v } } }));
+  const timeline = useMemo(() => makeTimeline(data?.gaps ?? []), [data?.gaps]);
+  const series = useMemo(() => (data?.series ?? []).filter((e) => !timeline.hidden(e.date)), [data?.series, timeline]);
+  const today = iso(new Date());
+  const current = series.filter((e) => e.date <= today).pop() ?? series[series.length - 1];
+  const manualNow = data?.manual.filter((m) => m.date <= today).pop() ?? data?.manual[0];
+  const bpm = (v: number | null | undefined) => (v == null ? '–' : `${Math.round(v)} bpm`);
+  const measured = (k: keyof HrValues, window: string) => {
+    const m = current?.raw?.[k];
+    return m == null ? `no hard efforts in ${window}` : `measured ${Math.round(m)} in ${window}`;
+  };
+
+  return (
+    <div>
+      <PageHeader
+        title="Thresholds"
+        subtitle="Lactate-threshold and maximum heart rate from your hardest sustained efforts, estimated weekly"
+        actions={
+          <>
+            {tabs}
+            <RecomputeButton running={!!data?.state.running} />
+          </>
+        }
+      />
+      {isLoading || !data ? (
+        <Spinner />
+      ) : !series.length ? (
+        <Card>
+          <Empty title="Not enough heart-rate data yet">Estimates need rides or runs recorded with a heart-rate strap. Until then your manual values are used.</Empty>
+        </Card>
+      ) : (
+        <>
+          <div className="card mb-4 grid grid-cols-2 gap-4 p-5 sm:grid-cols-3 xl:grid-cols-6">
+            <Stat label="Bike LTHR" accent={t.accent} value={bpm(current?.lthr)} sub={measured('lthr', '6 mo')} />
+            <Stat label="Run LTHR" value={bpm(current?.runLthr)} sub={measured('runLthr', '6 mo')} />
+            <Stat label="Max HR" value={bpm(current?.maxHr)} sub={measured('maxHr', '12 mo')} />
+            <Stat label="Manual values" value={manualNow ? `${manualNow.lthr} / ${manualNow.maxHr}` : '–'} sub="LTHR / max HR" title="Set in Settings → Athlete & zones" />
+            <Stat label="Weeks estimated" value={series.length} sub={data.state.running ? 'recomputing…' : data.state.lastRun ? `updated ${fmtDate(data.state.lastRun, 'd MMM HH:mm')}` : undefined} />
+            <div>
+              <div className="text-[11px] font-medium tracking-wide text-muted uppercase">Zones & TSS use</div>
+              <div className="mt-2">
+                <Toggle checked={data.auto} onChange={(v) => setAuto.mutate(v)} label={data.auto ? 'Automatic estimate' : 'Manual values'} />
+              </div>
+              <div className="mt-1 text-[11px] text-muted">switching recalculates activities with heart rate</div>
+            </div>
+          </div>
+
+          <Card title="History" subtitle="Lines: the values applied on each date. Faint dots: what that week's own window measured — after a break or an easy block they sit lower, because there were no hard efforts to show the threshold, not because it fell. Breaks of 3+ months without heart-rate data are collapsed.">
+            <HrHistoryChart series={series} timeline={timeline} />
+          </Card>
+
+          <Card className="mt-4" title={<span className="flex items-center gap-2"><Info className="h-4 w-4 text-muted" />How the estimate works</span>}>
+            <ol className="list-decimal space-y-1.5 pl-5 text-[13px] leading-relaxed text-ink-2">
+              <li>LTHR is the heart rate you can hold for about an hour, the way Friel's field test reads it from 30 minutes of hard solo riding or running. Each week, take every ride's best 30-minute average heart rate from the previous 6 months; the second-highest is the bike LTHR (the highest when there are only a few rides), so one strap glitch can't set it.</li>
+              <li>Run LTHR comes from runs the same way, but never sits below the bike value — running usually holds a few beats higher, and a block of easy running would otherwise drag it down.</li>
+              <li>Max HR is the second-highest activity maximum over 12 months (a single spike can't set it), and at least 5 beats above LTHR.</li>
+              <li>Heart-rate thresholds are set mostly by age, not fitness: an easy block or a long break doesn't lower them, it just lacks the hard efforts that show them. So the best value measured carries forward, less 0.7 bpm a year (the typical age decline of max HR), and only a higher reading replaces it.</li>
+              <li>Heart-rate zones, and TSS for activities without power or pace, use the values current on each activity's date.</li>
             </ol>
           </Card>
         </>

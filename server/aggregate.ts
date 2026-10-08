@@ -6,6 +6,7 @@ import { fitCp2, fitPowerDuration, curvePoints, type PdModel } from '../shared/a
 import { polarizationIndex } from '../shared/analytics/zones';
 import { BEST_EFFORT_DISTANCES } from '../shared/analytics/running';
 import { getPreferences, q, thresholdsFor } from './db';
+import { activityHrBins } from './hrbins';
 
 export const iso = (d: Date) => format(d, 'yyyy-MM-dd');
 export const today = () => iso(new Date());
@@ -248,13 +249,71 @@ export function trends(from: string, to: string, bucket: 'week' | 'month') {
     if (r.decoupling != null && r.intensity && r.intensity < 0.8 && r.moving_time > 3600) b._dec.push(r.decoupling);
   }
   const avg = (a: number[]) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
-  return [...buckets.values()].map(({ _ef, _efr, _dec, ...b }) => ({
+  const list = [...buckets.values()];
+  // polarization needs more than a week of riding to mean anything: weekly buckets use the
+  // rolling 4 weeks ending there
+  const rolling = (i: number) => {
+    if (bucket !== 'week') return list[i].seiler;
+    const z = [0, 0, 0];
+    for (let k = Math.max(0, i - 3); k <= i; k++) list[k].seiler.forEach((v, j) => (z[j] += v));
+    return z;
+  };
+  // decoupling too: one or two qualifying sessions a week is too few to read
+  const decRolling = (i: number) => (bucket === 'week' ? list.slice(Math.max(0, i - 3), i + 1).flatMap((b) => b._dec) : list[i]._dec);
+  return list.map(({ _ef, _efr, _dec, ...b }, i) => ({
     ...b,
-    polarization: polarizationIndex(b.seiler),
+    polarization: polarizationIndex(rolling(i)),
     efRide: avg(_ef),
     efRun: avg(_efr),
-    decoupling: avg(_dec),
+    decoupling: avg(decRolling(i)),
   }));
+}
+
+/** Heart-rate band treated as "aerobic" for the trend: 80–88 % of LTHR, in 5-bpm bins. */
+export function aerobicBands() {
+  const th = thresholdsFor(today());
+  const band = (lthr: number): [number, number] => [Math.round((lthr * 0.8) / 5) * 5, Math.round((lthr * 0.88) / 5) * 5];
+  return { ride: band(th.lthr), run: band(th.runLthr || th.lthr) };
+}
+
+const median = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b);
+  return s.length ? (s.length % 2 ? s[s.length >> 1] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2) : null;
+};
+
+/**
+ * Aerobic fitness per bucket, the robust way: the median power (rides) or grade-adjusted
+ * speed (runs) of steady 10-minute stretches ridden or run at an aerobic heart rate. Unlike
+ * efficiency factor it doesn't change with how hard the session was — only with fitness.
+ */
+export function aerobicTrend(from: string, to: string, bucket: 'week' | 'month') {
+  const bands = aerobicBands();
+  const prefs = getPreferences();
+  const keyOf = (d: string) => iso(bucket === 'week' ? startOfWeek(parseISO(d), { weekStartsOn: prefs.weekStart }) : startOfMonth(parseISO(d)));
+  const rows = q.all<{ id: number; local_date: string; sport: string; data: string | null }>(
+    `SELECT a.id, a.local_date, a.sport, h.data FROM activities a LEFT JOIN hr_power h ON h.activity_id = a.id
+     WHERE a.has_hr = 1 AND a.local_date BETWEEN ? AND ? AND ((a.sport = 'ride' AND a.has_power = 1) OR a.sport = 'run')`,
+    from,
+    to,
+  );
+  const acc = new Map<string, { ride: number[]; run: number[] }>();
+  for (const r of rows) {
+    const bins = activityHrBins(r.id, r.sport, r.data);
+    const [lo, hi] = r.sport === 'ride' ? bands.ride : bands.run;
+    const e = acc.get(keyOf(r.local_date)) ?? { ride: [], run: [] };
+    for (const [bin, vals] of Object.entries(bins)) if (Number(bin) >= lo && Number(bin) <= hi) (r.sport === 'ride' ? e.ride : e.run).push(...vals);
+    acc.set(keyOf(r.local_date), e);
+  }
+  // weekly buckets pool the 4 weeks ending there: a single week rarely has enough steady
+  // stretches at an aerobic heart rate
+  const out: Record<string, { power: number | null; speed: number | null; rideWindows: number; runWindows: number }> = {};
+  for (const k of acc.keys()) {
+    const keys = bucket === 'week' ? [0, 1, 2, 3].map((w) => iso(subDays(parseISO(k), 7 * w))) : [k];
+    const ride = keys.flatMap((x) => acc.get(x)?.ride ?? []);
+    const run = keys.flatMap((x) => acc.get(x)?.run ?? []);
+    out[k] = { power: ride.length >= 10 ? median(ride) : null, speed: run.length >= 10 ? median(run) : null, rideWindows: ride.length, runWindows: run.length };
+  }
+  return { bands, buckets: out };
 }
 
 // ---------- records ----------
@@ -271,6 +330,9 @@ export function records() {
     }
   }
   const years = q.all("SELECT DISTINCT substr(local_date, 1, 4) AS y FROM activities ORDER BY y").map((r) => r.y as string);
+  // each table only gets the years that have data for it
+  const powerYears = q.all("SELECT DISTINCT substr(local_date, 1, 4) AS y FROM activities WHERE sport = 'ride' AND has_power = 1 ORDER BY y").map((r) => r.y as string);
+  const runYears = [...new Set(runs.map((r) => (r.local_date as string).slice(0, 4)))].sort();
   const peakDurations = [5, 15, 30, 60, 120, 300, 600, 1200, 1800, 3600, 5400, 7200];
   const peaks = peakDurations.map((dur) => {
     const idx = CURVE_DURATIONS.indexOf(dur);
@@ -294,6 +356,8 @@ export function records() {
   };
   return {
     years,
+    powerYears,
+    runYears,
     run: BEST_EFFORT_DISTANCES.filter((d) => bestRun[d.key]).map((d) => ({ ...d, ...bestRun[d.key] })),
     peaks,
     highlights,

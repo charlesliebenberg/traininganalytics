@@ -10,6 +10,7 @@ import { Card, Field, Input, PageHeader, Select, Spinner, Stat, Toggle } from '.
 import { RangePicker } from '../components/RangePicker';
 import { FormLegend, PmcChart, formColor } from '../components/charts';
 import { Chart, axisStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
+import { gapsInDaily, makeTimeline, monthsText } from '../lib/timeline';
 
 function RampChart({ points }: { points: PmcPoint[] }) {
   const t = useTokens();
@@ -43,7 +44,15 @@ function MonotonyChart({ points }: { points: PmcPoint[] }) {
   const option = useMemo(() => {
     const actual = points.filter((p) => !p.projected);
     const ms = monotonyStrain(actual.map((p) => p.tss));
-    const x = actual.map((p) => parseISO(p.date).getTime());
+    // same squeezed timeline as the PMC: long breaks would otherwise fill the chart
+    const gaps = gapsInDaily(actual, (p) => p.tss === 0);
+    const tl = gaps.length ? makeTimeline(gaps) : null;
+    const x = actual.map((p) => (tl ? tl.toX(parseISO(p.date).getTime()) : parseISO(p.date).getTime()));
+    const span = x.length ? x[x.length - 1] - x[0] : 0;
+    const label = (v: number) => fmtDate(new Date(tl ? tl.fromX(v) : v), span > 300 * 86400_000 ? 'MMM yy' : 'd MMM');
+    const bands = tl
+      ? { markArea: { silent: true, itemStyle: { color: alpha(t.muted, 0.1) }, label: { show: false }, data: tl.breaks.map((g) => [{ xAxis: g.x0, name: `${monthsText(g.days)} off` }, { xAxis: g.x1 }]) } }
+      : {};
     return {
       animation: false,
       grid: [
@@ -59,7 +68,7 @@ function MonotonyChart({ points }: { points: PmcPoint[] }) {
           return `<b>${fmtDate(actual[i].date)}</b>${tipRow(t.series[3], 'Monotony', fmtNum(ms[i].monotony, 2))}${tipRow(t.series[4], 'Strain', fmtNum(ms[i].strain))}${tipRow(t.muted, '7-day TSS', fmtNum(ms[i].weekly))}`;
         },
       },
-      xAxis: [0, 1].map((i) => ({ type: 'time' as const, gridIndex: i, splitNumber: 4, ...axisStyle(t, { grid: false }), axisLabel: { show: i === 1, color: t.muted, fontSize: 10, hideOverlap: true, formatter: '{MMM} {d}' } })),
+      xAxis: [0, 1].map((i) => ({ type: 'value' as const, gridIndex: i, min: x[0], max: x[x.length - 1], splitNumber: 4, ...axisStyle(t, { grid: false }), axisLabel: { show: i === 1, color: t.muted, fontSize: 10, hideOverlap: true, formatter: label } })),
       yAxis: [
         valueAxis(t, { gridIndex: 0, name: 'Monotony', nameLocation: 'end', nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -36] }, max: (v: { max: number }) => Math.max(2.5, Math.ceil(v.max)) }),
         valueAxis(t, { gridIndex: 1, name: 'Strain', nameLocation: 'end', nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -36] } }),
@@ -74,8 +83,9 @@ function MonotonyChart({ points }: { points: PmcPoint[] }) {
           lineStyle: { color: t.series[3], width: 1.5 },
           itemStyle: { color: t.series[3] },
           markLine: { symbol: 'none', silent: true, data: [{ yAxis: 2 }], lineStyle: { color: t.critical, type: 'solid' as const, width: 1 }, label: { color: t.muted, fontSize: 10, formatter: 'high', position: 'insideEndTop' as const } },
+          ...bands,
         },
-        { type: 'line' as const, xAxisIndex: 1, yAxisIndex: 1, showSymbol: false, data: x.map((v, i) => [v, ms[i].strain]), lineStyle: { color: t.series[4], width: 1.5 }, itemStyle: { color: t.series[4] }, areaStyle: { color: alpha(t.series[4], 0.12) } },
+        { type: 'line' as const, xAxisIndex: 1, yAxisIndex: 1, showSymbol: false, data: x.map((v, i) => [v, ms[i].strain]), lineStyle: { color: t.series[4], width: 1.5 }, itemStyle: { color: t.series[4] }, areaStyle: { color: alpha(t.series[4], 0.12) }, ...bands },
       ],
     };
   }, [points, t]);
@@ -187,12 +197,22 @@ export function Fitness() {
         <Stat label="Monotony (7d)" value={fmtNum(ms?.monotony, 2)} sub="> 2 is risky" />
         <Stat label="Strain (7d)" value={fmtNum(ms?.strain)} />
       </div>
-      <Card title="Performance management chart" subtitle="Hover for daily values · scroll to zoom · dashed = projected from planned workouts and your season plan" actions={<FormLegend />}>
+      <Card
+        title="Performance management chart"
+        subtitle={`Hover for daily values · scroll to zoom${
+          points?.some((p) => p.projected)
+            ? points.some((p) => p.projected && p.tss > 0)
+              ? ' · dashed = projected from your planned workouts and season plan'
+              : ' · dashed = what happens if you rest: nothing is planned yet'
+            : ''
+        }${points && gapsInDaily(points.filter((p) => !p.projected), (p) => p.tss === 0).length ? ' · breaks of 3+ months are squeezed' : ''}`}
+        actions={<FormLegend />}
+      >
         {isLoading || !points ? <Spinner /> : <PmcChart points={points} events={visibleEvents} height={520} />}
       </Card>
       <div className="mt-4 grid gap-4 xl:grid-cols-3">
         <Card title="Weekly ramp rate" subtitle="CTL gained per week — keep most weeks under 5–8">
-          {points && <RampChart points={points.slice(-7 * 26)} />}
+          {points && <RampChart points={points.filter((p) => !p.projected).slice(-7 * 26)} />}
         </Card>
         <Card title="Monotony & strain" subtitle="Foster: low day-to-day variation plus high load predicts illness and overreaching">
           {points && <MonotonyChart points={points} />}

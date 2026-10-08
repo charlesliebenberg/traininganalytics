@@ -1,17 +1,17 @@
 import { useMemo, useState } from 'react';
-import { differenceInCalendarDays, parseISO, subDays, subYears } from 'date-fns';
-import { Check } from 'lucide-react';
+import { addDays, differenceInCalendarDays, parseISO, subDays, subYears } from 'date-fns';
 import type { Thresholds } from '../../shared/types';
 import { CURVE_DURATIONS } from '../../shared/analytics/series';
 import { ompd, POWER_PROFILE, PROFILE_LEVELS, profileLevel, type PdModel } from '../../shared/analytics/models';
-import { http, qs, useAction, useApi } from '../lib/api';
+import { qs, useApi } from '../lib/api';
 import { resolvePreset, type DateRange } from '../lib/range';
-import { useTokens } from '../lib/theme';
+import { alpha, useTokens } from '../lib/theme';
 import { fmtDate, fmtDurLabel, fmtPaceSec, iso, paceSeconds, paceUnit } from '../lib/format';
-import { Button, Card, PageHeader, Segmented, Select, Spinner, Stat, Toggle } from '../components/ui';
+import { Card, PageHeader, Segmented, Select, Spinner, Stat, Toggle } from '../components/ui';
 import { RangePicker } from '../components/RangePicker';
 import { CurveChart, type CurveSeries } from '../components/charts';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
+import { BREAK_DAYS, breakNames, makeTimeline, type Gap } from '../lib/timeline';
 import { Link, useNavigate } from 'react-router-dom';
 
 type Kind = 'power' | 'np' | 'hr' | 'speed' | 'vam';
@@ -43,45 +43,40 @@ function compareRange(mode: string, r: DateRange): { from: string; to: string; l
   }
 }
 
-function ModelCard({ model, cp2, th, weight }: { model: PdModel | null; cp2: { cp: number; wPrime: number; r2: number } | null; th: Thresholds; weight: number }) {
+function ModelCard({ model, cp2, th, weight, basis }: { model: PdModel | null; cp2: { cp: number; wPrime: number; r2: number } | null; th: Thresholds; weight: number; basis: string | null }) {
   const t = useTokens();
-  const apply = useAction(() => http('/thresholds', { method: 'PUT', json: { ...th, date: iso(new Date()), ftp: Math.round(model!.eftp), wPrime: Math.round(model!.wPrime) } }));
   if (!model) return <Card title="Power-duration model">Not enough maximal efforts in this range to fit a model. Include some short sprints and 10–20 min efforts.</Card>;
   const diff = model.eftp - th.ftp;
+  const auto = th.sources?.ftp === 'auto';
+  const basisText = !auto ? 'set manually' : basis === '20min' ? 'auto · 95 % of your best 20 min' : basis === '60min' ? 'auto · your best hour' : 'auto · 3-point critical-power fit';
   return (
     <Card title="Power-duration model" subtitle="Omni-domain model (Puchowicz 2020) fitted to your curve's envelope">
       <div className="grid grid-cols-2 gap-4">
-        <Stat label="eFTP · critical power" accent={t.power} value={Math.round(model.eftp)} unit="W" sub={`${(model.eftp / weight).toFixed(2)} W/kg`} title="Highest quasi-steady-state power (≈ FTP / MLSS)" />
+        <Stat label="Critical power (model)" accent={t.power} value={Math.round(model.eftp)} unit="W" sub={`${(model.eftp / weight).toFixed(2)} W/kg`} title="The model's maximal quasi-steady-state power" />
         <Stat label="60-min power" value={Math.round(model.p60)} unit="W" sub="modelled" title="Power the model predicts you can hold for one hour" />
         <Stat label="W′" value={(model.wPrime / 1000).toFixed(1)} unit="kJ" sub="anaerobic capacity" />
         <Stat label="Pmax" value={Math.round(model.pmax)} unit="W" sub={`${(model.pmax / weight).toFixed(1)} W/kg`} />
-        <Stat label="Time to exhaustion" value={model.tte ? fmtDurLabel(model.tte) : '< 20m'} sub="longest effort at eFTP" />
+        <Stat label="Time to exhaustion" value={model.tte ? fmtDurLabel(model.tte) : '< 20m'} sub="longest effort at CP" />
         <Stat label="Fit error" value={`${(model.error * 100).toFixed(1)}%`} sub={cp2 ? `2-param CP ${Math.round(cp2.cp)} W` : undefined} />
       </div>
-      <div className="mt-4 flex items-center justify-between rounded-lg bg-surface-2 p-3 text-xs">
+      <div className="mt-4 flex items-start justify-between gap-3 rounded-lg bg-surface-2 p-3 text-xs">
         <span className="text-ink-2">
-          Current FTP <b className="text-ink">{th.ftp} W</b>{th.sources?.ftp === 'auto' ? ' (3-point CP)' : ''} · model says {diff >= 0 ? '+' : ''}
-          {Math.round(diff)} W
+          FTP in use <b className="text-ink">{th.ftp} W</b> ({basisText}) · the model's CP is {diff >= 0 ? '+' : ''}
+          {Math.round(diff)} W. CP fitted to the whole curve usually sits a little above FTP, and further when your long efforts weren't all-out.
         </span>
-        {th.sources?.ftp === 'auto' ? (
-          <Link to="/thresholds" className="text-accent hover:underline">
-            FTP is automatic →
-          </Link>
-        ) : (
-          <Button size="sm" variant="primary" icon={<Check className="h-3.5 w-3.5" />} loading={apply.isPending} disabled={Math.abs(diff) < 2} onClick={() => apply.mutate(undefined)}>
-            Use eFTP from today
-          </Button>
-        )}
+        <Link to={auto ? '/thresholds' : '/settings'} className="shrink-0 text-accent hover:underline">
+          {auto ? 'How FTP is set →' : 'Change FTP →'}
+        </Link>
       </div>
     </Card>
   );
 }
 
-function ProfileCard({ curve, weight, model }: { curve: Agg | undefined; weight: number; model: PdModel | null }) {
+function ProfileCard({ curve, weight, ftp }: { curve: Agg | undefined; weight: number; ftp: number | null }) {
   const t = useTokens();
   if (!curve) return null;
   const rows = POWER_PROFILE.map((p) => {
-    const watts = p.t === 3600 ? model?.eftp ?? null : curve.values[CURVE_DURATIONS.indexOf(p.t)];
+    const watts = p.t === 3600 ? ftp : curve.values[CURVE_DURATIONS.indexOf(p.t)];
     const wkg = watts ? watts / weight : null;
     return { ...p, watts, wkg, lvl: wkg ? profileLevel(wkg, p.bands) : null };
   });
@@ -115,7 +110,7 @@ function ProfileCard({ curve, weight, model }: { curve: Agg | undefined; weight:
           </div>
         ))}
       </div>
-      <p className="mt-3 text-[11px] text-muted">Levels: {PROFILE_LEVELS.join(' → ')}. FTP uses the modelled eFTP.</p>
+      <p className="mt-3 text-[11px] text-muted">Levels: {PROFILE_LEVELS.join(' → ')}. FTP is the one your zones and TSS use.</p>
     </Card>
   );
 }
@@ -231,12 +226,31 @@ function PeaksTable({ kind }: { kind: Kind }) {
   );
 }
 
+type ModelPoint = { date: string; eftp: number; cp: number; wPrime: number; pmax: number; ftp: number };
+
 function ModelHistory() {
   const t = useTokens();
-  const { data } = useApi<{ date: string; eftp: number; cp: number; wPrime: number; pmax: number; ftp: number }[]>(`/model/history${qs({ from: iso(subDays(new Date(), 364)), to: iso(new Date()) })}`);
+  const { data } = useApi<ModelPoint[]>(`/model/history${qs({ from: iso(subDays(new Date(), 364)), to: iso(new Date()) })}`);
   const option = useMemo(() => {
     if (!data?.length) return null;
-    const x = data.map((d) => parseISO(d.date).getTime());
+    // weeks without a model are weeks without riding: break the lines there, and squeeze
+    // breaks of 3+ months like every other time chart
+    const gaps: Gap[] = [];
+    for (let i = 1; i < data.length; i++) {
+      const days = differenceInCalendarDays(parseISO(data[i].date), parseISO(data[i - 1].date));
+      if (days >= BREAK_DAYS) gaps.push({ from: iso(addDays(parseISO(data[i - 1].date), 1)), to: iso(subDays(parseISO(data[i].date), 1)), days: days - 1 });
+    }
+    const tl = makeTimeline(gaps);
+    const x = data.map((d) => tl.toX(parseISO(d.date).getTime()));
+    const line = (v: (d: ModelPoint) => number) => {
+      const out: (number | null)[][] = [];
+      data.forEach((d, i) => {
+        if (i && differenceInCalendarDays(parseISO(d.date), parseISO(data[i - 1].date)) > 7) out.push([(x[i - 1] + x[i]) / 2, null]);
+        out.push([x[i], v(d)]);
+      });
+      return out;
+    };
+    const byX = new Map(x.map((v, i) => [v, data[i]]));
     const grids = [
       { left: 48, right: 12, top: 34, height: 150 },
       { left: 48, right: 12, top: 222, height: 70 },
@@ -245,32 +259,52 @@ function ModelHistory() {
     return {
       animation: false,
       grid: grids,
-      legend: { ...legendStyle(t), data: ['eFTP (modelled)', 'FTP (setting)'] },
+      legend: { ...legendStyle(t), data: ['CP (model, 42 days)', 'FTP in use'] },
       axisPointer: { link: [{ xAxisIndex: 'all' }] },
       tooltip: {
         trigger: 'axis',
         ...tooltipStyle(t),
         formatter: (ps: any) => {
-          const d = data[ps[0].dataIndex];
-          return `<b>${fmtDate(d.date)}</b><div style="opacity:.6;font-size:10px">42-day window</div>${tipRow(t.power, 'eFTP', `${d.eftp} W`)}${tipRow(t.muted, 'FTP setting', `${d.ftp} W`)}${tipRow(t.series[2], "W′", `${(d.wPrime / 1000).toFixed(1)} kJ`)}${tipRow(t.series[1], 'Pmax', `${d.pmax} W`)}`;
+          const d = byX.get(ps[0]?.value?.[0]);
+          if (!d) return '';
+          return `<b>${fmtDate(d.date)}</b><div style="opacity:.6;font-size:10px">42-day window</div>${tipRow(t.power, 'CP (model)', `${d.eftp} W`)}${tipRow(t.muted, 'FTP in use', `${d.ftp} W`)}${tipRow(t.series[2], "W′", `${(d.wPrime / 1000).toFixed(1)} kJ`)}${tipRow(t.series[1], 'Pmax', `${d.pmax} W`)}`;
         },
       },
-      xAxis: grids.map((_, i) => ({ type: 'time', gridIndex: i, ...axisStyle(t, { grid: false }), axisLabel: { show: i === 2, color: t.muted, fontSize: 10 } })),
+      xAxis: grids.map((_, i) => ({ type: 'value', gridIndex: i, min: x[0], max: x[x.length - 1], ...axisStyle(t, { grid: false }), axisLabel: { show: i === 2, color: t.muted, fontSize: 10, hideOverlap: true, formatter: (v: number) => fmtDate(new Date(tl.fromX(v)), 'd MMM yy') } })),
       yAxis: [
         valueAxis(t, { gridIndex: 0, min: (v: { min: number }) => Math.floor((v.min - 10) / 10) * 10, name: 'W', nameTextStyle: { color: t.muted, fontSize: 10 } }),
         valueAxis(t, { gridIndex: 1, name: "W′ kJ", min: (v: { min: number }) => Math.floor(v.min / 1000) * 1000, axisLabel: { color: t.muted, fontSize: 10, formatter: (v: number) => (v / 1000).toFixed(0) }, nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -36] } }),
         valueAxis(t, { gridIndex: 2, name: 'Pmax W', min: (v: { min: number }) => Math.floor(v.min / 100) * 100, nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -36] } }),
       ],
       series: [
-        { type: 'line', name: 'eFTP (modelled)', xAxisIndex: 0, yAxisIndex: 0, showSymbol: false, smooth: 0.3, data: x.map((v, i) => [v, data[i].eftp]), lineStyle: { color: t.power, width: 2 }, itemStyle: { color: t.power } },
-        { type: 'line', name: 'FTP (setting)', xAxisIndex: 0, yAxisIndex: 0, showSymbol: false, step: 'end', data: x.map((v, i) => [v, data[i].ftp]), lineStyle: { color: t.muted, width: 1.5 }, itemStyle: { color: t.muted } },
-        { type: 'line', name: "W′", xAxisIndex: 1, yAxisIndex: 1, showSymbol: false, smooth: 0.3, data: x.map((v, i) => [v, data[i].wPrime]), lineStyle: { color: t.series[2], width: 1.5 }, itemStyle: { color: t.series[2] } },
-        { type: 'line', name: 'Pmax', xAxisIndex: 2, yAxisIndex: 2, showSymbol: false, smooth: 0.3, data: x.map((v, i) => [v, data[i].pmax]), lineStyle: { color: t.series[1], width: 1.5 }, itemStyle: { color: t.series[1] } },
+        {
+          type: 'line',
+          name: 'CP (model, 42 days)',
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          showSymbol: false,
+          smooth: 0.3,
+          connectNulls: false,
+          data: line((d) => d.eftp),
+          lineStyle: { color: t.power, width: 2 },
+          itemStyle: { color: t.power },
+          markArea: tl.breaks.length
+            ? {
+                silent: true,
+                itemStyle: { color: alpha(t.muted, 0.12) },
+                label: { show: true, position: 'insideTop', color: t.muted, fontSize: 10, lineHeight: 13, formatter: (p: any) => p.name },
+                data: tl.breaks.map((g, i, all) => [{ xAxis: g.x0, name: breakNames(all)[i] }, { xAxis: g.x1 }]),
+              }
+            : undefined,
+        },
+        { type: 'line', name: 'FTP in use', xAxisIndex: 0, yAxisIndex: 0, showSymbol: false, step: 'end', connectNulls: false, data: line((d) => d.ftp), lineStyle: { color: t.muted, width: 1.5 }, itemStyle: { color: t.muted } },
+        { type: 'line', name: "W′", xAxisIndex: 1, yAxisIndex: 1, showSymbol: false, smooth: 0.3, connectNulls: false, data: line((d) => d.wPrime), lineStyle: { color: t.series[2], width: 1.5 }, itemStyle: { color: t.series[2] } },
+        { type: 'line', name: 'Pmax', xAxisIndex: 2, yAxisIndex: 2, showSymbol: false, smooth: 0.3, connectNulls: false, data: line((d) => d.pmax), lineStyle: { color: t.series[1], width: 1.5 }, itemStyle: { color: t.series[1] } },
       ],
     };
   }, [data, t]);
   return (
-    <Card title="Model history" subtitle="eFTP, W′ and Pmax fitted weekly on rolling 42-day windows vs your FTP setting">
+    <Card title="Model history" subtitle="Critical power, W′ and Pmax fitted weekly on rolling 42-day windows, against the FTP in use">
       {option ? <Chart option={option} height={420} /> : <Spinner />}
     </Card>
   );
@@ -288,7 +322,7 @@ export function Performance() {
   const main = useCurve(kind, range);
   const other = useCurve(kind, cmp);
   const modelQ = useApi<{ model: PdModel | null; cp2: { cp: number; wPrime: number; r2: number } | null; weight: number; ftp: number }>(`/model${qs({ from: range.from, to: range.to })}`);
-  const th = useApi<{ current: Thresholds }>('/thresholds');
+  const th = useApi<{ current: Thresholds; ftpBasis: string | null }>('/thresholds');
   const weight = th.data?.current.weight ?? 70;
   const powerLike = kind === 'power' || kind === 'np';
   const scale = (v: (number | null)[]) => (wkg && powerLike ? v.map((x) => (x == null ? null : x / weight)) : v);
@@ -369,7 +403,7 @@ export function Performance() {
         </Card>
         <div className="flex flex-col gap-4">
           {kind === 'power' || kind === 'np' ? (
-            th.data && <ModelCard model={model} cp2={modelQ.data?.cp2 ?? null} th={th.data.current} weight={weight} />
+            th.data && <ModelCard model={model} cp2={modelQ.data?.cp2 ?? null} th={th.data.current} weight={weight} basis={th.data.ftpBasis} />
           ) : (
             <Card title="About this curve">
               <p className="text-xs leading-relaxed text-ink-2">
@@ -379,7 +413,7 @@ export function Performance() {
               </p>
             </Card>
           )}
-          {kind === 'power' && <ProfileCard curve={main.data} weight={weight} model={model} />}
+          {kind === 'power' && <ProfileCard curve={main.data} weight={weight} ftp={th.data?.current.ftp ?? null} />}
         </div>
       </div>
       {kind === 'power' && (

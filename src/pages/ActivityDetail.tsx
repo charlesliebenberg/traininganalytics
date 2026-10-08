@@ -150,7 +150,9 @@ export function ActivityDetail() {
             {a.trainer && <Badge>Indoor</Badge>}
             <Badge>{a.source === 'strava' ? 'Strava' : a.source === 'demo' ? 'Demo' : 'File'}</Badge>
             {a.device && <Badge>{a.device}</Badge>}
-            {a.ftpUsed && <Badge>FTP {a.ftpUsed} W</Badge>}
+            {a.sport === 'ride' && a.ftpUsed && <Badge>FTP {a.ftpUsed} W</Badge>}
+            {a.sport === 'run' && th.runThresholdSpeed > 0 && <Badge>Threshold {fmtPace(th.runThresholdSpeed, 'run')}</Badge>}
+            {a.sport === 'swim' && th.swimCss > 0 && <Badge>CSS {fmtPace(th.swimCss, 'swim')}</Badge>}
             {!a.detailed && <Badge color={t.warning}>Summary only — streams pending</Badge>}
           </div>
         </div>
@@ -274,13 +276,17 @@ export function ActivityDetail() {
           </div>
 
           <div className="mt-4 grid gap-4 xl:grid-cols-3">
-            {s.watts && a.hasPower && <DistributionCard streams={s} th={th} />}
-            {s.watts && a.hasPower && s.cadence && <QuadrantCard streams={s} th={th} crank={prefs.data?.crankLength ?? 172.5} />}
-            {a.hasHr && (a.hasPower || pace) && a.movingTime > 1200 && <DecouplingCard streams={s} sport={a.sport} decoupling={a.decoupling} />}
+            {/* bike power: zones and pedalling forces are on the bike's FTP scale */}
+            {a.sport === 'ride' && s.watts && a.hasPower && <DistributionCard streams={s} th={th} />}
+            {a.sport === 'ride' && s.watts && a.hasPower && s.cadence && <QuadrantCard streams={s} th={th} crank={prefs.data?.crankLength ?? 172.5} />}
+            {a.hasHr && ((a.sport === 'ride' && a.hasPower) || a.sport === 'run' || a.sport === 'walk' || a.sport === 'hike') && a.movingTime > 1200 && <DecouplingCard streams={s} sport={a.sport} decoupling={a.decoupling} />}
           </div>
-          {a.tss != null && a.tssMethod === 'power' && (
+          {a.tss != null && (a.tssMethod === 'power' || a.tssMethod === 'pace') && a.intensity != null && (
             <p className="mt-4 text-xs text-muted">
-              TSS {fmtNum(a.tss)} = {fmtDuration(a.elapsedTime)} × IF² ({fmtNum(a.intensity, 3)}) × 100 at FTP {th.ftp} W.
+              {a.tssMethod === 'power'
+                ? `TSS ${fmtNum(a.tss)} = ${fmtDuration(a.movingTime)} moving × IF² (${fmtNum(a.intensity, 3)}) × 100 at FTP ${th.ftp} W`
+                : `rTSS ${fmtNum(a.tss)} = ${fmtDuration(a.movingTime)} moving × IF² (${fmtNum(a.intensity, 3)}) × 100, where IF = normalized grade-adjusted pace ÷ threshold pace ${fmtPace(th.runThresholdSpeed, 'run')}`}
+              {a.elapsedTime - a.movingTime >= 300 ? ` · stops of 20 s or more (${fmtDuration(a.elapsedTime - a.movingTime)} in all) don't count` : ''}.
             </p>
           )}
         </>

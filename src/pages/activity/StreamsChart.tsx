@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import type { Sport, Streams, Thresholds } from '../../../shared/types';
 import { rollingMean, toFloat } from '../../../shared/analytics/series';
 import { wPrimeBalance } from '../../../shared/analytics/power';
-import { gradeAdjustedSpeed } from '../../../shared/analytics/running';
+import { cleanRunSpeed, gradeAdjustedSpeed } from '../../../shared/analytics/running';
 import { Chart, axisStyle, tooltipStyle, tipRow, type ECharts, type EChartsOption } from '../../components/Chart';
 import { alpha, useTokens, type Tokens } from '../../lib/theme';
 import { distUnit, distValue, elevUnit, elevValue, fmtDuration, fmtPaceSec, paceSeconds, paceUnit, speedUnit, speedValue } from '../../lib/format';
@@ -20,6 +20,17 @@ export interface Channel {
   inverse?: boolean;
   area?: boolean;
   min?: number;
+  max?: number;
+}
+
+/** Axis range covering 1–99 % of the values: a few seconds standing at a junction shouldn't stretch a pace axis to walking pace. */
+function robustRange(values: (number | null)[]): { min: number; max: number } | null {
+  const v = values.filter((x): x is number => x != null && Number.isFinite(x)).sort((a, b) => a - b);
+  if (v.length < 20) return null;
+  const lo = v[Math.floor(v.length * 0.01)];
+  const hi = v[Math.ceil(v.length * 0.99) - 1];
+  const pad = Math.max(1, (hi - lo) * 0.08);
+  return { min: Math.floor(lo - pad), max: Math.ceil(hi + pad) };
 }
 
 export const isPaceSport = (s: Sport) => s === 'run' || s === 'walk' || s === 'hike' || s === 'swim';
@@ -40,16 +51,20 @@ export function buildChannels(s: Streams, sport: Sport, th: Thresholds, t: Token
   if (s.heartrate) chans.push({ key: 'heartrate', label: 'Heart rate', unit: 'bpm', color: t.hr, height: 90, values: sm(s.heartrate)!, format: (v) => `${Math.round(v)}` });
   if (s.speed) {
     if (isPaceSport(sport)) {
+      // runs: GPS glitches out, as in the activity's metrics
+      const speed = sport === 'run' ? cleanRunSpeed(s.speed) : s.speed;
       const toPace = (v: (number | null)[]) => v.map((x) => (x == null || x < 0.8 ? null : paceSeconds(x, sport)));
-      chans.push({ key: 'speed', label: 'Pace', unit: paceUnit(sport), color: t.speed, height: 90, values: toPace(sm(s.speed, true)!), format: fmtPaceSec, inverse: true });
+      const pace = toPace(sm(speed, true)!);
+      chans.push({ key: 'speed', label: 'Pace', unit: paceUnit(sport), color: t.speed, height: 90, values: pace, format: fmtPaceSec, inverse: true, ...robustRange(pace) });
       if (s.grade && sport !== 'swim') {
-        const gap = gradeAdjustedSpeed(s.speed, s.grade);
-        chans.push({ key: 'gap', label: 'Grade-adjusted pace', unit: paceUnit(sport), color: t.series[2], height: 80, values: toPace(sm(gap, true)!), format: fmtPaceSec, inverse: true });
+        const gap = toPace(sm(gradeAdjustedSpeed(speed, s.grade), true)!);
+        chans.push({ key: 'gap', label: 'Grade-adjusted pace', unit: paceUnit(sport), color: t.series[2], height: 80, values: gap, format: fmtPaceSec, inverse: true, ...robustRange(gap) });
       }
     } else chans.push({ key: 'speed', label: 'Speed', unit: speedUnit(), color: t.speed, height: 80, values: sm(s.speed)!.map((v) => (v == null ? null : speedValue(v))), format: (v) => v.toFixed(1), min: 0 });
   }
   if (s.cadence && s.cadence.some((c) => c)) chans.push({ key: 'cadence', label: 'Cadence', unit: sport === 'run' ? 'spm' : 'rpm', color: t.cadence, height: 70, values: sm(s.cadence, true)!.map((v) => (v == null ? null : sport === 'run' ? v * 2 : v)), format: (v) => `${Math.round(v)}` });
-  if (s.watts && th.ftp) chans.push({ key: 'wbal', label: "W′ balance", unit: 'kJ', color: t.wbal, height: 70, values: wPrimeBalance(s.watts, th.ftp, th.wPrime).map((v) => v / 1000), format: (v) => v.toFixed(1), area: true });
+  // W′ balance uses the bike critical power: meaningless for running power
+  if (s.watts && th.ftp && sport === 'ride') chans.push({ key: 'wbal', label: "W′ balance", unit: 'kJ', color: t.wbal, height: 70, values: wPrimeBalance(s.watts, th.cp ?? th.ftp, th.wPrime).map((v) => v / 1000), format: (v) => v.toFixed(1), area: true });
   if (s.altitude && s.altitude.some((a) => a)) chans.push({ key: 'altitude', label: 'Elevation', unit: elevUnit(), color: t.altitude, height: 70, values: s.altitude.map((v) => (v == null ? null : elevValue(v))), format: (v) => `${Math.round(v)}`, area: true });
   if (s.temp) chans.push({ key: 'temp', label: 'Temperature', unit: '°', color: t.temp, height: 60, values: sm(s.temp)!, format: (v) => v.toFixed(1) });
   return chans;
@@ -193,13 +208,14 @@ export function StreamsChart({ streams, channels, xMode, highlight, onHover, onS
         gridIndex: i,
         inverse: c.inverse,
         min: c.min ?? ((v: { min: number }) => Math.floor(v.min)),
-        max: (v: { max: number }) => Math.ceil(v.max),
+        max: c.max ?? ((v: { max: number }) => Math.ceil(v.max)),
         splitNumber: 2,
         ...axisStyle(t),
         axisLine: { show: false },
         axisLabel: { color: t.muted, fontSize: 10, formatter: (v: number) => c.format(v), showMaxLabel: false },
         name: `${c.label} · ${c.unit}`,
-        nameLocation: 'end',
+        // an inverted axis (pace) ends at the bottom: keep its name on top like the others
+        nameLocation: c.inverse ? 'start' : 'end',
         nameGap: 6,
         nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -48], fontWeight: 500 },
       })),

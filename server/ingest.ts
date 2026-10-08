@@ -272,7 +272,23 @@ export function recalculate(filter?: { from?: string; ids?: number[] }, onProgre
     } catch (e) {
       log(null, 'error', `Recalculate ${r.id} failed: ${(e as Error).message}`);
     }
-    onProgress?.(++done, rows.length);
+    done++;
+    onProgress?.(done, rows.length);
+  }
+  return done;
+}
+
+/**
+ * recalculate() in batches, yielding to the event loop between them: a full history takes
+ * tens of seconds on a small instance, and the server must keep answering meanwhile.
+ */
+export async function recalculateAsync(filter?: { from?: string; ids?: number[] }, onProgress?: (done: number, total: number) => void): Promise<number> {
+  const ids = filter?.ids ?? q.all('SELECT id FROM activities WHERE local_date >= ? ORDER BY id', filter?.from ?? '0000').map((r) => r.id as number);
+  let done = 0;
+  for (let i = 0; i < ids.length; i += 20) {
+    done += recalculate({ ids: ids.slice(i, i + 20) });
+    onProgress?.(done, ids.length);
+    await new Promise((r) => setImmediate(r));
   }
   return done;
 }

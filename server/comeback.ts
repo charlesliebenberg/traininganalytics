@@ -2,10 +2,11 @@ import { addDays, differenceInCalendarDays, format, parseISO, startOfMonth, subD
 import type { PmcPoint, SeasonPlanConfig } from '../shared/types';
 import { byEffortDate, classifySession, detectPeaks, effortDate, summarizeBuild } from '../shared/analytics/comeback';
 import { capacityAt, daysToTarget, fitCapacity, ltlSeries, type CapacityDay, type CapacityModel } from '../shared/analytics/capacity';
-import { compareHrProfiles, hrPowerWindows, hrProfile, type HrBins } from '../shared/analytics/hrprofile';
+import { compareHrProfiles, hrProfile, type HrBins } from '../shared/analytics/hrprofile';
+import { activityHrBins } from './hrbins';
 import { generateSeasonPlan } from '../shared/analytics/plan';
 import { CURVE_DURATIONS } from '../shared/analytics/series';
-import { ACTIVITY_LIST_COLUMNS, getPreferences, getSetting, listThresholds, loadStreams, q, rowToActivity, setSetting, thresholdsFor } from './db';
+import { ACTIVITY_LIST_COLUMNS, getPreferences, getSetting, listThresholds, q, rowToActivity, setSetting, thresholdsFor } from './db';
 import { aggregateCurve, firstActivityDate, pmc } from './aggregate';
 import { estimateOn, storedSeries } from './estimates';
 
@@ -336,16 +337,7 @@ function ridesWithBins(from: string, to: string): { indoor: boolean; bins: HrBin
     from,
     to,
   );
-  return rows.map((r) => {
-    let bins: HrBins;
-    if (r.data) bins = JSON.parse(r.data);
-    else {
-      const s = loadStreams(r.id);
-      bins = s ? hrPowerWindows(s) : {};
-      q.run('INSERT INTO hr_power(activity_id, data) VALUES(?, ?) ON CONFLICT(activity_id) DO UPDATE SET data = excluded.data', r.id, JSON.stringify(bins));
-    }
-    return { indoor: !!r.trainer, bins };
-  });
+  return rows.map((r) => ({ indoor: !!r.trainer, bins: activityHrBins(r.id, 'ride', r.data) }));
 }
 
 /**

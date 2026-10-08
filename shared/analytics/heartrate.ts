@@ -60,6 +60,18 @@ export function decoupling(output: Series, hr: Series, mask?: ArrayLike<number> 
     }
     return sh > 0 ? so / sh : 0;
   };
+  // the halves must be ridden (or run) alike, or the drift measures the session's shape
+  // — intervals in one half, a long descent in the other — rather than the athlete. Heart
+  // rate rises less than in proportion to output, so even a few % easier second half reads
+  // as drift: on real rides, second halves >3 % easier gave a median +3.3 %, matched ones +0.9 %
+  const mean = (from: number, to: number) => {
+    let so = 0;
+    for (let k = from; k < to; k++) so += o[use[k]];
+    return so / Math.max(1, to - from);
+  };
+  const m1 = mean(0, half);
+  const m2 = mean(half, use.length);
+  if (!(m1 > 0) || Math.abs(m2 / m1 - 1) > 0.05) return null;
   const r1 = ratio(0, half);
   const r2 = ratio(half, use.length);
   if (r1 <= 0) return null;

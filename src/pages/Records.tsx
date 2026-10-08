@@ -12,6 +12,8 @@ interface Rec {
 }
 interface RecordsData {
   years: string[];
+  powerYears: string[];
+  runYears: string[];
   run: { key: string; label: string; meters: number; time: number; id: number; date: string; name: string; byYear: Record<string, number> }[];
   peaks: ({ duration: number; all: { value: number; id: number; date: string } | null } & Record<string, { value: number; id: number; date: string } | null | number>)[];
   highlights: Record<string, Rec | null>;
@@ -29,7 +31,9 @@ const HIGHLIGHTS: { key: string; label: string; icon: typeof Bike; fmt: (v: numb
 export function Records() {
   const { data, isLoading } = useApi<RecordsData>('/records');
   if (isLoading || !data) return <Spinner />;
-  const years = [...data.years].reverse().slice(0, 4);
+  // every year with data, newest first (the tables scroll sideways on small screens)
+  const years = [...data.powerYears].reverse();
+  const runYears = [...data.runYears].reverse();
   return (
     <div>
       <PageHeader title="Records" subtitle="Personal bests across every activity, by year" />
@@ -51,7 +55,8 @@ export function Records() {
       </div>
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
         <Card title="Peak power" subtitle="Best mean-maximal power by year" pad={false}>
-          <table className="tnum w-full text-[13px]">
+          <div className="overflow-x-auto">
+          <table className="tnum w-full min-w-[480px] text-[13px]">
             <thead>
               <tr className="border-b border-line text-left text-[11px] tracking-wide text-muted uppercase">
                 <th className="py-2 pl-5 font-medium">Duration</th>
@@ -94,18 +99,20 @@ export function Records() {
               ))}
             </tbody>
           </table>
+          </div>
         </Card>
-        <Card title="Running best efforts" subtitle="Fastest time over each distance within any run" pad={false}>
+        <Card title="Running best efforts" subtitle="Fastest time over each distance within any run — GPS glitches (jumps between buildings, a watch starting before lock) are filtered out" pad={false}>
           {!data.run.length ? (
             <Empty title="No runs with distance data yet" />
           ) : (
-            <table className="tnum w-full text-[13px]">
+            <div className="overflow-x-auto">
+            <table className="tnum w-full min-w-[480px] text-[13px]">
               <thead>
                 <tr className="border-b border-line text-left text-[11px] tracking-wide text-muted uppercase">
                   <th className="py-2 pl-5 font-medium">Distance</th>
                   <th className="px-3 text-right font-medium">Best</th>
                   <th className="px-3 text-right font-medium">Pace</th>
-                  {years.map((y) => (
+                  {runYears.map((y) => (
                     <th key={y} className="px-3 text-right font-medium last:pr-5">
                       {y}
                     </th>
@@ -122,7 +129,7 @@ export function Records() {
                       </Link>
                     </td>
                     <td className="px-3 text-right text-ink-2">{fmtPace(r.meters / r.time, 'run')}</td>
-                    {years.map((y) => (
+                    {runYears.map((y) => (
                       <td key={y} className="px-3 text-right text-ink-2 last:pr-5">
                         {r.byYear[y] ? fmtDuration(r.byYear[y]) : '–'}
                       </td>
@@ -131,6 +138,7 @@ export function Records() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </Card>
       </div>

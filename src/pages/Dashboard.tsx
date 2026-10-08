@@ -10,7 +10,7 @@ import { PmcChart, FormLegend, formColor, MiniProfile } from '../components/char
 import { RouteThumb } from '../components/RouteThumb';
 import { Chart, axisStyle, legendStyle, tooltipStyle, valueAxis, tipRow } from '../components/Chart';
 import { useTokens } from '../lib/theme';
-import { fmtDate, fmtDistance, fmtDuration, fmtNum, SPORT_LABEL } from '../lib/format';
+import { fmtDate, fmtDistance, fmtDuration, fmtNum, fmtPace, SPORT_LABEL } from '../lib/format';
 import { useStatus } from '../components/Layout';
 import { Onboarding } from './Onboarding';
 
@@ -25,6 +25,7 @@ interface DashboardData {
   nextEvent: (RaceEvent & { projected: PmcPoint | null }) | null;
   model: PdModel | null;
   thresholds: Thresholds;
+  ftpBasis: 'cp' | '20min' | '60min' | null;
   weekly: { start: string; sports: Record<string, { time: number; tss: number }> }[];
 }
 
@@ -84,7 +85,11 @@ export function Dashboard() {
   const { today, form, week, model, thresholds } = data;
   const formC = form ? formColor(t, form.id) : t.muted;
   const daysTo = data.nextEvent ? differenceInCalendarDays(parseISO(data.nextEvent.date), new Date()) : null;
-  const wkg = model ? model.eftp / thresholds.weight : null;
+  const wkg = thresholds.ftp && thresholds.weight ? thresholds.ftp / thresholds.weight : null;
+  const auto = thresholds.sources?.ftp === 'auto';
+  const basis = !auto ? 'set manually' : data.ftpBasis === '20min' ? '95% of your best 20 minutes' : data.ftpBasis === '60min' ? 'your best hour' : 'the critical-power fit';
+  const projected = data.pmc.filter((p) => p.projected);
+  const planned = projected.some((p) => p.tss > 0);
 
   return (
     <div>
@@ -122,12 +127,12 @@ export function Dashboard() {
         </div>
         <div className="card p-4">
           <Stat
-            label="eFTP (90 days)"
+            label="FTP"
             accent={t.power}
-            value={model ? Math.round(model.eftp) : '–'}
+            value={thresholds.ftp || '–'}
             unit="W"
-            sub={model ? `${wkg!.toFixed(2)} W/kg · set ${thresholds.ftp} W` : 'Needs power data'}
-            title="Estimated FTP from the power-duration model"
+            sub={`${wkg ? `${wkg.toFixed(2)} W/kg · ` : ''}${auto ? 'auto' : 'manual'}`}
+            title={`The FTP every zone and TSS uses — ${auto ? `estimated automatically, set by ${basis}` : basis}.${model ? ` The power-duration model's critical power for the last 90 days is ${Math.round(model.eftp)} W.` : ''}`}
           />
         </div>
       </div>
@@ -136,7 +141,7 @@ export function Dashboard() {
         <Card
           className="xl:col-span-2"
           title="Performance management"
-          subtitle="Fitness, fatigue and form — dashed lines project your planned workouts"
+          subtitle={`Fitness, fatigue and form${projected.length ? (planned ? ' — dashed lines project your planned workouts' : ' — dashed lines show what happens if you rest (nothing planned)') : ''}`}
           actions={
             <Link to="/fitness" className="flex items-center gap-1 text-xs text-accent hover:underline">
               Details <ArrowRight className="h-3 w-3" />
@@ -231,10 +236,15 @@ export function Dashboard() {
                   </div>
                   <div className="text-[11px] text-muted">{fmtDate(a.startTime, 'EEE d MMM · HH:mm')}</div>
                 </div>
-                <div className="hidden grid-cols-4 gap-6 text-right sm:grid">
+                {/* fixed columns so rows line up; pace for runs, normalized power for rides */}
+                <div className="hidden grid-cols-[72px_80px_76px_44px] gap-4 text-right sm:grid">
                   <Stat label="Time" value={<span className="text-sm">{fmtDuration(a.movingTime)}</span>} />
                   <Stat label="Distance" value={<span className="text-sm">{a.distance ? fmtDistance(a.distance, 1, a.sport) : '–'}</span>} />
-                  <Stat label={a.np ? 'NP' : 'Avg HR'} value={<span className="text-sm">{a.np ? `${a.np} W` : a.avgHr ? `${a.avgHr}` : '–'}</span>} />
+                  {a.sport === 'run' || a.sport === 'swim' ? (
+                    <Stat label="Pace" value={<span className="text-sm">{a.avgSpeed ? fmtPace(a.avgSpeed, a.sport, false) : '–'}</span>} />
+                  ) : (
+                    <Stat label={a.np ? 'NP' : 'Avg HR'} value={<span className="text-sm">{a.np ? `${a.np} W` : a.avgHr ? `${a.avgHr}` : '–'}</span>} />
+                  )}
                   <Stat label="TSS" value={<span className="text-sm">{fmtNum(a.tss)}</span>} />
                 </div>
               </Link>

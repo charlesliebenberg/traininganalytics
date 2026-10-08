@@ -16,7 +16,7 @@ interface ListResponse {
 }
 
 const COLS: { key: string; label: string; sort?: string; align?: 'right'; render: (a: Activity) => React.ReactNode; title?: string }[] = [
-  { key: 'date', label: 'Date', sort: 'date', render: (a) => <span className="text-ink-2">{fmtDate(a.startTime, 'EEE d MMM yy')}</span> },
+  { key: 'date', label: 'Date', sort: 'date', render: (a) => <span className="text-ink-2">{fmtDate(a.localDate, 'EEE d MMM yy')}</span> },
   {
     key: 'name',
     label: 'Activity',

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Flag, Trash2, Wand2, Save, Plus } from 'lucide-react';
+import { AlertTriangle, Flag, Trash2, Wand2, Save, Plus } from 'lucide-react';
 import type { RaceEvent, SeasonPlan, SeasonPlanConfig, SeasonWeek, Sport } from '../../shared/types';
+import type { PlanReach } from '../../shared/analytics/plan';
 import { http, useAction, useApi } from '../lib/api';
 import { alpha, useTokens, type Tokens } from '../lib/theme';
 import { fmtDate, fmtNum, SPORT_LABEL, iso } from '../lib/format';
@@ -34,9 +35,10 @@ export function PlanChart({ weeks }: { weeks: SeasonWeek[] }) {
     const cats = weeks.map((w) => fmtDate(w.weekStart, 'd MMM'));
     return {
       animation: false,
+      // the legend gets its own row: on a phone it spans the width and would sit on the axis name
       grid: [
-        { left: 48, right: 12, top: 34, height: 150 },
-        { left: 48, right: 12, top: 222, height: 120 },
+        { left: 48, right: 12, top: 52, height: 150 },
+        { left: 48, right: 12, top: 240, height: 120 },
       ],
       legend: { ...legendStyle(t), data: ['Fitness (CTL)', 'Fatigue (ATL)', 'Form (TSB)'] },
       axisPointer: { link: [{ xAxisIndex: 'all' }] },
@@ -72,7 +74,7 @@ export function PlanChart({ weeks }: { weeks: SeasonWeek[] }) {
       ],
     };
   }, [weeks, t]);
-  return <Chart option={option} height={370} />;
+  return <Chart option={option} height={388} />;
 }
 
 function EventsCard({ events }: { events: RaceEvent[] }) {
@@ -131,7 +133,9 @@ export function Season() {
   const [cfg, setCfg] = useState<SeasonPlanConfig | null>(null);
   const [name, setName] = useState('Season plan');
   const [eventId, setEventId] = useState<number | null>(null);
-  const [preview, setPreview] = useState<SeasonWeek[] | null>(null);
+  const [result, setResult] = useState<{ weeks: SeasonWeek[]; reach: PlanReach | null } | null>(null);
+  const preview = result?.weeks ?? null;
+  const reach = result?.reach ?? null;
   const [applyWeeks, setApplyWeeks] = useState(4);
   useEffect(() => {
     if (defaults.data && !cfg) {
@@ -144,7 +148,7 @@ export function Season() {
   }, [defaults.data, cfg, events.data]);
   useEffect(() => {
     if (!cfg) return;
-    const h = setTimeout(() => http<SeasonWeek[]>('/plans/preview', { method: 'POST', json: cfg }).then(setPreview).catch(() => setPreview(null)), 200);
+    const h = setTimeout(() => http<{ weeks: SeasonWeek[]; reach: PlanReach | null }>('/plans/preview', { method: 'POST', json: cfg }).then(setResult).catch(() => setResult(null)), 200);
     return () => clearTimeout(h);
   }, [cfg]);
   const save = useAction(() => http<SeasonPlan>('/plans', { method: 'POST', json: { name, config: cfg, eventId } }));
@@ -157,6 +161,7 @@ export function Season() {
   const last = preview?.[preview.length - 1];
   const peak = preview ? Math.max(...preview.map((w) => w.ctl)) : null;
   const totalHours = preview?.reduce((a, w) => a + w.hours, 0);
+  const biggestWeek = preview ? Math.max(...preview.map((w) => w.hours)) : null;
 
   return (
     <div>
@@ -203,8 +208,11 @@ export function Season() {
               <Field label="Max ramp" hint="CTL / week">
                 <Input type="number" step={0.5} value={cfg.maxRamp} onChange={(e) => set('maxRamp', Number(e.target.value))} />
               </Field>
-              <Field label="Max hours / week">
+              <Field label="Max hours / week" hint="Your biggest recent week, by default">
                 <Input type="number" value={cfg.maxWeeklyHours} onChange={(e) => set('maxWeeklyHours', Number(e.target.value))} />
+              </Field>
+              <Field label="TSS per hour" hint="Turns load into hours; yours over the last 8 weeks">
+                <Input type="number" value={cfg.tssPerHour ?? ''} placeholder="from IF" onChange={(e) => set('tssPerHour', e.target.value ? Number(e.target.value) : undefined)} />
               </Field>
               <Field label="Loading pattern" hint="load weeks : recovery week">
                 <Segmented value={cfg.pattern} onChange={(v) => set('pattern', v)} options={[{ value: '2:1', label: '2:1' }, { value: '3:1', label: '3:1' }, { value: '4:1', label: '4:1' }]} />
@@ -226,10 +234,26 @@ export function Season() {
                 <div className="mb-4 grid grid-cols-2 gap-4 sm:grid-cols-5">
                   <Stat label="Weeks" value={preview.length} />
                   <Stat label="Peak CTL" value={fmtNum(peak)} sub={`from ${cfg.startCtl}`} />
-                  <Stat label="Race-day CTL" value={fmtNum(last?.ctl)} />
+                  <Stat label="Race-day CTL" value={fmtNum(last?.ctl)} sub={`target ${cfg.targetCtl}`} />
                   <Stat label="Race-day TSB" value={fmtNum(last?.tsb)} sub={last && last.tsb > 5 ? 'fresh' : 'consider longer taper'} />
-                  <Stat label="Total hours" value={fmtNum(totalHours)} />
+                  <Stat label="Hours" value={fmtNum(totalHours)} sub={`biggest week ${fmtNum(biggestWeek, 1)} h`} />
                 </div>
+                {reach && (
+                  <div className="mb-4 flex items-start gap-2 rounded-lg bg-surface-2 p-3 text-[13px] text-ink-2">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                    <p>
+                      <span className="font-medium text-ink">
+                        This plan reaches CTL {fmtNum(reach.achieved)} on race day, short of {cfg.targetCtl}.
+                      </span>{' '}
+                      {reach.hoursNeeded != null
+                        ? `The ${cfg.maxWeeklyHours} h cap is the limit: getting there takes about ${reach.hoursNeeded} h in the biggest weeks${cfg.tssPerHour ? ` at ${cfg.tssPerHour} TSS an hour` : ''}.`
+                        : reach.rampNeeded != null
+                          ? `There isn't time at +${cfg.maxRamp} CTL a week: it would take about +${reach.rampNeeded} a week, and above ~7 the risk of injury and illness climbs.`
+                          : `No sensible mix of hours and ramp rate gets there in ${preview.length} weeks.`}{' '}
+                      Otherwise, pick a later race or lower the target.
+                    </p>
+                  </div>
+                )}
                 <PlanChart weeks={preview} />
               </>
             ) : (

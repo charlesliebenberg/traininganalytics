@@ -172,19 +172,19 @@ function AthleteTab() {
           <Field label="FTP (W)" hint={autoHint(cur.sources?.ftp, `${cur.ftp} W`)}>
             <Input type="number" value={form.ftp} onChange={num('ftp')} />
           </Field>
-          <Field label="W′ (J)" hint="anaerobic capacity">
+          <Field label="W′ (J)" hint={autoHint(cur.wPrime !== data.manual.wPrime ? cur.sources?.ftp : undefined, `${(cur.wPrime / 1000).toFixed(1)} kJ`) ?? 'anaerobic capacity'}>
             <Input type="number" value={form.wPrime} onChange={num('wPrime')} />
           </Field>
           <Field label="Weight (kg)">
             <Input type="number" step={0.1} value={form.weight} onChange={num('weight')} />
           </Field>
-          <Field label="LTHR bike (bpm)">
+          <Field label="LTHR bike (bpm)" hint={autoHint(cur.sources?.hr, `${cur.lthr} bpm`)}>
             <Input type="number" value={form.lthr} onChange={num('lthr')} />
           </Field>
-          <Field label="LTHR run (bpm)">
+          <Field label="LTHR run (bpm)" hint={autoHint(cur.sources?.hr, `${cur.runLthr} bpm`)}>
             <Input type="number" value={form.runLthr} onChange={num('runLthr')} />
           </Field>
-          <Field label="Max HR">
+          <Field label="Max HR" hint={autoHint(cur.sources?.hr, `${cur.maxHr} bpm`)}>
             <Input type="number" value={form.maxHr} onChange={num('maxHr')} />
           </Field>
           <Field label="Resting HR">

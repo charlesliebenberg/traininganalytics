@@ -429,7 +429,9 @@ export function Calendar() {
                       </div>
                       {endPmc && (
                         <div className="mt-1.5 flex justify-between border-t border-line pt-1.5">
-                          <span className="text-muted">{endPmc.projected ? 'Proj. ' : ''}CTL</span>
+                          <span className="text-muted" title={endPmc.projected ? (target ? 'Projected from the load planned for this week' : 'Nothing planned this week: where fitness and form land if you rest') : undefined}>
+                            {endPmc.projected ? (target ? 'Proj. CTL' : 'CTL if rest') : 'CTL'}
+                          </span>
                           <span className="tnum">
                             {Math.round(endPmc.ctl)} <span style={{ color: formColor(t, formZone(endPmc.tsb, endPmc.ctl).id) }}>({endPmc.tsb >= 0 ? '+' : ''}{Math.round(endPmc.tsb)})</span>
                           </span>

@@ -43,6 +43,8 @@ export interface Thresholds {
   date: string;
   /** Functional threshold power, W */
   ftp: number;
+  /** Critical power, W — from the automatic estimate; W′ balance uses it (falls back to FTP) */
+  cp?: number;
   /** W' (anaerobic work capacity), J */
   wPrime: number;
   /** Lactate threshold heart rate (bike), bpm */
@@ -58,7 +60,7 @@ export interface Thresholds {
   /** kg */
   weight: number;
   /** Where ftp / runThresholdSpeed / swimCss came from for this date */
-  sources?: { ftp: ThresholdSource; run: ThresholdSource; swim: ThresholdSource };
+  sources?: { ftp: ThresholdSource; run: ThresholdSource; swim: ThresholdSource; hr?: ThresholdSource };
 }
 
 export type ThresholdSource = 'auto' | 'manual' | 'default';
@@ -245,7 +247,7 @@ export interface Preferences {
   athleteName: string;
   crankLength: number; // mm
   /** Use rolling 6-month estimates (critical power / critical speed) instead of manual values */
-  autoThresholds: { ride: boolean; run: boolean; swim: boolean };
+  autoThresholds: { ride: boolean; run: boolean; swim: boolean; hr: boolean };
 }
 
 export interface DailyLoad {

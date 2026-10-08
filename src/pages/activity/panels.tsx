@@ -3,9 +3,10 @@ import clsx from 'clsx';
 import type { ActivityCurves, Lap, Sport, Streams, Thresholds } from '../../../shared/types';
 import { CURVE_DURATIONS, bestWindow, fillGaps, rollingMean, toFloat } from '../../../shared/analytics/series';
 import { detectIntervals, powerHistogram, quadrantPoint, wPrimeBalance } from '../../../shared/analytics/power';
+import { movingMask } from '../../../shared/analytics/metrics';
 import { efficiencySeries } from '../../../shared/analytics/heartrate';
 import { rangeStats } from '../../../shared/analytics/range';
-import { splits, gradeAdjustedSpeed, BEST_EFFORT_DISTANCES } from '../../../shared/analytics/running';
+import { splits, gradeAdjustedSpeed, cleanRunSpeed, BEST_EFFORT_DISTANCES } from '../../../shared/analytics/running';
 import { HR_ZONES, PACE_ZONES, POWER_ZONES, zoneBounds, zoneIndex } from '../../../shared/analytics/zones';
 import { Card, Segmented, Stat, Tabs, Toggle } from '../../components/ui';
 import { CurveChart, ZoneBars, type CurveSeries } from '../../components/charts';
@@ -20,12 +21,12 @@ import { subDays, parseISO } from 'date-fns';
 export function SelectionStats({ streams, range, sport, th, onClear, onZoom }: { streams: Streams; range: [number, number]; sport: Sport; th: Thresholds; onClear: () => void; onZoom: () => void }) {
   const st = useMemo(() => rangeStats(streams, range[0], range[1]), [streams, range]);
   const wbal = useMemo(() => {
-    if (!streams.watts || !th.ftp) return null;
-    const wb = wPrimeBalance(streams.watts, th.ftp, th.wPrime);
+    if (!streams.watts || !th.ftp || sport !== 'ride') return null;
+    const wb = wPrimeBalance(streams.watts, th.cp ?? th.ftp, th.wPrime);
     let min = Infinity;
     for (let i = range[0]; i < range[1]; i++) min = Math.min(min, wb[i]);
     return { start: wb[range[0]], min };
-  }, [streams, range, th]);
+  }, [streams, range, th, sport]);
   const work = streams.watts ? streams.watts.slice(range[0], range[1]).reduce((a, b) => a + (b ?? 0), 0) / 1000 : null;
   const pace = isPaceSport(sport);
   return (
@@ -47,8 +48,8 @@ export function SelectionStats({ streams, range, sport, th, onClear, onZoom }: {
         <Stat label="Duration" value={<span className="text-base">{fmtDuration(st.duration)}</span>} />
         <Stat label="Distance" value={<span className="text-base">{st.distance ? fmtDistance(st.distance, 2, sport) : '–'}</span>} />
         <Stat label={pace ? 'Pace' : 'Speed'} value={<span className="text-base">{pace ? fmtPace(st.avgSpeed, sport, false) : fmtSpeed(st.avgSpeed)}</span>} />
-        {st.avgPower != null && <Stat label="Avg power" value={<span className="text-base">{fmtNum(st.avgPower)} W</span>} sub={th.ftp ? `${Math.round((st.avgPower / th.ftp) * 100)}% FTP` : undefined} />}
-        {st.np != null && <Stat label="NP" value={<span className="text-base">{fmtNum(st.np)} W</span>} sub={th.ftp ? `IF ${(st.np / th.ftp).toFixed(2)}` : undefined} />}
+        {st.avgPower != null && <Stat label="Avg power" value={<span className="text-base">{fmtNum(st.avgPower)} W</span>} sub={th.ftp && sport === 'ride' ? `${Math.round((st.avgPower / th.ftp) * 100)}% FTP` : undefined} />}
+        {st.np != null && <Stat label="NP" value={<span className="text-base">{fmtNum(st.np)} W</span>} sub={th.ftp && sport === 'ride' ? `IF ${(st.np / th.ftp).toFixed(2)}` : undefined} />}
         {work != null && <Stat label="Work" value={<span className="text-base">{fmtNum(work)} kJ</span>} sub={`${fmtNum((st.avgPower ?? 0) / th.weight, 2)} W/kg`} />}
         {st.avgHr != null && <Stat label="Avg HR" value={<span className="text-base">{fmtNum(st.avgHr)}</span>} sub={`max ${fmtNum(st.maxHr)}`} />}
         {st.avgCadence != null && <Stat label="Cadence" value={<span className="text-base">{fmtNum(sport === 'run' ? st.avgCadence * 2 : st.avgCadence)}</span>} />}
@@ -67,9 +68,15 @@ export function SegmentsCard({ streams, laps, sport, th, onHover, onPick, active
   const pace = isPaceSport(sport);
   const intervals = useMemo(() => {
     const r30 = streams.watts ? rollingMean(toFloat(streams.watts), 30) : undefined;
-    const src = streams.watts && th.ftp ? detectIntervals(streams.watts, th.ftp) : streams.speed && pace ? detectIntervals(streams.speed, th.runThresholdSpeed) : [];
+    // rides against FTP; runs and swims against threshold pace (running power isn't on the bike's scale)
+    let src: ReturnType<typeof detectIntervals> = [];
+    if (sport === 'ride') src = streams.watts && th.ftp ? detectIntervals(streams.watts, th.ftp) : [];
+    else if (pace && streams.speed) {
+      const speed = sport === 'run' ? cleanRunSpeed(streams.speed) : streams.speed;
+      src = detectIntervals(sport !== 'swim' && streams.grade ? gradeAdjustedSpeed(speed, streams.grade) : speed, sport === 'swim' ? th.swimCss : th.runThresholdSpeed);
+    }
     return src.map((iv, i) => ({ ...rangeStats(streams, iv.start, iv.end, r30), name: `Interval ${i + 1}` }));
-  }, [streams, th, pace]);
+  }, [streams, th, pace, sport]);
   const splitRows = useMemo(() => {
     if (!streams.distance) return [];
     const unit = sport === 'ride' ? 5000 : 1000;
@@ -108,7 +115,7 @@ export function SegmentsCard({ streams, laps, sport, th, onHover, onPick, active
                 <th className="px-3 text-right font-medium">Distance</th>
                 {hasPower && <th className="px-3 text-right font-medium">Avg W</th>}
                 {hasPower && <th className="px-3 text-right font-medium">NP</th>}
-                {hasPower && <th className="px-3 text-right font-medium">% FTP</th>}
+                {hasPower && sport === 'ride' && <th className="px-3 text-right font-medium">% FTP</th>}
                 <th className="px-3 text-right font-medium">Avg HR</th>
                 <th className="px-3 text-right font-medium">Cadence</th>
                 <th className="px-3 font-medium">{pace ? 'Pace' : 'Speed'}</th>
@@ -133,7 +140,7 @@ export function SegmentsCard({ streams, laps, sport, th, onHover, onPick, active
                     <td className="px-3 text-right text-ink-2">{r.distance ? fmtDistance(r.distance, 2, sport) : '–'}</td>
                     {hasPower && <td className="px-3 text-right font-medium">{fmtNum(r.avgPower)}</td>}
                     {hasPower && <td className="px-3 text-right">{fmtNum(r.np)}</td>}
-                    {hasPower && <td className="px-3 text-right text-ink-2">{r.avgPower && th.ftp ? `${Math.round(((r.np ?? r.avgPower) / th.ftp) * 100)}%` : '–'}</td>}
+                    {hasPower && sport === 'ride' && <td className="px-3 text-right text-ink-2">{r.avgPower && th.ftp ? `${Math.round(((r.np ?? r.avgPower) / th.ftp) * 100)}%` : '–'}</td>}
                     <td className="px-3 text-right">{fmtNum(r.avgHr)}</td>
                     <td className="px-3 text-right text-ink-2">{r.avgCadence ? fmtNum(sport === 'run' ? r.avgCadence * 2 : r.avgCadence) : '–'}</td>
                     <td className="px-3">
@@ -209,7 +216,8 @@ export function ActivityCurveCard({ curves, date, th, sport, onPick }: { curves:
   const [kind, setKind] = useState<CurveKind>(kinds[0] ?? 'power');
   const [wkg, setWkg] = useState(false);
   const from90 = iso(subDays(parseISO(date), 90));
-  const curveSport = kind === 'speed' ? 'run' : kind === 'hr' || kind === 'vam' ? sport : 'ride';
+  // compare with the same sport's bests: running power isn't on the bike's scale
+  const curveSport = sport;
   const d90 = useApi<{ values: (number | null)[]; dates: (string | null)[] }>(`/curves${qs({ type: kind, from: from90, to: date, sport: curveSport })}`);
   const all = useApi<{ values: (number | null)[]; dates: (string | null)[] }>(`/curves${qs({ type: kind, from: '2000-01-01', to: '2100-01-01', sport: curveSport })}`);
   if (!kinds.length) return null;
@@ -253,7 +261,7 @@ export function DistributionCard({ streams, th }: { streams: Streams; th: Thresh
   const t = useTokens();
   const option = useMemo(() => {
     const bin = th.ftp > 300 ? 25 : 20;
-    const h = powerHistogram(streams.watts!, bin, streams.moving).filter((b) => b.bin <= th.ftp * 2.2);
+    const h = powerHistogram(streams.watts!, bin, movingMask(streams)).filter((b) => b.bin <= th.ftp * 2.2);
     const zc = (w: number) => alpha(t.power, 0.35 + (0.65 * zoneIndex(w / th.ftp, POWER_ZONES)) / (POWER_ZONES.length - 1));
     return {
       animation: false,
@@ -351,7 +359,13 @@ export function QuadrantCard({ streams, th, crank }: { streams: Streams; th: Thr
 export function DecouplingCard({ streams, sport, decoupling }: { streams: Streams; sport: Sport; decoupling: number | null }) {
   const t = useTokens();
   const bike = !!streams.watts && sport === 'ride';
-  const output = useMemo(() => (bike ? streams.watts! : streams.speed && streams.grade ? gradeAdjustedSpeed(streams.speed, streams.grade) : streams.speed ?? []), [streams, bike]);
+  const output = useMemo(() => {
+    if (bike) return streams.watts!;
+    if (!streams.speed) return [];
+    // the same GPS-glitch-cleaned, grade-adjusted speed the decoupling figure is computed from
+    const speed = sport === 'run' ? cleanRunSpeed(streams.speed) : streams.speed;
+    return streams.grade ? gradeAdjustedSpeed(speed, streams.grade) : speed;
+  }, [streams, bike, sport]);
   const option = useMemo(() => {
     const ef = efficiencySeries(output, streams.heartrate ?? [], 300);
     const step = Math.max(1, Math.floor(ef.length / 1500));
@@ -375,12 +389,26 @@ export function DecouplingCard({ streams, sport, decoupling }: { streams: Stream
       ],
     };
   }, [output, streams, t, bike]);
-  const verdict = decoupling == null ? null : decoupling < 5 ? { c: 'text-good-text', l: 'Well coupled — aerobically fit for this duration' } : decoupling < 8 ? { c: 'text-ink', l: 'Moderate drift' } : { c: 'text-critical', l: 'Significant drift — aerobic endurance limiter or fatigue/heat' };
+  const verdict =
+    decoupling == null
+      ? null
+      : decoupling < -3
+        ? { c: 'text-ink-2', l: 'Heart rate fell relative to output — usually a warm-up still in the first half, or a cooler or downhill second half; not a fitness signal' }
+        : decoupling < 5
+          ? { c: 'text-good-text', l: 'Well coupled — aerobically fit for this duration' }
+          : decoupling < 8
+            ? { c: 'text-ink', l: 'Moderate drift' }
+            : { c: 'text-critical', l: 'Significant drift — aerobic endurance limiter or fatigue/heat' };
   return (
     <Card title={bike ? 'Aerobic decoupling (Pw:HR)' : 'Aerobic decoupling (Pa:HR)'} subtitle="Rolling 5-min output per heartbeat; a falling line means cardiac drift">
       <div className="mb-2 flex items-baseline gap-3">
         <span className="text-2xl font-semibold">{decoupling != null ? `${decoupling.toFixed(1)}%` : '–'}</span>
         {verdict && <span className={clsx('text-xs', verdict.c)}>{verdict.l}</span>}
+        {!verdict && (
+          <span className="text-xs text-muted">
+            Not a steady session: decoupling needs {bike ? 'an hour' : '45 minutes'} or more with both halves within 5% of each other — on intervals, or an easier second half, it would describe the session rather than your fitness.
+          </span>
+        )}
       </div>
       <Chart option={option} height={200} />
     </Card>

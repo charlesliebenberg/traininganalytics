@@ -26,6 +26,10 @@ const iso = (d: Date) => format(d, 'yyyy-MM-dd');
  * Race week ← Taper ← Peak ← Build 2 ← Build 1 ← Base 3/2/1 ← Prep, with recovery weeks
  * inserted by the loading pattern (e.g. 3:1). Weekly TSS is derived from the CTL ramp
  * required to hit the target fitness, capped by the ramp rate and weekly hours.
+ *
+ * A race plan's target is fitness on race day: the taper costs CTL, so the build climbs past
+ * the target, and the ramp is solved for (by simulation) to land race day on it. A fitness
+ * goal climbs at the allowed rate and holds the target.
  */
 export function generateSeasonPlan(config: SeasonPlanConfig, events: Pick<RaceEvent, 'date' | 'name' | 'priority'>[] = [], ctlDays = 42, atlDays = 7): SeasonWeek[] {
   const start = startOfWeek(parseISO(config.startDate), { weekStartsOn: 1 });
@@ -71,75 +75,126 @@ export function generateSeasonPlan(config: SeasonPlanConfig, events: Pick<RaceEv
   // make sure we start with a load week
   if (nWeeks > 2) recovery[0] = false;
 
-  const loadWeeks = recovery.slice(0, loadEnd).filter((r) => !r).length || 1;
-  const recoveryWeeks = recovery.slice(0, loadEnd).filter((r) => r).length;
-  // a recovery week typically costs ~2–3 CTL; plan the build to cover it
-  const needed = config.targetCtl - config.startCtl + recoveryWeeks * 2.5 + taper * 1.5;
-  // the first weeks may ramp more gently; the rest of the build makes up the difference
-  const initW = config.initialRamp != null ? recovery.slice(0, Math.min(loadEnd, config.initialWeeks ?? 4)).filter((r) => !r).length : 0;
-  const initGain = initW * Math.min(config.initialRamp ?? 0, config.maxRamp);
-  // race plans spread the climb to arrive on race day; fitness goals climb at the allowed
-  // rate until they reach the target and then hold it
-  const ramp = fitnessGoal ? config.maxRamp : Math.max(0, Math.min(config.maxRamp, initW && loadWeeks > initW ? (needed - initGain) / (loadWeeks - initW) : needed / loadWeeks));
-
   const kc = 1 - Math.exp(-1 / ctlDays);
   const ka = 1 - Math.exp(-1 / atlDays);
-  let ctl = config.startCtl;
-  let atl = config.startAtl;
-  let lastLoadTss = 7 * Math.max(ctl, 20);
-  let holding = false;
-  const weeks: SeasonWeek[] = [];
 
-  for (let w = 0; w < nWeeks; w++) {
-    const ws = addDays(start, w * 7);
-    const phase = recovery[w] ? 'Recovery' : phases[w];
-    const baseName = phases[w].split(' ')[0];
-    let tss: number;
-    if (phase === 'Race') tss = lastLoadTss * 0.5;
-    else if (baseName === 'Taper') tss = lastLoadTss * 0.55;
-    else if (baseName === 'Peak') tss = lastLoadTss * 0.75;
-    else if (phase === 'Recovery') tss = lastLoadTss * 0.6;
-    else if (fitnessGoal && holding) {
-      // holding the target: load weeks sized so a whole cycle (recovery week at 60 %)
-      // averages it, instead of chasing it back up with a spike after every recovery week
-      tss = (7 * config.targetCtl * loadCycle) / (loadCycle - 1 + 0.6);
-    } else {
-      const r = config.initialRamp != null && w < (config.initialWeeks ?? 4) ? Math.min(config.initialRamp, ramp) : ramp;
-      const targetEnd = Math.min(config.targetCtl, ctl + r);
-      tss = 7 * dailyTssForCtl(ctl, Math.max(targetEnd, ctl * 0.98), 7, ctlDays);
-      if (baseName === 'Prep' && !fitnessGoal) tss = Math.min(tss, 7 * dailyTssForCtl(ctl, ctl + ramp * 0.5, 7, ctlDays));
-      // a fitness goal holds from the week it gets there
-      if (fitnessGoal && targetEnd >= config.targetCtl - 0.5) holding = true;
+  /** The plan for a given CTL climb per load week. */
+  const simulate = (ramp: number): SeasonWeek[] => {
+    let ctl = config.startCtl;
+    let atl = config.startAtl;
+    let lastLoadTss = 7 * Math.max(ctl, 20);
+    let holding = false;
+    const weeks: SeasonWeek[] = [];
+
+    for (let w = 0; w < nWeeks; w++) {
+      const ws = addDays(start, w * 7);
+      const phase = recovery[w] ? 'Recovery' : phases[w];
+      const baseName = phases[w].split(' ')[0];
+      let tss: number;
+      if (phase === 'Race') tss = lastLoadTss * 0.5;
+      else if (baseName === 'Taper') tss = lastLoadTss * 0.55;
+      else if (baseName === 'Peak') tss = lastLoadTss * 0.75;
+      else if (phase === 'Recovery') tss = lastLoadTss * 0.6;
+      else if (fitnessGoal && holding) {
+        // holding the target: load weeks sized so a whole cycle (recovery week at 60 %)
+        // averages it, instead of chasing it back up with a spike after every recovery week
+        tss = (7 * config.targetCtl * loadCycle) / (loadCycle - 1 + 0.6);
+      } else {
+        const r = config.initialRamp != null && w < (config.initialWeeks ?? 4) ? Math.min(config.initialRamp, ramp) : ramp;
+        // a fitness goal stops at the target; a race build goes past it to pay for the taper
+        const targetEnd = fitnessGoal ? Math.min(config.targetCtl, ctl + r) : ctl + r;
+        tss = 7 * dailyTssForCtl(ctl, Math.max(targetEnd, ctl * 0.98), 7, ctlDays);
+        if (baseName === 'Prep' && !fitnessGoal) tss = Math.min(tss, 7 * dailyTssForCtl(ctl, ctl + ramp * 0.5, 7, ctlDays));
+        // a fitness goal holds from the week it gets there
+        if (fitnessGoal && targetEnd >= config.targetCtl - 0.5) holding = true;
+      }
+      const intensity = PHASE_IF[phase === 'Recovery' ? 'Recovery' : baseName] ?? 0.7;
+      // TSS per hour: the athlete's own rate when known (scaled a little by phase), else IF² × 100
+      const perHour = config.tssPerHour ? config.tssPerHour * (intensity / 0.72) ** 2 : intensity * intensity * 100;
+      const maxTss = config.maxWeeklyHours * perHour;
+      if (config.maxWeeklyHours > 0) tss = Math.min(tss, maxTss);
+      tss = Math.round(tss / 5) * 5;
+      if (phase !== 'Recovery' && !['Race', 'Taper', 'Peak'].includes(baseName)) lastLoadTss = tss;
+      for (let d = 0; d < 7; d++) {
+        ctl += (tss / 7 - ctl) * kc;
+        atl += (tss / 7 - atl) * ka;
+      }
+      const weekEnd = addDays(ws, 6);
+      const ev = events.find((e) => {
+        const d = parseISO(e.date);
+        return d >= ws && d <= weekEnd;
+      });
+      weeks.push({
+        weekStart: iso(ws),
+        phase,
+        tss,
+        hours: Math.round((tss / perHour) * 10) / 10,
+        ctl: Math.round(ctl * 10) / 10,
+        atl: Math.round(atl * 10) / 10,
+        tsb: Math.round((ctl - atl) * 10) / 10,
+        recovery: phase === 'Recovery',
+        event: ev ? `${ev.priority}: ${ev.name}` : null,
+      });
     }
-    const intensity = PHASE_IF[phase === 'Recovery' ? 'Recovery' : baseName] ?? 0.7;
-    // TSS per hour: the athlete's own rate when known (scaled a little by phase), else IF² × 100
-    const perHour = config.tssPerHour ? config.tssPerHour * (intensity / 0.72) ** 2 : intensity * intensity * 100;
-    const maxTss = config.maxWeeklyHours * perHour;
-    if (config.maxWeeklyHours > 0) tss = Math.min(tss, maxTss);
-    tss = Math.round(tss / 5) * 5;
-    if (phase !== 'Recovery' && !['Race', 'Taper', 'Peak'].includes(baseName)) lastLoadTss = tss;
-    for (let d = 0; d < 7; d++) {
-      ctl += (tss / 7 - ctl) * kc;
-      atl += (tss / 7 - atl) * ka;
-    }
-    const weekEnd = addDays(ws, 6);
-    const ev = events.find((e) => {
-      const d = parseISO(e.date);
-      return d >= ws && d <= weekEnd;
-    });
-    weeks.push({
-      weekStart: iso(ws),
-      phase,
-      tss,
-      hours: Math.round((tss / perHour) * 10) / 10,
-      ctl: Math.round(ctl * 10) / 10,
-      atl: Math.round(atl * 10) / 10,
-      tsb: Math.round((ctl - atl) * 10) / 10,
-      recovery: phase === 'Recovery',
-      event: ev ? `${ev.priority}: ${ev.name}` : null,
-    });
+    return weeks;
+  };
+
+  // fitness goals climb at the allowed rate until they reach the target, then hold it
+  if (fitnessGoal) return simulate(config.maxRamp);
+  // race plans: the gentlest climb (within the limits) that lands race-day CTL on the target
+  const raceDay = (r: number) => simulate(r)[nWeeks - 1].ctl;
+  if (raceDay(config.maxRamp) < config.targetCtl) return simulate(config.maxRamp);
+  if (raceDay(0) >= config.targetCtl) return simulate(0);
+  let lo = 0;
+  let hi = config.maxRamp;
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2;
+    if (raceDay(mid) >= config.targetCtl) hi = mid;
+    else lo = mid;
   }
-  return weeks;
+  return simulate(hi);
+}
+
+/** The fitness a plan delivers against its target: race-day CTL for a race, the peak for a fitness goal. */
+export function planAchieves(config: SeasonPlanConfig, weeks: SeasonWeek[]): number {
+  if (!weeks.length) return config.startCtl;
+  return config.goal === 'fitness' ? Math.max(...weeks.map((w) => w.ctl)) : weeks[weeks.length - 1].ctl;
+}
+
+export interface PlanReach {
+  /** CTL the plan delivers (race day, or the peak of a fitness goal) */
+  achieved: number;
+  /** the weekly-hours cap that would reach the target at the current ramp limit, if any up to 40 h does */
+  hoursNeeded: number | null;
+  /** otherwise, with unlimited hours, the CTL ramp per week that would reach it (if up to 12) */
+  rampNeeded: number | null;
+}
+
+/** Why a plan falls short of its target and what would reach it; null when it gets there. */
+export function planReach(config: SeasonPlanConfig, ctlDays = 42, atlDays = 7): PlanReach | null {
+  const target = config.targetCtl - 1;
+  const achieves = (c: SeasonPlanConfig) => planAchieves(c, generateSeasonPlan(c, [], ctlDays, atlDays));
+  const achieved = achieves(config);
+  if (achieved >= target) return null;
+  const search = (lo: number, hi: number, ok: (x: number) => boolean, tol: number) => {
+    for (let i = 0; i < 30 && hi - lo > tol; i++) {
+      const mid = (lo + hi) / 2;
+      if (ok(mid)) hi = mid;
+      else lo = mid;
+    }
+    return hi;
+  };
+  const MAX_HOURS = 40;
+  const MAX_RAMP = 12;
+  let hoursNeeded: number | null = null;
+  if (config.maxWeeklyHours > 0 && config.maxWeeklyHours < MAX_HOURS && achieves({ ...config, maxWeeklyHours: MAX_HOURS }) >= target) {
+    hoursNeeded = Math.ceil(search(config.maxWeeklyHours, MAX_HOURS, (h) => achieves({ ...config, maxWeeklyHours: h }) >= target, 0.25));
+  }
+  let rampNeeded: number | null = null;
+  if (hoursNeeded == null && config.maxRamp < MAX_RAMP && achieves({ ...config, maxRamp: MAX_RAMP, maxWeeklyHours: 0 }) >= target) {
+    rampNeeded = Math.ceil(search(config.maxRamp, MAX_RAMP, (r) => achieves({ ...config, maxRamp: r, maxWeeklyHours: 0 }) >= target, 0.05) * 2) / 2;
+  }
+  return { achieved, hoursNeeded, rampNeeded };
 }
 
 export interface GeneratedWorkout {

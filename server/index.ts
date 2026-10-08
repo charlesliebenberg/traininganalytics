@@ -10,7 +10,8 @@ import { api } from './api';
 import { authEnabled, requireAuth, session } from './auth';
 import { startScheduler } from './sync';
 import { ingestEvents } from './ingest';
-import { scheduleEstimateRefresh } from './estimates';
+import { scheduleEstimateRefresh, upgradeMetrics } from './estimates';
+import { log } from './db';
 
 const app = new Hono();
 
@@ -36,5 +37,13 @@ serve({ fetch: app.fetch, port: config.port }, (info) => {
   if (config.production && !authEnabled()) console.warn('WARNING: APP_PASSWORD is not set — anyone who can reach this server can read and change your data.');
   startScheduler();
   ingestEvents.onSaved.push(() => scheduleEstimateRefresh());
-  scheduleEstimateRefresh(3000);
+  // after a metrics change, rebuild stored activities once (in the background); otherwise
+  // just refresh the threshold estimates
+  setTimeout(() => {
+    upgradeMetrics()
+      .then((did) => {
+        if (!did) scheduleEstimateRefresh(0);
+      })
+      .catch((e) => log(null, 'error', `Metrics upgrade failed: ${(e as Error).message}`));
+  }, 3000);
 });

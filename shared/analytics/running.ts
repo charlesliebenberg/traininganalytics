@@ -70,6 +70,63 @@ export function normalizedGradedSpeed(gap: Series, mask?: ArrayLike<number> | nu
 }
 
 /** Fastest time (s) to cover each distance, using a two-pointer sweep of the distance stream. */
+/** No one runs faster than this for more than a stride: higher GPS speeds are glitches. */
+const RUN_SPEED_LIMIT = 9;
+
+/**
+ * Running speed with GPS glitches removed. A watch that starts before GPS lock, or a phone
+ * between tall buildings, makes the position jump about: the 1-s speed swings 5 → 15 → 5
+ * m/s in a way legs can't, and the distance stream adds up the jumps. Two conservative
+ * rules, chosen so genuine efforts (races, intervals) are left alone:
+ *  - speeds above 9 m/s are impossible on foot: replace with the local median
+ *  - in very jerky stretches (15-s coefficient of variation > 0.35), cap speed at the 95th
+ *    percentile of the run's clean stretches — a real surge in a noisy stretch keeps that,
+ *    a glitch loses it
+ * Checked against every run in a 10-year history: a 400 m "in 42 s" disappears, race
+ * bests move by under 1 %.
+ */
+export function cleanRunSpeed(speed: Series): number[] {
+  const v = Array.from(speed, (x) => (x != null && Number.isFinite(x) && x > 0 ? x : 0));
+  const n = v.length;
+  if (n < 20) return v;
+  const s1 = new Float64Array(n + 1);
+  const s2 = new Float64Array(n + 1);
+  for (let i = 0; i < n; i++) {
+    s1[i + 1] = s1[i] + v[i];
+    s2[i + 1] = s2[i] + v[i] * v[i];
+  }
+  const W = 15;
+  const jerky = new Uint8Array(n);
+  for (let i = 0; i + W <= n; i++) {
+    const m = (s1[i + W] - s1[i]) / W;
+    const sd = Math.sqrt(Math.max(0, (s2[i + W] - s2[i]) / W - m * m));
+    if (m > 2 && sd / m > 0.35) jerky.fill(1, i, i + W);
+  }
+  // the run's own fast pace, judged from its clean stretches only: a long glitch at the start
+  // of a short run would otherwise set its own cap
+  const clean = v.filter((x, i) => !jerky[i] && x > 0.5 && x <= RUN_SPEED_LIMIT);
+  const pool = clean.length >= 60 ? clean : v.filter((x) => x > 0.5 && x <= RUN_SPEED_LIMIT);
+  if (!pool.length) return v.map((x) => (x > RUN_SPEED_LIMIT ? 0 : x));
+  pool.sort((a, b) => a - b);
+  const cap = pool[Math.floor(0.95 * (pool.length - 1))];
+  const localMedian = (i: number) => {
+    const w = v.slice(Math.max(0, i - 30), Math.min(n, i + 31)).filter((x) => x <= RUN_SPEED_LIMIT).sort((a, b) => a - b);
+    return w.length ? w[w.length >> 1] : 0;
+  };
+  return v.map((x, i) => (x > RUN_SPEED_LIMIT ? Math.min(localMedian(i), cap) : jerky[i] && x > cap ? cap : x));
+}
+
+/** Cumulative distance from a 1 Hz speed series. */
+export function distanceFromSpeed(speed: ArrayLike<number>): number[] {
+  const out = new Array<number>(speed.length);
+  let d = 0;
+  for (let i = 0; i < speed.length; i++) {
+    d += speed[i];
+    out[i] = d;
+  }
+  return out;
+}
+
 export function bestEfforts(distance: Series, targets = BEST_EFFORT_DISTANCES): Record<string, number> {
   const d = fillGaps(distance);
   const out: Record<string, number> = {};
