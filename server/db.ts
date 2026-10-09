@@ -364,7 +364,8 @@ export function rowToActivity(r: Row): Activity {
 }
 
 export function getActivity(id: number): Activity | null {
-  const r = q.get(`SELECT ${ACTIVITY_LIST_COLUMNS} FROM activities WHERE id = ?`, id);
+  // one activity: its full session analysis too (lists carry only its type)
+  const r = q.get(`SELECT ${ACTIVITY_LIST_COLUMNS}, session FROM activities WHERE id = ?`, id);
   return r ? rowToActivity(r) : null;
 }
 
