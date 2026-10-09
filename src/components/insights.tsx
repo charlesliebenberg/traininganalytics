@@ -1,12 +1,15 @@
 import { useMemo, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { parseISO } from 'date-fns';
-import { Activity, ArrowDownRight, ArrowUpRight, Flame, HeartPulse, Minus, Timer, TrendingUp, Trophy, Zap } from 'lucide-react';
+import { Activity, ArrowDownRight, ArrowUpRight, Flame, HeartPulse, History, Layers, Minus, Timer, TrendingUp, Trophy, Zap } from 'lucide-react';
 import clsx from 'clsx';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from './Chart';
 import { alpha, useTokens } from '../lib/theme';
 import { fmtDate, fmtDurLabel, fmtDuration, fmtPace } from '../lib/format';
 import { breakNames, makeTimeline, type Gap } from '../lib/timeline';
+import type { SessionAnalysis } from '../../shared/analytics/session';
+import { executionText, halvesText, progressionText, sessionTitle, setText, surgeText, type SetProgress } from '../lib/session';
+import { SetChart, SetProgressChart } from './session';
 
 // ---------- API shapes (server/aerobic.ts) ----------
 export type AerobicSport = 'ride' | 'run';
@@ -79,6 +82,10 @@ export interface ActivityInsights {
   fitness?: { sport: AerobicSport; refHr: number; current: Band; change: Trend | null } | null;
   efforts: EffortFinding[];
   tsb: number | null;
+  /** what the session was and how it went */
+  session?: SessionAnalysis | null;
+  /** its main set against the comparable sets of the year before */
+  set?: SetProgress | null;
 }
 export interface AerobicTrendData {
   sport: AerobicSport;
@@ -133,7 +140,8 @@ export function effortSentence(e: EffortFinding): string {
     case 'best90':
       return `Best ${label} in 90 days: ${val(e.value)} (was ${val(e.ref)}).`;
     case 'near':
-      return run ? `${label} in ${val(e.value)}, within ${Math.round((e.value / e.ref - 1) * 100)}% of your 90-day best (${val(e.ref)}).` : `${label} at ${val(e.value)}: ${Math.round((e.value / e.ref) * 100)}% of your 90-day best (${val(e.ref)}).`;
+      if (run ? e.value <= e.ref : e.value >= e.ref) return `${label} in ${val(e.value)}, level with your 90-day best (${val(e.ref)}).`;
+      return run ? `${label} in ${val(e.value)}, within ${Math.max(1, Math.round((e.value / e.ref - 1) * 100))}% of your 90-day best (${val(e.ref)}).` : `${label} at ${val(e.value)}: ${Math.round((e.value / e.ref) * 100)}% of your 90-day best (${val(e.ref)}).`;
     case 'durability':
       return `Best ${label} after ${(e.kj! / 1000).toFixed(0)},000 kJ in 90 days: ${val(e.value)} (was ${val(e.ref)}) — power held deep into a long ride.`;
     case 'model':
@@ -174,19 +182,49 @@ function Evidence({ icon, children, sub }: { icon: ReactNode; children: ReactNod
   );
 }
 
+/** The session in a line, with how it went underneath. */
+function SessionLines({ ses, set, compact }: { ses: SessionAnalysis; set: SetProgress | null | undefined; compact: boolean }) {
+  const m = ses.main;
+  // surges matter in a race, a mixed ride, or an easy ride that kept surging (a bunch ride)
+  const surgy = ses.surges && (ses.type === 'race' || ses.type === 'mixed' || ses.surges.count >= 10);
+  const detail = m && ses.execution ? executionText(ses.execution, m, ses.sport) : surgy ? surgeText(ses.surges!, ses.thr) : ses.halves ? halvesText(ses.halves) : null;
+  const what = m ? setText(m, ses.sport, ses.thr) : `${fmtDuration(ses.moving, { short: true })} at IF ${ses.intensity.toFixed(2)}${ses.sport === 'ride' && ses.vi != null ? `, VI ${ses.vi.toFixed(2)}` : ''}`;
+  const prog = set?.last ? progressionText(set, ses.sport) : null;
+  return (
+    <>
+      <Evidence icon={<Layers className="h-4 w-4" />} sub={compact ? undefined : detail}>
+        <span className="font-medium">{sessionTitle(ses)}</span> — {what}.
+      </Evidence>
+      {prog && (
+        <Evidence icon={<History className="h-4 w-4" />} sub={compact ? undefined : prog.sub}>
+          {prog.main}
+        </Evidence>
+      )}
+    </>
+  );
+}
+
 /**
- * What an activity says about fitness: the verdict, the heart-rate evidence, efforts in
- * context, and (unless compact) the activity among its recent ones on the fitness band.
+ * What an activity says: the verdict; what the session was, how its main set went and how
+ * that compared with the last time; the heart-rate evidence; efforts in context; and (unless
+ * compact) the set, its progress and the activity among its recent ones on the fitness band.
  */
 export function InsightPanel({ insights, compact = false }: { insights: ActivityInsights; compact?: boolean }) {
   const a = insights.aerobic;
   const s = a ? aerobicSentences(a) : null;
   const efforts = compact ? insights.efforts.slice(0, 1) : insights.efforts;
+  const ses = insights.session ?? null;
+  const set = insights.set;
+  const showSet = !compact && !!ses?.main && ses.main.reps.length >= 2;
+  const showProgress = !compact && !!set && set.series.length >= 3;
+  const showAerobic = !compact && !!a && a.recent.length >= 3;
+  const side = showSet || showProgress || showAerobic;
   return (
-    <div className={clsx(!compact && a && 'grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)]')}>
+    <div className={clsx(side && 'grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)]')}>
       <div className="min-w-0">
         <VerdictBadge verdict={insights.verdict} />
         <ul className="mt-3 space-y-3">
+          {ses && <SessionLines ses={ses} set={set} compact={compact} />}
           {s && (
             <Evidence icon={<HeartPulse className="h-4 w-4" />} sub={compact ? undefined : s.detail}>
               {s.main}
@@ -204,7 +242,9 @@ export function InsightPanel({ insights, compact = false }: { insights: Activity
           )}
           {!a && insights.unread === 'hard' && (
             <Evidence icon={<HeartPulse className="h-4 w-4" />}>
-              Too hard and surgy to read aerobic fitness from: surges hold heart rate up in a way that would look like lost fitness. Steady and easy rides read best.
+              {ses?.main
+                ? `Not read for aerobic fitness: hard reps hold heart rate up in a way that would look like lost fitness. ${insights.set?.last ? 'The set against last time is the signal here.' : 'Steady and easy rides read best.'}`
+                : 'Too hard and surgy to read aerobic fitness from: surges hold heart rate up in a way that would look like lost fitness. Steady and easy rides read best.'}
             </Evidence>
           )}
           {!a && insights.unread === 'short' && (
@@ -216,7 +256,7 @@ export function InsightPanel({ insights, compact = false }: { insights: Activity
               {insights.fitness.change ? `, ${signed(insights.fitness.change.pct)}% since ${fmtDate(insights.fitness.change.from, 'd MMM')} (±${Math.max(1, Math.round(insights.fitness.change.sdPct))}%)` : ''}.
             </Evidence>
           )}
-          {!a && !insights.unread && !insights.efforts.length && (
+          {!a && !insights.unread && !insights.efforts.length && !ses && (
             <li className="text-[13px] text-ink-2">Nothing here to read fitness from: no heart rate, and no effort near your recent bests.</li>
           )}
         </ul>
@@ -228,12 +268,28 @@ export function InsightPanel({ insights, compact = false }: { insights: Activity
           </p>
         )}
       </div>
-      {!compact && a && a.recent.length >= 3 && (
-        <div className="min-w-0">
-          <div className="mb-1 text-[11px] font-medium tracking-wide text-muted uppercase">
-            Your last 8 weeks · output at {a.refHr} bpm
-          </div>
-          <AerobicChart sport={a.sport} points={a.recent} highlight={insights.aerobic ? a.recent[a.recent.length - 1].id : undefined} height={190} compact />
+      {side && (
+        <div className="min-w-0 space-y-4">
+          {showSet && (
+            <div>
+              <div className="mb-1 text-[11px] font-medium tracking-wide text-muted uppercase">The set · {ses!.sport === 'run' ? 'pace' : 'power'} and heart rate at the end of each rep</div>
+              <SetChart set={ses!.main!} sport={ses!.sport} thr={ses!.thr} height={160} />
+            </div>
+          )}
+          {showProgress && (
+            <div>
+              <div className="mb-1 text-[11px] font-medium tracking-wide text-muted uppercase">The same set over the last year</div>
+              <SetProgressChart p={set!} sport={ses!.sport} height={140} />
+            </div>
+          )}
+          {showAerobic && (
+            <div>
+              <div className="mb-1 text-[11px] font-medium tracking-wide text-muted uppercase">
+                Your last 8 weeks · output at {a!.refHr} bpm
+              </div>
+              <AerobicChart sport={a!.sport} points={a!.recent} highlight={insights.aerobic ? a!.recent[a!.recent.length - 1].id : undefined} height={showSet || showProgress ? 160 : 190} compact />
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -294,7 +350,7 @@ export function AerobicChart({ sport, points, highlight, height = 300, compact =
         max: X[X.length - 1] + Math.max(DAY, span * 0.02),
         ...axisStyle(t, { grid: false }),
         splitNumber: compact ? 4 : 8,
-        axisLabel: { color: t.muted, fontSize: 10, hideOverlap: true, formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), span > 200 * DAY ? 'MMM yy' : 'd MMM')) },
+        axisLabel: { color: t.muted, fontSize: 10, hideOverlap: true, formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), span > 200 * DAY ? "MMM ''yy" : 'd MMM')) },
       },
       yAxis: valueAxis(t, { scale: true, axisLabel: { color: t.muted, fontSize: 10, formatter: axisFmt } }),
       series: [

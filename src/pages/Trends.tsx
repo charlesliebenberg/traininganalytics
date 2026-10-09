@@ -9,7 +9,11 @@ import { RangePicker } from '../components/RangePicker';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
 import { foldEmptyBuckets, isGap, monthsText, type Gap } from '../lib/timeline';
 import { HR_ZONES, POWER_ZONES, SEILER_ZONES } from '../../shared/analytics/zones';
+import type { SessionType } from '../../shared/analytics/session';
 import type { DailyLoad } from '../../shared/types';
+import { ReviewCard } from '../components/review';
+import { KeySetsChart, type KeySet } from '../components/session';
+import { GROUP_LABEL, GROUP_OF, SESSION_GROUPS, groupColor } from '../lib/session';
 
 interface Bucket {
   start: string;
@@ -17,6 +21,7 @@ interface Bucket {
   power: number[];
   hr: number[];
   seiler: number[];
+  sessions: Partial<Record<SessionType, number>>;
   polarization: number | null;
   efRide: number | null;
   efRun: number | null;
@@ -28,7 +33,7 @@ interface TrendsData {
 }
 
 /** Category labels, with a folded break shown as "5.8 yr off". */
-const itemLabel = (it: Item, bucket: 'week' | 'month') => (isGap(it) ? `${monthsText(it.gap.days)} off` : fmtDate(it.start, bucket === 'week' ? 'd MMM' : 'MMM yy'));
+const itemLabel = (it: Item, bucket: 'week' | 'month') => (isGap(it) ? `${monthsText(it.gap.days)} off` : fmtDate(it.start, bucket === 'week' ? 'd MMM' : "MMM ''yy"));
 const itemTitle = (it: Item, bucket: 'week' | 'month') =>
   isGap(it) ? `No training · ${fmtDate(it.gap.from, 'MMM yyyy')} – ${fmtDate(it.gap.to, 'MMM yyyy')}` : `${bucket === 'week' ? 'Week of ' : ''}${fmtDate(it.start, bucket === 'week' ? 'd MMM yyyy' : 'MMMM yyyy')}`;
 /** Shade folded breaks on a category axis. */
@@ -177,6 +182,48 @@ function LineTrend({ items, lines, bucket, height = 220, threshold, inverse }: {
   return <Chart option={option} height={height} />;
 }
 
+/** Sessions of each kind per bucket (rides and runs), stacked: what the training was made of. */
+function SessionMix({ items, bucket }: { items: Item[]; bucket: 'week' | 'month' }) {
+  const t = useTokens();
+  const option = useMemo(() => {
+    const count = (b: Item, g: string) => (isGap(b) ? 0 : Object.entries(b.sessions ?? {}).reduce((s, [k, v]) => s + (GROUP_OF[k as SessionType] === g ? (v ?? 0) : 0), 0));
+    const used = SESSION_GROUPS.filter((g) => items.some((b) => count(b, g) > 0));
+    return {
+      animation: false,
+      grid: { left: 40, right: 10, top: 34, bottom: 28 },
+      legend: { ...legendStyle(t), data: used.map((g) => GROUP_LABEL[g]) },
+      tooltip: {
+        trigger: 'axis',
+        ...tooltipStyle(t),
+        formatter: (ps: any) => {
+          const it = items[ps[0].dataIndex];
+          return `<b>${itemTitle(it, bucket)}</b>${ps.filter((p: any) => p.value).map((p: any) => tipRow(p.color, p.seriesName, String(p.value))).join('')}`;
+        },
+      },
+      xAxis: { type: 'category', data: items.map((it) => itemLabel(it, bucket)), ...axisStyle(t, { grid: false }) },
+      yAxis: valueAxis(t, { minInterval: 1, splitNumber: 4 }),
+      series: used.map((g, i) => ({
+        type: 'bar',
+        name: GROUP_LABEL[g],
+        stack: 's',
+        barMaxWidth: 24,
+        itemStyle: { color: groupColor(t, g), borderColor: t.surface, borderWidth: 1, borderRadius: i === used.length - 1 ? [3, 3, 0, 0] : 0 },
+        data: items.map((b) => count(b, g)),
+        ...(i === 0 ? gapAreas(items, t) : {}),
+      })),
+    };
+  }, [items, bucket, t]);
+  return <Chart option={option} height={280} />;
+}
+
+/** Interval and sustained sets in the range, by workout family (rides). */
+function IntervalSets({ range }: { range: DateRange }) {
+  const { data } = useApi<KeySet[]>(`/sets${qs({ sport: 'ride', from: range.from, to: range.to })}`);
+  if (!data) return <Spinner />;
+  if (!data.length) return <p className="py-8 text-center text-xs text-muted">No interval or sustained sets in this range — threshold reps, sweet spot blocks or VO2 work show up here.</p>;
+  return <KeySetsChart sets={data} height={300} />;
+}
+
 const MONTH_STARTS = [1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335];
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -248,7 +295,7 @@ export function Trends() {
   const [range, setRange] = useState<DateRange>(() => resolvePreset('365d'));
   const [bucket, setBucket] = useState<'week' | 'month'>('week');
   const [metric, setMetric] = useState<Metric>('time');
-  const [zoneKind, setZoneKind] = useState<'power' | 'hr' | 'seiler'>('seiler');
+  const [zoneKind, setZoneKind] = useState<'sessions' | 'power' | 'hr' | 'seiler'>('sessions');
   const [yoy, setYoy] = useState<'distance' | 'time' | 'tss'>('distance');
   const { data, isLoading } = useApi<TrendsData>(`/trends${qs({ from: range.from, to: range.to, bucket })}`);
   // long stretches without training fold into one marked column (13+ weeks / 3+ months)
@@ -263,7 +310,7 @@ export function Trends() {
     <div>
       <PageHeader
         title="Trends"
-        subtitle="Volume, intensity distribution and durability over time"
+        subtitle="Your training reviewed week by week, what it was made of, and whether your key sessions are improving"
         actions={
           <>
             <Segmented value={bucket} onChange={setBucket} options={[{ value: 'week', label: 'Weekly' }, { value: 'month', label: 'Monthly' }]} />
@@ -271,11 +318,13 @@ export function Trends() {
           </>
         }
       />
+      <ReviewCard />
       {isLoading || !data ? (
         <Spinner />
       ) : (
         <>
           <Card
+            className="mt-4"
             title="Training volume"
             subtitle={`${METRICS.find((m) => m.value === metric)?.label} per ${bucket}, stacked by sport${folded ? ' · breaks of 3+ months are folded into one column' : ''}`}
             actions={<Select value={metric} onChange={(e) => setMetric(e.target.value as Metric)}>{METRICS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</Select>}
@@ -284,16 +333,25 @@ export function Trends() {
           </Card>
           <div className="mt-4 grid gap-4 xl:grid-cols-2">
             <Card
-              title="Intensity distribution"
-              subtitle={zoneKind === 'seiler' ? '3-zone model (below LT1 / between thresholds / above LT2) — power for rides, heart rate otherwise' : 'Share of time in each zone'}
-              actions={<Segmented size="sm" value={zoneKind} onChange={setZoneKind} options={[{ value: 'seiler', label: '3-zone' }, { value: 'power', label: 'Power' }, { value: 'hr', label: 'HR' }]} />}
+              title={zoneKind === 'sessions' ? 'Session mix' : 'Intensity distribution'}
+              subtitle={
+                zoneKind === 'sessions'
+                  ? `Rides and runs per ${bucket} by what they were: read from each one's intervals, intensity and surges`
+                  : zoneKind === 'seiler'
+                    ? '3-zone model (below LT1 / between thresholds / above LT2) — power for rides, heart rate otherwise'
+                    : 'Share of time in each zone'
+              }
+              actions={<Segmented size="sm" value={zoneKind} onChange={setZoneKind} options={[{ value: 'sessions', label: 'Sessions' }, { value: 'seiler', label: '3-zone' }, { value: 'power', label: 'Power' }, { value: 'hr', label: 'HR' }]} />}
             >
-              <ZoneDistribution items={items} kind={zoneKind} bucket={bucket} />
+              {zoneKind === 'sessions' ? <SessionMix items={items} bucket={bucket} /> : <ZoneDistribution items={items} kind={zoneKind} bucket={bucket} />}
             </Card>
             <Card title="Polarization index" subtitle={`Treff et al., ${bucket === 'week' ? 'over the 4 weeks ending each week' : 'per month'}. Above 2.0 is polarized; below is pyramidal or threshold-heavy.`}>
               <LineTrend items={items} bucket={bucket} height={280} threshold={{ value: 2, label: 'polarized' }} lines={[{ name: 'Polarization index', color: t.series[6], get: (b) => b.polarization, fmt: (v) => v.toFixed(2) }]} />
             </Card>
           </div>
+          <Card className="mt-4" title="Interval sets" subtitle="Each threshold, sweet spot, VO2 or sustained set by its average power, grouped by workout: a rising line is the same session getting stronger. Click a point to open the ride.">
+            <IntervalSets range={range} />
+          </Card>
           <Card
             className="mt-4"
             title="Aerobic decoupling"

@@ -16,6 +16,7 @@ import { fatigueCurves, normalizedPower, npCurve, powerCurve, tssFromIf, wPrimeB
 import { decoupling, hrTss, trimp } from './heartrate';
 import { bestEfforts, cleanRunSpeed, deriveGrade, distanceFromSpeed, gradeAdjustedSpeed, normalizedGradedSpeed, swimTss } from './running';
 import { HR_ZONES, PACE_ZONES, POWER_ZONES, SEILER_HR_BOUNDS, SEILER_ZONES, timeInZones } from './zones';
+import { analyzeSession, type SessionAnalysis } from './session';
 
 export interface RawSamples {
   /** seconds from start, ascending */
@@ -160,7 +161,7 @@ export type ComputedMetrics = Pick<
   | 'zones'
   | 'bestEfforts'
   | 'ftpUsed'
-> & { curves: ActivityCurves; polyline: string | null };
+> & { curves: ActivityCurves; polyline: string | null; session: SessionAnalysis | null };
 
 const DEFAULT_TSS_PER_HOUR: Partial<Record<Sport, number>> = {
   ride: 50,
@@ -211,6 +212,28 @@ export function movingMask(s: Pick<Streams, 'time' | 'watts' | 'cadence' | 'spee
     i = j;
   }
   return out;
+}
+
+/**
+ * A temperature stream worth reading: within what weather allows, and not a sensor stuck on
+ * one value (some head units report −7 °C throughout, bar a stray reading or two, when they
+ * have no working sensor). Over five minutes or more, a real sensor moves.
+ */
+export function usableTemp(temp: (number | null)[] | null | undefined): boolean {
+  if (!temp) return false;
+  const counts = new Map<number, number>();
+  let lo = Infinity,
+    hi = -Infinity,
+    n = 0;
+  for (const v of temp) {
+    if (v == null) continue;
+    n++;
+    counts.set(v, (counts.get(v) ?? 0) + 1);
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  if (!n || lo < -40 || hi > 60) return false;
+  return !(n >= 300 && Math.max(...counts.values()) / n >= 0.98);
 }
 
 export function isBike(sport: Sport) {
@@ -275,7 +298,7 @@ export function computeMetrics(s: Streams, sport: Sport, th: Thresholds): Comput
   const maxSpeed = s.speed ? maxDefined(centeredMean(toFloat(s.speed), 3)) : null;
   const cadNonZero = s.cadence ? s.cadence.filter((c) => c != null && c > 0) : [];
   const avgCadence = cadNonZero.length > 30 ? meanDefined(cadNonZero) : null;
-  const avgTemp = s.temp ? meanDefined(s.temp) : null;
+  const avgTemp = usableTemp(s.temp) ? meanDefined(s.temp!) : null;
 
   // running: grade adjusted pace
   let gap: number[] | null = null;
@@ -353,6 +376,11 @@ export function computeMetrics(s: Streams, sport: Sport, th: Thresholds): Comput
 
   const polyline = hasGps ? encodePolyline(simplifyTrack(s.lat!, s.lng!, 500)) : null;
 
+  // what the session was: bike power against FTP, grade-adjusted pace against threshold
+  let session: SessionAnalysis | null = null;
+  if (isBike(sport) && hasPower && th.ftp && intensity != null) session = analyzeSession({ sport: 'ride', output: s.watts!, hr: hasHr ? s.heartrate : null, moving: mask, thr: th.ftp, intensity, vi });
+  else if (sport === 'run' && gap && th.runThresholdSpeed && intensity != null && method === 'pace') session = analyzeSession({ sport: 'run', output: gap, hr: hasHr ? s.heartrate : null, moving: mask, thr: th.runThresholdSpeed, intensity, vi: null });
+
   return {
     elapsedTime: n,
     movingTime,
@@ -385,6 +413,7 @@ export function computeMetrics(s: Streams, sport: Sport, th: Thresholds): Comput
     ftpUsed: hasPower ? th.ftp : null,
     curves,
     polyline,
+    session,
   };
 }
 

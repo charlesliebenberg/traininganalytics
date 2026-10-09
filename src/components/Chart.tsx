@@ -143,6 +143,8 @@ export function tooltipStyle(t: Tokens) {
 
 export function legendStyle(t: Tokens) {
   return {
+    // one row that pages on a narrow screen, rather than wrapping onto the plot
+    type: 'scroll' as const,
     top: 0,
     right: 0,
     icon: 'roundRect',
@@ -151,6 +153,10 @@ export function legendStyle(t: Tokens) {
     itemGap: 14,
     textStyle: { color: t.ink2, fontSize: 12 },
     inactiveColor: t.surface3,
+    pageIconColor: t.ink2,
+    pageIconInactiveColor: t.surface3,
+    pageIconSize: 10,
+    pageTextStyle: { color: t.muted, fontSize: 11 },
   };
 }
 

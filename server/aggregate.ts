@@ -199,7 +199,8 @@ export function trends(from: string, to: string, bucket: 'week' | 'month') {
   const first = firstActivityDate();
   if (first && from < first) from = first;
   const rows = q.all(
-    `SELECT id, local_date, sport, moving_time, distance, elevation_gain, COALESCE(tss_override, tss) AS tss, work, zones, ef, decoupling, intensity, np, avg_hr, trainer
+    `SELECT id, local_date, sport, moving_time, distance, elevation_gain, COALESCE(tss_override, tss) AS tss, work, zones, ef, decoupling, intensity, np, avg_hr, trainer,
+       json_extract(session, '$.type') AS session_type
      FROM activities WHERE local_date BETWEEN ? AND ? ORDER BY local_date`,
     from,
     to,
@@ -213,6 +214,8 @@ export function trends(from: string, to: string, bucket: 'week' | 'month') {
     power: number[];
     hr: number[];
     seiler: number[];
+    /** sessions of each kind (session.ts), rides and runs with an analysis */
+    sessions: Record<string, number>;
     polarization: number | null;
     efRide: number | null;
     efRun: number | null;
@@ -223,7 +226,7 @@ export function trends(from: string, to: string, bucket: 'week' | 'month') {
   let d = parseISO(keyOf(from));
   while (iso(d) <= to) {
     const k = iso(d);
-    buckets.set(k, { start: k, sports: {}, power: [], hr: [], seiler: [0, 0, 0], polarization: null, efRide: null, efRun: null, decoupling: null, _ef: [], _efr: [], _dec: [] });
+    buckets.set(k, { start: k, sports: {}, power: [], hr: [], seiler: [0, 0, 0], sessions: {}, polarization: null, efRide: null, efRun: null, decoupling: null, _ef: [], _efr: [], _dec: [] });
     d = bucket === 'week' ? addDays(d, 7) : startOfMonth(addDays(d, 32));
   }
   const add = (arr: number[], v: number[] | undefined) => v?.forEach((x, i) => (arr[i] = (arr[i] ?? 0) + x));
@@ -237,6 +240,7 @@ export function trends(from: string, to: string, bucket: 'week' | 'month') {
     s.tss += r.tss ?? 0;
     s.work += r.work ?? 0;
     s.count++;
+    if (r.session_type) b.sessions[r.session_type] = (b.sessions[r.session_type] ?? 0) + 1;
     const z = r.zones ? JSON.parse(r.zones) : null;
     if (z) {
       add(b.power, z.power);

@@ -25,12 +25,28 @@ export const QUALITY: SessionType[] = ['tempo', 'threshold', 'vo2', 'anaerobic',
 const RACE_NAME = /\b(race|crit|criterium|fondo|gran fondo|tt|time ?trial|cup|champs?|championships?|classic|hill ?climb|road race|kermesse|stage)\b/i;
 const LONG_RIDE_S = 3 * 3600;
 
-type SessionInput = Pick<Activity, 'sport' | 'name' | 'movingTime' | 'intensity' | 'zones'>;
+type SessionInput = Pick<Activity, 'sport' | 'name' | 'movingTime' | 'intensity' | 'zones' | 'sessionType'>;
+
+/** The session analysis's kinds (session.ts), folded into the build's. */
+const FROM_ANALYSIS: Record<NonNullable<Activity['sessionType']>, SessionType> = {
+  recovery: 'recovery',
+  endurance: 'endurance',
+  tempo: 'tempo',
+  sweetspot: 'tempo',
+  mixed: 'tempo',
+  threshold: 'threshold',
+  vo2: 'vo2',
+  anaerobic: 'anaerobic',
+  sprint: 'anaerobic',
+  race: 'race',
+};
 
 /**
- * Label a session from its intensity factor and time in zones (power zones for rides with
- * power, heart-rate zones otherwise). Thresholds are deliberately simple and readable:
- *  - race: race-like name with IF ≥ 0.8, or IF ≥ 0.95 for 40+ min, or IF ≥ 0.9 for 2.5+ h
+ * Label a session. A race-like name with IF ≥ 0.8 is a race; an activity with a session
+ * analysis (its sets, intensity and surges — session.ts) takes that reading. Otherwise, from
+ * its intensity factor and time in zones (power zones for rides with power, heart-rate zones
+ * otherwise), with deliberately simple, readable thresholds:
+ *  - race: IF ≥ 0.95 for 40+ min, or IF ≥ 0.9 for 2.5+ h
  *  - VO2max: ≥ 8 min above 105 % FTP (power Z5) / above LTHR+3 % (HR Z5b+)
  *  - anaerobic: ≥ 4 min in power Z6–Z7
  *  - threshold: ≥ 15 min in Z4
@@ -43,7 +59,10 @@ type SessionInput = Pick<Activity, 'sport' | 'name' | 'movingTime' | 'intensity'
 export function classifySession(a: SessionInput): SessionType {
   const IF = a.intensity ?? 0;
   const mins = a.movingTime / 60;
-  if ((RACE_NAME.test(a.name) && IF >= 0.8) || (IF >= 0.95 && mins >= 40) || (IF >= 0.9 && mins >= 150)) return 'race';
+  if (RACE_NAME.test(a.name) && IF >= 0.8) return 'race';
+  // the session analysis read the ride itself: its sets, intensity and surges
+  if (a.sessionType) return FROM_ANALYSIS[a.sessionType];
+  if ((IF >= 0.95 && mins >= 40) || (IF >= 0.9 && mins >= 150)) return 'race';
   const p = a.zones?.power;
   const h = a.zones?.hr;
   if (p && p.reduce((x, y) => x + y, 0) > 0) {

@@ -2,6 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { config } from './config';
+import type { SessionType } from '../shared/analytics/session';
 import type {
   Activity,
   ActivityCurves,
@@ -49,7 +50,7 @@ CREATE TABLE IF NOT EXISTS activities (
   polyline TEXT, description TEXT, rpe INTEGER, feel INTEGER, device TEXT,
   detailed INTEGER NOT NULL DEFAULT 0, ftp_used REAL,
   zones TEXT, best_efforts TEXT, laps TEXT, curves TEXT, planned_id INTEGER,
-  summary TEXT,
+  summary TEXT, session TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(source, external_id)
 );
@@ -93,6 +94,13 @@ CREATE TABLE IF NOT EXISTS sync_log (
 DROP TABLE IF EXISTS hr_power;
 CREATE TABLE IF NOT EXISTS steady_windows (activity_id INTEGER PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE, data TEXT NOT NULL);
 `);
+
+// columns added since the table was first created
+{
+  const cols = new Set((db.prepare('PRAGMA table_info(activities)').all() as { name: string }[]).map((c) => c.name));
+  // what the session was and how it went (session.ts), computed with the other metrics
+  if (!cols.has('session')) db.exec('ALTER TABLE activities ADD COLUMN session TEXT');
+}
 
 // Repair: thresholds imported from a Strava profile used to be stored with the 1970 placeholder date.
 {
@@ -298,7 +306,8 @@ export function deleteThresholds(date: string) {
 export const ACTIVITY_LIST_COLUMNS = `id, source, external_id, name, sport, start_time, local_date, elapsed_time, moving_time, distance,
   elevation_gain, avg_power, max_power, np, intensity, tss, tss_method, tss_override, vi, ef, decoupling, work, calories, avg_hr,
   max_hr, avg_cadence, avg_speed, max_speed, trimp, avg_temp, wbal_min, has_power, has_hr, has_gps, trainer, commute, polyline,
-  description, rpe, feel, device, detailed, ftp_used, zones, best_efforts, laps, planned_id`;
+  description, rpe, feel, device, detailed, ftp_used, zones, best_efforts, laps, planned_id,
+  json_extract(session, '$.type') AS session_type, json_extract(session, '$.long') AS session_long`;
 
 export function rowToActivity(r: Row): Activity {
   return {
@@ -348,6 +357,9 @@ export function rowToActivity(r: Row): Activity {
     bestEfforts: json(r.best_efforts),
     laps: json(r.laps),
     plannedId: r.planned_id,
+    session: json(r.session),
+    sessionType: r.session_type ?? json<{ type: SessionType }>(r.session)?.type ?? null,
+    sessionLong: !!(r.session_long ?? json<{ long: boolean }>(r.session)?.long),
   };
 }
 

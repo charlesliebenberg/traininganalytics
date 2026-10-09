@@ -86,7 +86,7 @@ export function WayBack({ o, peak, months, weeklyTss, setWeeklyTss }: { o: Overv
           return `<b>${fmtDate(new Date(ts), 'd MMM yyyy')}</b>${rows}${band}`;
         },
       },
-      xAxis: { type: 'time', min: startX, max: weeks[weeks.length - 1], ...axisStyle(t, { grid: false }), axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => fmtDate(new Date(v), 'MMM yy') } },
+      xAxis: { type: 'time', min: startX, max: weeks[weeks.length - 1], ...axisStyle(t, { grid: false }), axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => fmtDate(new Date(v), "MMM ''yy") } },
       yAxis: valueAxis(t, { scale: true, name: '20-min power (W)', nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -40] } }),
       series: [
         { type: 'scatter', name: 'Best 20 min of the week', symbolSize: 8, data: past.filter((w) => w.best).map((w) => [parseISO(w.week).getTime() + 3 * DAY, w.best]), itemStyle: { color: alpha(t.muted, 0.55), borderColor: t.surface, borderWidth: 1 } },

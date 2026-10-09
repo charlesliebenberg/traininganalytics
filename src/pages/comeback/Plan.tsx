@@ -134,7 +134,7 @@ export function PlanSection({ peak, weeklyTss, setWeeklyTss, mix, buildTssPerHou
                 <Stat
                   label="Back to capacity"
                   value={preview.arrival ? fmtDate(preview.arrival, 'MMM yyyy') : '–'}
-                  sub={preview.arrivalRange && preview.arrivalRange[0] !== preview.arrivalRange[1] ? `range ${fmtDate(preview.arrivalRange[0], 'MMM yy')} – ${fmtDate(preview.arrivalRange[1], 'MMM yy')}` : undefined}
+                  sub={preview.arrivalRange && preview.arrivalRange[0] !== preview.arrivalRange[1] ? `range ${fmtDate(preview.arrivalRange[0], "MMM ''yy")} – ${fmtDate(preview.arrivalRange[1], "MMM ''yy")}` : undefined}
                 />
                 <Stat label="Plan length" value={preview.weeks.length} unit="weeks" sub={end ? `to ${fmtDate(addDays(parseISO(end.weekStart), 6), 'd MMM yyyy')}` : undefined} />
                 <Stat label="CTL" value={`${preview.startCtl} → ${Math.round(weeklyTss / 7)}`} sub="then held" />

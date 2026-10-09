@@ -13,6 +13,7 @@ import { useTokens } from '../lib/theme';
 import { fmtDate, fmtDistance, fmtDuration, fmtNum, fmtPace, SPORT_LABEL } from '../lib/format';
 import { useStatus } from '../components/Layout';
 import { Onboarding } from './Onboarding';
+import { WeekCard } from '../components/review';
 import { InsightPanel, type ActivityInsights } from '../components/insights';
 
 interface DashboardData {
@@ -174,9 +175,10 @@ export function Dashboard() {
           </div>
         </Card>
         <div className="flex flex-col gap-4">
-          {data.latest && (data.latest.aerobic || data.latest.efforts.length > 0 || data.latest.fitness) && (
+          {data.latest && (data.latest.aerobic || data.latest.efforts.length > 0 || data.latest.fitness || data.latest.session) && (
             <LatestCard latest={data.latest} activity={data.recent.find((a) => a.id === data.latest!.id)} />
           )}
+          <WeekCard />
           {data.nextEvent && (
             <Card title="Next goal event">
               <div className="flex items-start gap-3">

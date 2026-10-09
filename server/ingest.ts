@@ -60,7 +60,7 @@ const ACTIVITY_COLS = [
   'elevation_gain', 'avg_power', 'max_power', 'np', 'intensity', 'tss', 'tss_method', 'vi', 'ef', 'decoupling', 'work',
   'calories', 'avg_hr', 'max_hr', 'avg_cadence', 'avg_speed', 'max_speed', 'trimp', 'avg_temp', 'wbal_min', 'has_power',
   'has_hr', 'has_gps', 'trainer', 'commute', 'polyline', 'description', 'rpe', 'device', 'detailed', 'ftp_used', 'zones',
-  'best_efforts', 'laps', 'curves', 'summary',
+  'best_efforts', 'laps', 'curves', 'summary', 'session',
 ] as const;
 
 type Cols = Record<(typeof ACTIVITY_COLS)[number], unknown>;
@@ -119,6 +119,7 @@ function buildRow(input: ActivityInput): Cols {
       best_efforts: m.bestEfforts && Object.keys(m.bestEfforts).length ? JSON.stringify(m.bestEfforts) : null,
       laps: laps ? JSON.stringify(laps) : null,
       curves: JSON.stringify(m.curves),
+      session: m.session ? JSON.stringify(m.session) : null,
     };
   }
   const s = input.summary;
@@ -159,6 +160,7 @@ function buildRow(input: ActivityInput): Cols {
     best_efforts: null,
     laps: null,
     curves: null,
+    session: null,
   };
 }
 

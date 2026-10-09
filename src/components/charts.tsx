@@ -40,7 +40,8 @@ export function PmcChart({ points, events = [], height = 420, compact = false, s
     const line = (color: string, dashed = false) => ({ type: 'line' as const, showSymbol: false, smooth: 0.2, lineStyle: { width: 2, color, type: dashed ? ('dashed' as const) : ('solid' as const) }, itemStyle: { color }, emphasis: { disabled: true } });
     const panels = showTss ? 3 : 2;
     const gap = 26;
-    const top = compact ? 28 : 34;
+    // the legend gets a row of its own above the first panel's axis name (it pages on a phone)
+    const top = compact ? 44 : 50;
     const bottom = compact ? 26 : 56;
     const avail = height - top - bottom - gap * (panels - 1);
     const h1 = Math.round(avail * (showTss ? 0.5 : 0.62));
@@ -56,7 +57,7 @@ export function PmcChart({ points, events = [], height = 420, compact = false, s
       gridIndex: i,
       ...(tl ? { min: ts(points[0].date), max: ts(points[points.length - 1].date), splitNumber: 8 } : {}),
       ...axisStyle(t, { grid: false }),
-      axisLabel: { show: i === grids.length - 1, color: t.muted, fontSize: 11, hideOverlap: true, ...(tl ? { formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), 'MMM yy')) } : {}) },
+      axisLabel: { show: i === grids.length - 1, color: t.muted, fontSize: 11, hideOverlap: true, ...(tl ? { formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), "MMM ''yy")) } : {}) },
       axisLine: { show: true, lineStyle: { color: t.lineStrong } },
     }));
     const breakBands = (labels: boolean) =>

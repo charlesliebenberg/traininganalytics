@@ -30,6 +30,7 @@ import { clearDemo, isDemo, loadDemo } from './demo';
 import { syncNow, syncStatus } from './sync';
 import * as comeback from './comeback';
 import { activityInsights, aerobicTrend, latestInsights } from './aerobic';
+import { keySets, trainingReview } from './sessions';
 import { snapshot } from './snapshot';
 import { SPORTS, estimateOn, estimateState, refreshEstimates, storedHrSeries, storedSeries } from './estimates';
 import type { ThresholdSport } from '../shared/analytics/thresholds';
@@ -229,6 +230,19 @@ api.get('/activities', (c) => {
 api.get('/activities/:id/insights', (c) => {
   const r = activityInsights(Number(c.req.param('id')));
   return r ? c.json(r) : c.json({ error: 'Not found' }, 404);
+});
+
+/** A week (or the 4 or 12 weeks ending with it) in review: load, sessions, progress, signals, recovery. */
+api.get('/review', (c) => {
+  const weeks = [1, 4, 12].includes(Number(c.req.query('weeks'))) ? Number(c.req.query('weeks')) : 1;
+  const r = trainingReview(c.req.query('date') ?? today(), weeks);
+  return r ? c.json(r) : c.json({ error: 'Nothing to review yet' }, 404);
+});
+
+/** The main sets of interval and sustained sessions in a range, each against its last comparable one. */
+api.get('/sets', (c) => {
+  const { from = '0000-01-01', to = '9999-12-31' } = c.req.query();
+  return c.json(keySets(c.req.query('sport') === 'run' ? 'run' : 'ride', from, to));
 });
 
 /** Aerobic fitness through time, from heart rate (rides: power; runs: grade-adjusted pace). */

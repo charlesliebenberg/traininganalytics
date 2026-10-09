@@ -17,9 +17,9 @@ export function sessionColor(t: ReturnType<typeof useTokens>, s: SessionType): s
     recovery: alpha(t.muted, 0.55),
     endurance: t.series[0],
     tempo: t.series[3],
-    threshold: t.series[1],
-    vo2: t.series[4],
-    anaerobic: t.series[6],
+    threshold: t.series[2],
+    vo2: t.series[6],
+    anaerobic: t.series[4],
     race: t.series[7],
   };
   return map[s];

@@ -17,6 +17,8 @@ import { daysToTarget, fitCapacity, loadForTarget, ltlSeries, projectCapacity, q
 import { compareHrProfiles, hrPowerWindows, hrProfile } from './hrprofile';
 import { curveHr, fitAerobic, fitnessChange, kineticBins, outputAt, steadyWindows, WINDOW_SPECS, type AerobicActivity, type SteadyWindow } from './aerobic';
 import { rideEffortFindings, runEffortFindings, verdict } from './insights';
+import { analyzeSession, comparableSets, progression, setLabel, type SetSummary } from './session';
+import { reviewPeriod, type ReviewActivity, type ReviewInput } from './review';
 import { addDays, differenceInCalendarDays, format, parseISO } from 'date-fns';
 const iso = (d: Date) => format(d, 'yyyy-MM-dd');
 import type { Thresholds } from '../types';
@@ -611,5 +613,162 @@ describe('efforts in context', () => {
     ]);
     expect(f.find((x) => x.meters === 5000)).toMatchObject({ kind: 'best90' });
     expect(f.find((x) => x.meters === 10000)).toMatchObject({ kind: 'near' });
+  });
+});
+
+describe('session analysis', () => {
+  // blocks of [seconds, output], with seeded noise like a power meter on the road
+  const build = (blocks: [number, number][], amp = 0, seed = 7) => {
+    let r = seed;
+    return blocks.flatMap(([sec, w]) =>
+      Array.from({ length: sec }, () => {
+        r = (r * 16807) % 2147483647;
+        return Math.max(0, w + (r / 2147483647 - 0.5) * 2 * amp);
+      }),
+    );
+  };
+  // heart rate chasing output with a 30 s lag, drifting up with the work done above 250 W
+  const heart = (p: number[]) => {
+    let h = 100;
+    let drift = 0;
+    return p.map((w) => {
+      if (w > 250) drift += 0.004;
+      h += (95 + 0.22 * w + drift - h) / 30;
+      return Math.round(h);
+    });
+  };
+
+  it('finds 3 × 10 minutes at threshold as the main set and reads its execution', () => {
+    const p = build([[900, 170], [600, 300], [300, 150], [600, 303], [300, 150], [600, 297], [900, 170]], 25);
+    const a = analyzeSession({ sport: 'ride', output: p, hr: heart(p), thr: 300 })!;
+    expect(a.type).toBe('threshold');
+    expect(a.main).toMatchObject({ kind: 'reps' });
+    expect(a.main!.reps).toHaveLength(3);
+    for (const r of a.main!.reps) {
+      expect(Math.abs(r.end - r.start - 600)).toBeLessThanOrEqual(6);
+      expect(Math.abs(r.out - 300)).toBeLessThan(6);
+    }
+    expect(a.main!.rest).toBeGreaterThan(280);
+    expect(Math.abs(a.execution!.fade!)).toBeLessThan(0.03);
+    // heart rate ends each rep higher than the one before, and falls back between them
+    expect(a.execution!.hrRise!).toBeGreaterThan(1);
+    expect(a.execution!.hrDrop![0]).toBeGreaterThan(5);
+  });
+
+  it('reads 5 × 3 minutes at 115 % as VO2max work and 30/30s as short reps', () => {
+    const vo2 = build([[900, 160], ...Array.from({ length: 5 }, () => [[180, 345], [180, 140]] as [number, number][]).flat(), [600, 160]], 20);
+    expect(analyzeSession({ sport: 'ride', output: vo2, thr: 300 })).toMatchObject({ type: 'vo2', main: { kind: 'reps', reps: expect.arrayContaining([]) } });
+    expect(analyzeSession({ sport: 'ride', output: vo2, thr: 300 })!.main!.reps).toHaveLength(5);
+    const thirty = build([[900, 160], ...Array.from({ length: 10 }, () => [[30, 420], [30, 150]] as [number, number][]).flat(), [900, 160]], 15);
+    const a = analyzeSession({ sport: 'ride', output: thirty, thr: 300 })!;
+    expect(a.type).toBe('anaerobic');
+    expect(a.main!.reps.length).toBeGreaterThanOrEqual(9);
+    expect(a.main!.dur).toBeLessThan(40);
+  });
+
+  it('keeps short rises in an endurance ride from becoming a set', () => {
+    const p = build([[1800, 190], [200, 265], [600, 190], [220, 262], [2400, 195]], 30);
+    const a = analyzeSession({ sport: 'ride', output: p, thr: 300 })!;
+    expect(a.type).toBe('endurance');
+    expect(a.main).toBeNull();
+    expect(a.efforts.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('reads one long steady effort, and a pyramid as one block', () => {
+    const hour = build([[900, 170], [3600, 298], [900, 160]], 20);
+    expect(analyzeSession({ sport: 'ride', output: hour, thr: 300 })).toMatchObject({ type: 'threshold', main: { kind: 'single' } });
+    const pyramid = build([[900, 170], [1200, 282], [300, 150], [900, 305], [300, 150], [600, 320], [900, 160]], 20);
+    const a = analyzeSession({ sport: 'ride', output: pyramid, thr: 300 })!;
+    expect(a.main!.kind).toBe('ladder');
+    expect(a.main!.reps).toHaveLength(3);
+  });
+
+  it('calls a surging bunch ride a race, unless a set of reps carried it', () => {
+    // irregular surges (10–60 s at 120–180 %) between soft-pedalling and tempo, for 90 minutes
+    let r = 11;
+    const rnd = () => (r = (r * 16807) % 2147483647) / 2147483647;
+    const surges = (k: number): [number, number][] => Array.from({ length: k }, () => [[Math.round(10 + rnd() * 50), Math.round(360 + rnd() * 180)], [Math.round(30 + rnd() * 120), 120], [Math.round(30 + rnd() * 90), 255]] as [number, number][]).flat();
+    const bunch = build([[600, 180], ...surges(34), [600, 170]], 40);
+    expect(analyzeSession({ sport: 'ride', output: bunch, thr: 300 })!.type).toBe('race');
+    const withSet = build([[600, 180], ...surges(14), [600, 305], [300, 150], [600, 305], [300, 150], [600, 300], [600, 170]], 40);
+    expect(analyzeSession({ sport: 'ride', output: withSet, thr: 300 })!.type).toBe('threshold');
+  });
+
+  it('does not turn strides at the end of an easy run into intervals', () => {
+    const run = build([[1800, 2.9], ...Array.from({ length: 6 }, () => [[20, 4.6], [70, 2.2]] as [number, number][]).flat(), [300, 2.6]], 0.15);
+    const a = analyzeSession({ sport: 'run', output: run, thr: 3.6 })!;
+    expect(a.type).toBe('endurance');
+    expect(a.main).toBeNull();
+    const reps = build([[900, 2.8], ...Array.from({ length: 6 }, () => [[180, 3.9], [120, 2.3]] as [number, number][]).flat(), [600, 2.7]], 0.12);
+    expect(analyzeSession({ sport: 'run', output: reps, thr: 3.6 })).toMatchObject({ type: 'vo2', main: { kind: 'reps' } });
+  });
+});
+
+describe('session progression', () => {
+  const set = (id: number, date: string, o: Partial<SetSummary>): SetSummary => ({ id, date, type: 'threshold', kind: 'reps', reps: 3, dur: 600, out: 300, hrEnd: 175, temp: 18, kjBefore: 200, ...o });
+
+  it('compares like with like: same kind, similar dose and output', () => {
+    const base = set(1, '2026-09-01', {});
+    expect(comparableSets(base, set(2, '2026-09-08', { reps: 2 }))).toBe(true);
+    expect(comparableSets(base, set(2, '2026-09-08', { dur: 720 }))).toBe(true);
+    // 2 × 10 against 3 × 12: both more reps and longer ones
+    expect(comparableSets(set(1, '2026-09-01', { reps: 2 }), set(2, '2026-09-08', { reps: 3, dur: 720 }))).toBe(false);
+    expect(comparableSets(base, set(2, '2026-09-08', { type: 'tempo', out: 260 }))).toBe(false);
+    expect(comparableSets(base, set(2, '2026-09-08', { kind: 'single', reps: 1, dur: 2400 }))).toBe(false);
+  });
+
+  it('reads the change on the last comparable set and the rank over the year', () => {
+    const past = [set(1, '2025-08-01', { out: 330 }), set(2, '2026-06-01', { out: 285 }), set(3, '2026-08-01', { out: 296, hrEnd: 178 }), set(4, '2026-08-20', { type: 'tempo', out: 250 })];
+    const p = progression(set(5, '2026-09-10', { out: 305, hrEnd: 176 }), past)!;
+    // the 2025 set is over a year old, the tempo set is a different workout
+    expect(p.series.map((s) => s.id)).toEqual([2, 3, 5]);
+    expect(p.last!.id).toBe(3);
+    expect(p.change!).toBeCloseTo(305 / 296 - 1, 6);
+    expect(p.hrChange).toBe(-2);
+    expect(p).toMatchObject({ rank: 1, of: 3 });
+    expect(progression(set(6, '2026-09-10', {}), [])).toBeNull();
+    expect(setLabel({ kind: 'reps', reps: 3, dur: 600 })).toBe('3 × 10 min');
+    expect(setLabel({ kind: 'reps', reps: 8, dur: 150 })).toBe('8 × 2.5 min');
+    expect(setLabel({ kind: 'single', reps: 1, dur: 2400 })).toBe('40 min');
+  });
+});
+
+describe('training review', () => {
+  const act = (id: number, date: string, o: Partial<ReviewActivity> = {}): ReviewActivity => ({ id, date, sport: 'ride', name: 'Ride', moving: 5400, tss: 90, type: 'endurance', long: false, set: null, findings: [], zFitness: null, z: null, seiler: [4800, 500, 100], ...o });
+  const base = { weeks: 4, tss: 500, hours: 9, sessions: 6, hard: 1.5, long: 1, intensity: 0.12, restDays: 1.5 };
+  const input = (o: Partial<ReviewInput>): ReviewInput => ({ from: '2026-09-28', to: '2026-10-04', weeks: 1, days: 7, acts: [], baseline: base, ctl: [60, 61], atl: 65, tsb: -5, aerobic: null, ftp: null, longStreak: 0, ...o });
+
+  it('reads a week of normal load with its progress', () => {
+    const better = act(2, '2026-09-30', { type: 'threshold', tss: 110, set: { id: 2, date: '2026-09-30', type: 'threshold', kind: 'reps', reps: 3, dur: 600, out: 306, hrEnd: 176, temp: null, kjBefore: 150, change: 0.025, hrChange: -1, rank: 1, of: 4, lastDate: '2026-09-15', lastOut: 298 } });
+    const r = reviewPeriod(input({ acts: [act(1, '2026-09-28'), better, act(3, '2026-10-02'), act(4, '2026-10-04', { long: true, moving: 12600, tss: 200 })], ctl: [60, 62] }));
+    expect(r.title).toBe('build');
+    expect(r.tone).toBe('up');
+    expect(r.signals[0]).toMatchObject({ kind: 'set', tone: 'up' });
+    expect(r.notes[0]).toMatchObject({ kind: 'load', tss: 490 });
+    expect(r.notes.find((n) => n.kind === 'mix')).toMatchObject({ hard: [{ id: 2 }] });
+    expect(r.notes.find((n) => n.kind === 'long')).toBeTruthy();
+    expect(r.stats).toMatchObject({ sessions: 4, hard: 1, long: 1, restDays: 3 });
+  });
+
+  it('tells a recovery week from a jump in load, and flags heart rate running high', () => {
+    const easy = reviewPeriod(input({ acts: [act(1, '2026-09-29', { tss: 60 }), act(2, '2026-10-01', { tss: 70, type: 'recovery' }), act(3, '2026-10-03', { tss: 80 })], ctl: [62, 58] }));
+    expect(easy.title).toBe('recovery');
+    expect(easy.notes.find((n) => n.kind === 'mix')).toMatchObject({ hard: [] });
+    const jump = reviewPeriod(input({ acts: [1, 2, 3, 4, 5, 6, 7].map((d) => act(d, `2026-10-0${Math.min(d, 4)}`.replace('2026-10-0', d <= 3 ? '2026-09-2' : '2026-10-0').slice(0, 10), { tss: 120, type: d % 2 ? 'threshold' : 'endurance', z: d === 3 || d === 5 ? 1.8 : null })), ctl: [60, 70], tsb: -32 }));
+    expect(jump.title).toBe('spike');
+    expect(jump.tone).toBe('warn');
+    expect(jump.notes.find((n) => n.kind === 'hrHigh')).toMatchObject({ tone: 'warn' });
+    expect(jump.notes.find((n) => n.kind === 'form')).toMatchObject({ tone: 'warn' });
+  });
+
+  it('judges a week under way by its pace, and says nothing about missing long rides until it ends', () => {
+    // 320 TSS in three days is on course for ~750 against a usual 500
+    const r = reviewPeriod(input({ days: 3, acts: [act(1, '2026-09-28', { tss: 160 }), act(2, '2026-09-30', { tss: 160 })], longStreak: 5 }));
+    expect(r.partial).toBe(true);
+    expect(r.stats.perWeek.tss).toBeCloseTo((320 * 7) / 3, 6);
+    expect(r.title).toBe('big');
+    expect(r.notes.some((n) => n.kind === 'noLong')).toBe(false);
+    expect(reviewPeriod(input({ acts: [act(1, '2026-09-28')], longStreak: 5 })).notes.some((n) => n.kind === 'noLong')).toBe(true);
+    expect(reviewPeriod(input({ acts: [] })).title).toBe('rest');
   });
 });

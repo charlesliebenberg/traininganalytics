@@ -95,7 +95,7 @@ function HistoryChart({ sport, data, series, timeline, selected, onSelect }: { s
         max: X(lastDate) + 7 * DAY,
         ...axisStyle(t, { grid: false }),
         splitNumber: 8,
-        axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => (timeline.inBreak(v) ? '' : fmtDate(new Date(timeline.fromX(v)), 'MMM yy')) },
+        axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => (timeline.inBreak(v) ? '' : fmtDate(new Date(timeline.fromX(v)), "MMM ''yy")) },
       },
       yAxis: valueAxis(t, {
         inverse: sport !== 'ride',
@@ -559,7 +559,7 @@ function HrHistoryChart({ series, timeline }: { series: HrWeek[]; timeline: Time
         max: X(lastDate) + 7 * DAY,
         ...axisStyle(t, { grid: false }),
         splitNumber: 8,
-        axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => (timeline.inBreak(v) ? '' : fmtDate(new Date(timeline.fromX(v)), 'MMM yy')) },
+        axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => (timeline.inBreak(v) ? '' : fmtDate(new Date(timeline.fromX(v)), "MMM ''yy")) },
       },
       yAxis: valueAxis(t, { scale: true, name: 'bpm', nameTextStyle: { color: t.muted, fontSize: 10 }, axisLabel: { color: t.muted, fontSize: 11 } }),
       series: [

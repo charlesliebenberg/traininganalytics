@@ -3,6 +3,7 @@ import clsx from 'clsx';
 import type { ActivityCurves, Lap, Sport, Streams, Thresholds } from '../../../shared/types';
 import { CURVE_DURATIONS, bestWindow, fillGaps, rollingMean, toFloat } from '../../../shared/analytics/series';
 import { detectIntervals, powerHistogram, quadrantPoint, wPrimeBalance } from '../../../shared/analytics/power';
+import type { SessionAnalysis } from '../../../shared/analytics/session';
 import { movingMask } from '../../../shared/analytics/metrics';
 import { efficiencySeries } from '../../../shared/analytics/heartrate';
 import { rangeStats } from '../../../shared/analytics/range';
@@ -64,10 +65,17 @@ export function SelectionStats({ streams, range, sport, th, onClear, onZoom }: {
 // ---------- laps / intervals / splits ----------
 type SegTab = 'laps' | 'intervals' | 'splits';
 
-export function SegmentsCard({ streams, laps, sport, th, onHover, onPick, active }: { streams: Streams; laps: Lap[] | null; sport: Sport; th: Thresholds; onHover: (r: [number, number] | null) => void; onPick: (r: [number, number]) => void; active: [number, number] | null }) {
+export function SegmentsCard({ streams, laps, sport, th, session, onHover, onPick, active }: { streams: Streams; laps: Lap[] | null; sport: Sport; th: Thresholds; session?: SessionAnalysis | null; onHover: (r: [number, number] | null) => void; onPick: (r: [number, number]) => void; active: [number, number] | null }) {
   const pace = isPaceSport(sport);
   const intervals = useMemo(() => {
     const r30 = streams.watts ? rollingMean(toFloat(streams.watts), 30) : undefined;
+    // the session analysis found the work and its sets: label the main set's reps
+    if (session) {
+      const main = new Set(session.main?.reps.map((r) => r.start) ?? []);
+      let rep = 0;
+      let other = 0;
+      return session.efforts.map((e) => ({ ...rangeStats(streams, e.start, e.end, r30), name: main.has(e.start) ? `${session.main!.kind === 'reps' ? 'Rep' : 'Main'} ${++rep}` : `Effort ${++other}` }));
+    }
     // rides against FTP; runs and swims against threshold pace (running power isn't on the bike's scale)
     let src: ReturnType<typeof detectIntervals> = [];
     if (sport === 'ride') src = streams.watts && th.ftp ? detectIntervals(streams.watts, th.ftp) : [];
@@ -76,7 +84,7 @@ export function SegmentsCard({ streams, laps, sport, th, onHover, onPick, active
       src = detectIntervals(sport !== 'swim' && streams.grade ? gradeAdjustedSpeed(speed, streams.grade) : speed, sport === 'swim' ? th.swimCss : th.runThresholdSpeed);
     }
     return src.map((iv, i) => ({ ...rangeStats(streams, iv.start, iv.end, r30), name: `Interval ${i + 1}` }));
-  }, [streams, th, pace, sport]);
+  }, [streams, th, pace, sport, session]);
   const splitRows = useMemo(() => {
     if (!streams.distance) return [];
     const unit = sport === 'ride' ? 5000 : 1000;
@@ -103,7 +111,7 @@ export function SegmentsCard({ streams, laps, sport, th, onHover, onPick, active
         <Tabs value={tab} onChange={setTab} tabs={tabs} />
       </div>
       {rows.length === 0 ? (
-        <p className="px-5 py-8 text-center text-xs text-muted">{tab === 'intervals' ? 'No sustained efforts above ~88% of threshold detected.' : 'Nothing to show.'}</p>
+        <p className="px-5 py-8 text-center text-xs text-muted">{tab === 'intervals' ? `No work intervals: nothing held at ${sport === 'run' ? '88% of threshold pace' : '80% of FTP'} for 2½ minutes or more, and no hard efforts of 10 seconds or more.` : 'Nothing to show.'}</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="tnum w-full min-w-[760px] text-[13px]">

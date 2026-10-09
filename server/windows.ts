@@ -3,10 +3,14 @@ import { binsFromWindows, kineticBins, KINETIC_TAU, steadyWindows, WINDOW_SPECS,
 import type { HrBins } from '../shared/analytics/hrprofile';
 import { resample1Hz } from '../shared/analytics/series';
 import { cleanRunSpeed, gradeAdjustedSpeed } from '../shared/analytics/running';
+import { usableTemp } from '../shared/analytics/metrics';
 import { loadStreams, q, thresholdsFor } from './db';
 
 /** Activities that can be read for aerobic fitness: rides with power, runs, both with heart rate. */
 export const WINDOW_ACTIVITIES = "a.has_hr = 1 AND a.detailed = 1 AND ((a.sport = 'ride' AND a.has_power = 1) OR a.sport = 'run')";
+
+/** Bump when readings are computed differently, so cached ones are rebuilt. 2: stuck temperature sensors ignored. */
+const READINGS_VERSION = 2;
 
 export interface ActivityReadings {
   /** steady stretches */
@@ -32,7 +36,7 @@ export function computeReadings(s: Streams | null, sport: string, date: string):
   }
   if (!out) return none;
   const hr = resample1Hz(s.time, s.heartrate, n, { hold: true });
-  const temp = s.temp ? resample1Hz(s.time, s.temp, n, { hold: true }) : null;
+  const temp = usableTemp(s.temp) ? resample1Hz(s.time, s.temp!, n, { hold: true }) : null;
   const th = thresholdsFor(date);
   const sp = sport as AerobicSport;
   const lthr = sp === 'ride' ? th.lthr : th.runLthr || th.lthr;
@@ -47,11 +51,10 @@ export function computeReadings(s: Streams | null, sport: string, date: string):
 export function activityReadings(id: number, sport: string, date: string, cached: string | null): ActivityReadings {
   if (cached) {
     const c = JSON.parse(cached);
-    // an older cache held only the steady stretches
-    if (!Array.isArray(c)) return c;
+    if (c.v === READINGS_VERSION) return c;
   }
   const r = computeReadings(loadStreams(id), sport, date);
-  q.run('INSERT INTO steady_windows(activity_id, data) VALUES(?, ?) ON CONFLICT(activity_id) DO UPDATE SET data = excluded.data', id, JSON.stringify(r));
+  q.run('INSERT INTO steady_windows(activity_id, data) VALUES(?, ?) ON CONFLICT(activity_id) DO UPDATE SET data = excluded.data', id, JSON.stringify({ v: READINGS_VERSION, ...r }));
   return r;
 }
 
@@ -60,9 +63,9 @@ export function activityHrBins(id: number, sport: string, date: string, cached: 
   return binsFromWindows(activityReadings(id, sport, date, cached).windows);
 }
 
-/** Fill the cache for activities that don't have it yet (or have the older form), yielding between batches. */
+/** Fill the cache for activities that don't have it yet (or have an older form), yielding between batches. */
 export async function warmWindows(): Promise<number> {
-  const rows = q.all(`SELECT a.id, a.sport, a.local_date FROM activities a LEFT JOIN steady_windows w ON w.activity_id = a.id WHERE (w.activity_id IS NULL OR substr(w.data, 1, 1) = '[') AND ${WINDOW_ACTIVITIES}`);
+  const rows = q.all(`SELECT a.id, a.sport, a.local_date FROM activities a LEFT JOIN steady_windows w ON w.activity_id = a.id WHERE (w.activity_id IS NULL OR w.data NOT LIKE '{"v":${READINGS_VERSION},%') AND ${WINDOW_ACTIVITIES}`);
   for (let i = 0; i < rows.length; i++) {
     activityReadings(rows[i].id as number, rows[i].sport as string, rows[i].local_date as string, null);
     if (i % 10 === 9) await new Promise((r) => setImmediate(r));

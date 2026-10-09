@@ -205,8 +205,10 @@ export async function refreshEstimates(opts: { force?: boolean } = {}): Promise<
  *      gated decoupling; FTP floors; heart-rate thresholds
  *  3 — GPS found south of the equator (routes, heatmap); decoupling only when the halves'
  *      output is within 5 %
+ *  4 — session analysis (what each session was, its sets and how they went); temperature
+ *      ignored from a sensor stuck on one value
  */
-const METRICS_VERSION = 3;
+const METRICS_VERSION = 4;
 
 /** Rebuild every activity if the metrics changed since they were stored; then refresh estimates. */
 export async function upgradeMetrics(): Promise<boolean> {

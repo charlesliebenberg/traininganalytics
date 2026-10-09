@@ -42,6 +42,8 @@ const MODEL_DURATIONS = [180, 300, 600, 1200];
 const RUN_KEYS = ['1k', '5k', '10k', 'hm'];
 /** within 3 % of the 90-day best counts as close */
 const NEAR = 0.97;
+/** a 90-day best has to beat the last one by this much: a second on a GPS 5 km is noise */
+const MARGIN = 1.005;
 /** durability needs this many earlier rides that went that deep, or there's nothing to compare with */
 const MIN_DEEP_RIDES = 3;
 
@@ -62,7 +64,7 @@ export function rideEffortFindings(cur: RideHistory, history: RideHistory[], mod
     const ever = maxOf(before.map((h) => h.power?.[idx(d)]));
     const best90 = maxOf(recent.map((h) => h.power?.[idx(d)]));
     if (ever && v > ever) out.push({ kind: 'pb', duration: d, value: v, ref: ever });
-    else if (best90 && v > best90) out.push({ kind: 'best90', duration: d, value: v, ref: best90 });
+    else if (best90 && v > best90 * MARGIN) out.push({ kind: 'best90', duration: d, value: v, ref: best90 });
     else if (best90 && v >= NEAR * best90) out.push({ kind: 'near', duration: d, value: v, ref: best90 });
   }
   // durability: the deepest point into a ride where this one beat the last 90 days
@@ -73,7 +75,7 @@ export function rideEffortFindings(cur: RideHistory, history: RideHistory[], mod
       const deep = before.filter((h) => within(h.date, cur.date, 365) && h.fatigue?.[kj]?.[idx(d)]);
       if (deep.length < MIN_DEEP_RIDES) continue;
       const best90 = maxOf(recent.map((h) => h.fatigue?.[kj]?.[idx(d)]));
-      if (best90 && v > best90) {
+      if (best90 && v > best90 * MARGIN) {
         out.push({ kind: 'durability', duration: d, kj: Number(kj), value: v, ref: best90 });
         break;
       }
@@ -105,7 +107,7 @@ export function runEffortFindings(cur: RunHistory, history: RunHistory[]): Effor
     const ever = minOf(before, key);
     const best90 = minOf(recent, key);
     if (Number.isFinite(ever) && v < ever) out.push({ kind: 'pb', meters, value: v, ref: ever });
-    else if (Number.isFinite(best90) && v < best90) out.push({ kind: 'best90', meters, value: v, ref: best90 });
+    else if (Number.isFinite(best90) && v < best90 / MARGIN) out.push({ kind: 'best90', meters, value: v, ref: best90 });
     else if (Number.isFinite(best90) && v <= best90 / NEAR) out.push({ kind: 'near', meters, value: v, ref: best90 });
   }
   return out.sort((a, b) => RANK[a.kind] - RANK[b.kind] || (b.meters ?? 0) - (a.meters ?? 0)).slice(0, 3);
@@ -119,25 +121,44 @@ export interface Verdict {
   title: string;
 }
 
+/** The main set against the last comparable one (see session.ts). */
+export interface SetEvidence {
+  label: string;
+  sport: string;
+  /** output against the last comparable set, fraction */
+  change: number | null;
+  /** end-of-rep heart rate against it, bpm */
+  hrChange: number | null;
+  rank: number;
+  of: number;
+}
+
 /**
  * One line for the activity: the strongest sign in either direction. Aerobic evidence is two
  * surprise scores (negative = a lower heart-rate cost than predicted): against fitness alone,
  * and against everything expected (fitness plus the condition of recent days). Efforts are
- * the findings above.
+ * the findings above; the set is the session's main set against the last time it was done.
  */
-export function verdict(aerobic: { z: number | null; zFitness: number | null } | null, efforts: EffortFinding[]): Verdict {
+export function verdict(aerobic: { z: number | null; zFitness: number | null } | null, efforts: EffortFinding[], set: SetEvidence | null = null): Verdict {
   const zf = aerobic?.zFitness ?? null;
   const z = aerobic?.z ?? null;
   const has = (k: EffortKind, minDuration = 0) => efforts.some((e) => e.kind === k && (e.duration ?? Infinity) >= minDuration);
+  const ch = set?.change ?? null;
+  const output = set?.sport === 'run' ? 'pace' : 'power';
   if (has('pb', 60)) return { tone: 'up', title: 'A new best' };
   if (has('model')) return { tone: 'up', title: 'Beyond what your model expected' };
+  if (set && ch != null && set.rank === 1 && set.of >= 3 && ch > 0) return { tone: 'up', title: `Your best ${set.label} in a year` };
   if (zf != null && zf <= -1.5) return { tone: 'up', title: 'Fitter than your recent level' };
+  if (ch != null && ch >= 0.02 && (set!.hrChange == null || set!.hrChange <= 2)) return { tone: 'up', title: 'Stronger than last time' };
   if (has('best90', 300) || has('durability')) return { tone: 'up', title: 'Best of the last 90 days' };
+  if (ch != null && Math.abs(ch) < 0.02 && set!.hrChange != null && set!.hrChange <= -3) return { tone: 'up', title: `Same ${output}, lower heart rate` };
   if ((zf != null && zf <= -1) || (z != null && z <= -1.5)) return { tone: 'up', title: 'Better than expected' };
   if ((zf != null && zf >= 1.5) || (z != null && z >= 1.5)) return { tone: 'down', title: 'Heart rate ran high for the effort' };
   if (has('best90') || has('near')) return { tone: 'flat', title: 'Close to your best' };
+  if (ch != null && ch <= -0.04) return { tone: 'flat', title: `Below your last ${set!.label}` };
   if (zf != null && zf <= -0.5) return { tone: 'flat', title: 'A good day for your fitness' };
   if (zf != null && zf >= 0.5) return { tone: 'flat', title: 'A little below your fitness' };
   if (zf != null) return { tone: 'flat', title: 'In line with your fitness' };
+  if (ch != null) return { tone: 'flat', title: `On par with your last ${set!.label}` };
   return { tone: 'none', title: 'Nothing here to judge fitness by' };
 }

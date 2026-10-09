@@ -195,7 +195,7 @@ export function ActivityDetail() {
       </div>
 
       {/* what it says about fitness: heart-rate evidence and efforts in context */}
-      {insights.data && (insights.data.aerobic || insights.data.efforts.length > 0) && (
+      {insights.data && (insights.data.aerobic || insights.data.efforts.length > 0 || insights.data.session) && (
         <Card className="mt-4" title={`What this ${a.sport === 'run' ? 'run' : a.sport === 'ride' ? 'ride' : 'session'} says`}>
           <InsightPanel insights={insights.data} />
         </Card>
@@ -264,7 +264,7 @@ export function ActivityDetail() {
           )}
 
           <div className="mt-4">
-            <SegmentsCard streams={s} laps={a.laps} sport={a.sport} th={th} onHover={setHoverRange} onPick={pick} active={selection} />
+            <SegmentsCard streams={s} laps={a.laps} sport={a.sport} th={th} session={a.session} onHover={setHoverRange} onPick={pick} active={selection} />
           </div>
 
           <div className="mt-4 grid gap-4 xl:grid-cols-2">

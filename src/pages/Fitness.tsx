@@ -50,7 +50,7 @@ function MonotonyChart({ points }: { points: PmcPoint[] }) {
     const tl = gaps.length ? makeTimeline(gaps) : null;
     const x = actual.map((p) => (tl ? tl.toX(parseISO(p.date).getTime()) : parseISO(p.date).getTime()));
     const span = x.length ? x[x.length - 1] - x[0] : 0;
-    const label = (v: number) => (tl?.inBreak(v) ? '' : fmtDate(new Date(tl ? tl.fromX(v) : v), span > 300 * 86400_000 ? 'MMM yy' : 'd MMM'));
+    const label = (v: number) => (tl?.inBreak(v) ? '' : fmtDate(new Date(tl ? tl.fromX(v) : v), span > 300 * 86400_000 ? "MMM ''yy" : 'd MMM'));
     const bands = tl
       ? { markArea: { silent: true, itemStyle: { color: alpha(t.muted, 0.1) }, label: { show: false }, data: tl.breaks.map((g) => [{ xAxis: g.x0, name: `${monthsText(g.days)} off` }, { xAxis: g.x1 }]) } }
       : {};

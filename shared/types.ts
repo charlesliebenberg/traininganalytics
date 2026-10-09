@@ -1,4 +1,5 @@
 // Domain types shared by server and client.
+import type { SessionAnalysis, SessionType } from './analytics/session';
 
 export type Sport =
   | 'ride'
@@ -141,6 +142,11 @@ export interface Activity {
   bestEfforts: Record<string, number> | null;
   laps: Lap[] | null;
   plannedId: number | null;
+  /** what the session was and how it went (detail only) */
+  session?: SessionAnalysis | null;
+  /** its kind, and whether it was long for the sport (lists too) */
+  sessionType?: SessionType | null;
+  sessionLong?: boolean;
 }
 
 export interface ActivityDetail extends Activity {

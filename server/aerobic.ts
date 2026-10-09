@@ -5,6 +5,8 @@ import { getPreferences, q } from './db';
 import { pmc, today } from './aggregate';
 import { storedSeries } from './estimates';
 import { activityReadings, WINDOW_ACTIVITIES, warmWindows } from './windows';
+import { setProgression, type SetProgress } from './sessions';
+import { setLabel, type SessionAnalysis } from '../shared/analytics/session';
 
 const DAY = 86400000;
 const cache: Partial<Record<AerobicSport, { key: string; fit: AerobicFit | null }>> = {};
@@ -96,6 +98,39 @@ function trendTo(fit: AerobicFit, k: number, days: number) {
   return { pct: (v1 / v0 - 1) * 100, sdPct: d.sd * perBpm * 100, from: fit.points[then].date, fromValue: round(fit.model.sport, v0) };
 }
 
+/**
+ * Aerobic fitness change across a period: from the last reading before it (in the same stretch
+ * of training) to the last reading in it, as % of output with a ±1 sd. Null without a reading
+ * in the period.
+ */
+export function aerobicChange(sport: AerobicSport, from: string, to: string) {
+  const fit = aerobicFit(sport);
+  if (!fit) return null;
+  let j = -1;
+  let i = -1;
+  let n = 0;
+  fit.points.forEach((p, k) => {
+    if (p.date <= to) j = k;
+    if (p.date < from) i = k;
+    if (p.date >= from && p.date <= to) n++;
+  });
+  if (!n || j < 0) return null;
+  i = Math.max(i, stretchStart(fit, j));
+  if (i >= j) return null;
+  const d = fitnessChange(fit, i, j);
+  if (!d) return null;
+  const v0 = outputAt(fit.model, fit.points[i].smooth.fitness.mean);
+  const v1 = outputAt(fit.model, fit.points[j].smooth.fitness.mean);
+  const perBpm = outputAt(fit.model, fit.points[j].smooth.fitness.mean - 1) / v1 - 1;
+  return { sport, pct: (v1 / v0 - 1) * 100, sdPct: d.sd * perBpm * 100, readings: n };
+}
+
+/** Each activity's surprise scores, by id (for reviews). */
+export function aerobicScores(sport: AerobicSport): Map<number, { z: number | null; zFitness: number | null }> {
+  const fit = aerobicFit(sport);
+  return new Map((fit?.points ?? []).map((p) => [p.id, { z: p.z, zFitness: p.zFitness }]));
+}
+
 /** {value, lo, hi} → {fitness, lo, hi} for trend points. */
 const prefix = (b: { value: number; lo: number; hi: number }) => ({ fitness: b.value, lo: b.lo, hi: b.hi });
 
@@ -149,11 +184,15 @@ export interface ActivityInsights {
   efforts: EffortFinding[];
   /** form going into the day, for context */
   tsb: number | null;
+  /** what the session was and how it went */
+  session: SessionAnalysis | null;
+  /** its main set against the comparable sets of the year before */
+  set: SetProgress | null;
 }
 
 /** Everything an activity says about fitness: heart-rate evidence and efforts in context. */
 export function activityInsights(id: number): ActivityInsights | null {
-  const a = q.get('SELECT id, sport, local_date, curves, best_efforts, has_hr, has_power, intensity, vi FROM activities WHERE id = ?', id);
+  const a = q.get('SELECT id, sport, local_date, curves, best_efforts, has_hr, has_power, intensity, vi, session FROM activities WHERE id = ?', id);
   if (!a) return null;
   const date = a.local_date as string;
   const sport = a.sport === 'ride' || a.sport === 'run' ? (a.sport as AerobicSport) : null;
@@ -186,7 +225,10 @@ export function activityInsights(id: number): ActivityInsights | null {
     efforts = runEffortFindings({ date, efforts: JSON.parse(a.best_efforts as string) }, history);
   }
   const tsb = pmc(date, date).pop()?.tsb ?? null;
-  return { verdict: verdict(aerobic, efforts), aerobic, unread, efforts, tsb };
+  const session = a.session ? (JSON.parse(a.session as string) as SessionAnalysis) : null;
+  const set = session?.main ? setProgression(id, a.sport as string) : null;
+  const evidence = set && set.change != null ? { label: setLabel(set.current), sport: a.sport as string, change: set.change, hrChange: set.hrChange, rank: set.rank, of: set.of } : null;
+  return { verdict: verdict(aerobic, efforts, evidence), aerobic, unread, efforts, tsb, session, set };
 }
 
 /**

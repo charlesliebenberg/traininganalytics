@@ -40,7 +40,7 @@ export function Year({ peak, months }: { peak: PeakCard; months: Months | undefi
       legend: { ...legendStyle(t), data: GROUPS },
       title: panels.map((p, i) => ({ text: p.title, left: i === 0 ? 44 : `${split + 2}%`, top: 30, textStyle: { color: t.ink2, fontSize: 12, fontWeight: 500 } })),
       tooltip: { trigger: 'axis', ...tooltipStyle(t), axisPointer: { type: 'shadow', shadowStyle: { color: alpha(t.muted, 0.08) } }, formatter: (ps: any) => tip(panels[ps[0].axisIndex].rows[ps[0].dataIndex]) },
-      xAxis: panels.map((p, i) => ({ type: 'category', gridIndex: i, data: p.rows.map((r) => fmtDate(`${r.month}-01`, 'MMM yy')), ...axisStyle(t, { grid: false }), axisLabel: { color: t.muted, fontSize: 10, hideOverlap: true } })),
+      xAxis: panels.map((p, i) => ({ type: 'category', gridIndex: i, data: p.rows.map((r) => fmtDate(`${r.month}-01`, "MMM ''yy")), ...axisStyle(t, { grid: false }), axisLabel: { color: t.muted, fontSize: 10, hideOverlap: true } })),
       yAxis: panels.map((_, i) => valueAxis(t, { gridIndex: i, max: Math.ceil(max / 5) * 5, interval: 5, axisLabel: { show: i === 0, color: t.muted, fontSize: 11 } })),
       series: panels.flatMap((p, i) =>
         GROUPS.map((g, z) => ({
