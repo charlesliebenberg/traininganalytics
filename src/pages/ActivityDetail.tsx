@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, ExternalLink, Pencil, Trash2, Check } from 'lucide-react';
 import type { ActivityDetail as Detail, PlannedWorkout, Sport } from '../../shared/types';
 import { http, useAction, useApi } from '../lib/api';
@@ -66,6 +66,23 @@ export function ActivityDetail() {
   const [zoom, setZoom] = useState<[number, number] | null>(null);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState('');
+  // opened from a best effort: select it, zoom to it with some context, and scroll it into view
+  const [params] = useSearchParams();
+  const sel = params.get('sel');
+  const hasStreams = !!a?.streams;
+  useEffect(() => {
+    const n = a?.streams?.time.length;
+    if (!n || !sel) return;
+    const [s0, s1] = sel.split(',').map(Number);
+    if (!(s1 > s0) || s0 < 0) return;
+    const pad = Math.max(60, Math.round((s1 - s0) * 0.5));
+    setSelection([s0, Math.min(n, s1)]);
+    setZoom([Math.max(0, s0 - pad), Math.min(n - 1, s1 + pad)]);
+    const timer = setTimeout(() => document.getElementById('streams')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 250);
+    return () => clearTimeout(timer);
+    // once per activity and link — not again when the activity refetches (after a rename)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [a?.id, hasStreams, sel]);
 
   const update = useAction((b: Record<string, unknown>) => http(`/activities/${id}`, { method: 'PATCH', json: b }));
   const del = useAction(() => http(`/activities/${id}`, { method: 'DELETE' }), { onSuccess: () => nav('/activities') });
@@ -215,7 +232,7 @@ export function ActivityDetail() {
         </Card>
       ) : (
         <>
-          <div className={`mt-4 grid gap-4 ${hasGps ? 'xl:grid-cols-[minmax(0,1fr)_420px]' : ''}`}>
+          <div id="streams" className={`mt-4 grid scroll-mt-4 gap-4 ${hasGps ? 'xl:grid-cols-[minmax(0,1fr)_420px]' : ''}`}>
             <Card
               pad={false}
               title="Data streams"

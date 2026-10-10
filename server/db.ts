@@ -374,10 +374,14 @@ export function getCurves(id: number): ActivityCurves | null {
   return r ? json<ActivityCurves>(r.curves) : null;
 }
 
+/** Listeners told when an activity's streams are saved again (caches built from them go stale). */
+export const streamEvents = { onSaved: [] as ((activityId: number) => void)[] };
+
 export function saveStreams(activityId: number, streams: Streams) {
   const blob = gzipSync(Buffer.from(JSON.stringify(streams)));
   q.run('INSERT INTO streams(activity_id, data) VALUES(?, ?) ON CONFLICT(activity_id) DO UPDATE SET data = excluded.data', activityId, blob);
   q.run('DELETE FROM steady_windows WHERE activity_id = ?', activityId);
+  for (const f of streamEvents.onSaved) f(activityId);
 }
 
 export function loadStreams(activityId: number): Streams | null {

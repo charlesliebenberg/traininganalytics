@@ -129,17 +129,20 @@ export function StreamsChart({ streams, channels, xMode, highlight, onHover, onS
     return lo;
   };
 
-  useEffect(() => {
-    if (zoom) {
-      const x0 = xRaw[zoom[0]];
-      const x1 = xRaw[Math.min(n - 1, zoom[1])];
-      const span = xRaw[n - 1] - xRaw[0] || 1;
-      zoomRef.current = { start: Math.max(0, ((x0 - xRaw[0]) / span) * 100 - 1), end: Math.min(100, ((x1 - xRaw[0]) / span) * 100 + 1) };
-    } else zoomRef.current = { start: 0, end: 100 };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zoom]);
+  // a new zoom request applies at once (it used to wait for the next re-render); otherwise the
+  // chart keeps wherever the athlete scrolled it
+  const appliedZoom = useRef<[number, number] | null | undefined>(undefined);
 
   const { option, height } = useMemo(() => {
+    if (zoom !== appliedZoom.current) {
+      appliedZoom.current = zoom;
+      if (zoom) {
+        const x0 = xRaw[zoom[0]];
+        const x1 = xRaw[Math.min(n - 1, zoom[1])];
+        const span = xRaw[n - 1] - xRaw[0] || 1;
+        zoomRef.current = { start: Math.max(0, ((x0 - xRaw[0]) / span) * 100 - 1), end: Math.min(100, ((x1 - xRaw[0]) / span) * 100 + 1) };
+      } else zoomRef.current = { start: 0, end: 100 };
+    }
     const ds = downsample(xRaw as number[], channels.map((c) => c.values));
     let top = 22;
     const gap = 26;

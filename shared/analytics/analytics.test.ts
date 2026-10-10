@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CURVE_DURATIONS, meanMax, resample1Hz } from './series';
+import { CURVE_DURATIONS, bestWindow, meanMax, resample1Hz } from './series';
 import { detectIntervals, fatigueCurves, normalizedPower, npCurve, wPrimeBalance, matchesBurned } from './power';
 import { fitCp2, fitPowerDuration, ompd } from './models';
 import { computePmc, dailyTssForCtl, formZone } from './pmc';
@@ -770,5 +770,21 @@ describe('training review', () => {
     expect(r.notes.some((n) => n.kind === 'noLong')).toBe(false);
     expect(reviewPeriod(input({ acts: [act(1, '2026-09-28')], longStreak: 5 })).notes.some((n) => n.kind === 'noLong')).toBe(true);
     expect(reviewPeriod(input({ acts: [] })).title).toBe('rest');
+  });
+});
+
+describe('best window of any length', () => {
+  it('matches the mean-max curve and finds where the effort was', () => {
+    let r = 3;
+    const p = Array.from({ length: 4000 }, (_, i) => {
+      r = (r * 16807) % 2147483647;
+      return Math.round(180 + (r / 2147483647) * 120 + (i >= 1500 && i < 1950 ? 160 : 0));
+    });
+    for (const d of [1, 5, 60, 450, 1200, 3999, 4000]) expect(bestWindow(p, d)!.value).toBeCloseTo(meanMax(p, [d])[0]!, 9);
+    // the 7½ minutes at +160 W, found where they were
+    const w = bestWindow(Uint16Array.from(p), 450)!;
+    expect(w.start).toBe(1500);
+    expect(bestWindow(p, 4001)).toBeNull();
+    expect(bestWindow(p, 0)).toBeNull();
   });
 });

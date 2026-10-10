@@ -12,6 +12,7 @@ import { startScheduler } from './sync';
 import { ingestEvents } from './ingest';
 import { scheduleEstimateRefresh, upgradeMetrics } from './estimates';
 import { warmAerobic } from './aerobic';
+import { warmEffortSeries } from './efforts';
 import { log } from './db';
 
 const app = new Hono();
@@ -61,6 +62,9 @@ function scheduleWarm() {
   if (warmTimer) clearTimeout(warmTimer);
   warmTimer = setTimeout(() => {
     warmTimer = null;
-    warmAerobic().catch((e) => log(null, 'error', `Aerobic model failed: ${(e as Error).message}`));
+    warmAerobic()
+      .catch((e) => log(null, 'error', `Aerobic model failed: ${(e as Error).message}`))
+      .then(() => warmEffortSeries())
+      .catch((e) => log(null, 'error', `Best-effort series failed: ${(e as Error).message}`));
   }, 8000);
 }

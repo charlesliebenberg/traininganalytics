@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom';
 import { Bike, Footprints, Mountain, Flame, Zap, Gauge } from 'lucide-react';
 import { useApi } from '../lib/api';
 import { Card, PageHeader, Spinner, Empty } from '../components/ui';
+import { BestEffortsCard } from '../components/efforts';
 import { fmtDate, fmtDistance, fmtDurLabel, fmtDuration, fmtElevation, fmtNum, fmtPace } from '../lib/format';
 
 interface Rec {
@@ -36,8 +37,9 @@ export function Records() {
   const runYears = [...data.runYears].reverse();
   return (
     <div>
-      <PageHeader title="Records" subtitle="Personal bests across every activity, by year" />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <PageHeader title="Records" subtitle="Your best efforts for any duration, all of them ranked, and personal bests by year" />
+      <BestEffortsCard />
+      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         {HIGHLIGHTS.map(({ key, label, icon: Icon, fmt }) => {
           const r = data.highlights[key];
           return (

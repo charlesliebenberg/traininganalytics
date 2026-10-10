@@ -13,6 +13,6 @@ export default defineConfig({
     chunkSizeWarningLimit: 1500,
   },
   test: {
-    include: ['shared/**/*.test.ts', 'server/**/*.test.ts'],
+    include: ['shared/**/*.test.ts', 'server/**/*.test.ts', 'src/lib/**/*.test.ts'],
   },
 } as any);

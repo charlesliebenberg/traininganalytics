@@ -132,18 +132,19 @@ export function meanMax(values: ArrayLike<number>, durations: number[] = CURVE_D
   });
 }
 
-/** Mean-max for a single duration, also returning the start index of the best window. */
+/** Mean-max for a single duration, also returning the start index of the best window (a running sum: no allocation). */
 export function bestWindow(values: ArrayLike<number>, d: number): { value: number; start: number } | null {
   const n = values.length;
   if (d > n || d <= 0) return null;
-  const ps = prefixSums(values);
-  let best = -Infinity;
+  let sum = 0;
+  for (let i = 0; i < d; i++) sum += values[i];
+  let best = sum;
   let start = 0;
-  for (let i = 0; i + d <= n; i++) {
-    const s = ps[i + d] - ps[i];
-    if (s > best) {
-      best = s;
-      start = i;
+  for (let i = d; i < n; i++) {
+    sum += values[i] - values[i - d];
+    if (sum > best) {
+      best = sum;
+      start = i - d + 1;
     }
   }
   return { value: best / d, start };

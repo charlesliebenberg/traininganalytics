@@ -106,3 +106,27 @@ export const TSS_METHOD_LABEL: Record<string, string> = {
 };
 
 export const iso = (d: Date) => format(d, 'yyyy-MM-dd');
+
+/**
+ * Read a duration the way people type one: "7:30", "1:05:00", "45s", "20m", "1h20", "1h 20m",
+ * "90s"; a bare number is minutes ("20" = 20 minutes).
+ */
+export function parseDuration(text: string): number | null {
+  const s = text.trim().toLowerCase().replace(/\s+/g, '');
+  if (!s) return null;
+  if (/^\d+(:\d{1,2}){1,2}$/.test(s)) return s.split(':').reduce((t, p) => t * 60 + Number(p), 0) || null;
+  const m = s.match(/^(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m(?:in)?)?(?:(\d+(?:\.\d+)?)s(?:ec)?)?$/);
+  if (m && (m[1] || m[2] || m[3])) return Math.round((Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0))) || null;
+  const hm = s.match(/^(\d+)h(\d{1,2})$/);
+  if (hm) return Number(hm[1]) * 3600 + Number(hm[2]) * 60;
+  if (/^\d+(\.\d+)?$/.test(s)) return Math.round(Number(s) * 60) || null;
+  return null;
+}
+
+/** "7 min 30 s", "1 h 20 min", "45 s" */
+export function durWords(sec: number): string {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return [h && `${h} h`, m && `${m} min`, s && `${s} s`].filter(Boolean).join(' ') || '0 s';
+}

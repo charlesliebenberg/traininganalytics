@@ -31,6 +31,7 @@ import { syncNow, syncStatus } from './sync';
 import * as comeback from './comeback';
 import { activityInsights, aerobicTrend, latestInsights } from './aerobic';
 import { keySets, trainingReview } from './sessions';
+import { topEfforts, type EffortMetric } from './efforts';
 import { snapshot } from './snapshot';
 import { SPORTS, estimateOn, estimateState, refreshEstimates, storedHrSeries, storedSeries } from './estimates';
 import type { ThresholdSport } from '../shared/analytics/thresholds';
@@ -243,6 +244,15 @@ api.get('/review', (c) => {
 api.get('/sets', (c) => {
   const { from = '0000-01-01', to = '9999-12-31' } = c.req.query();
   return c.json(keySets(c.req.query('sport') === 'run' ? 'run' : 'ride', from, to));
+});
+
+/** Every activity's best effort of any duration (seconds), ranked: power for rides, pace for runs, or heart rate. */
+api.get('/efforts', (c) => {
+  const metric = (['power', 'pace', 'hr'].includes(c.req.query('metric') ?? '') ? c.req.query('metric') : 'power') as EffortMetric;
+  const duration = Number(c.req.query('duration'));
+  if (!Number.isFinite(duration) || duration < 1 || duration > 12 * 3600) return c.json({ error: 'duration must be 1 s to 12 h' }, 400);
+  const { from = '0000-01-01', to = '9999-12-31' } = c.req.query();
+  return c.json(topEfforts(metric, duration, from, to));
 });
 
 /** Aerobic fitness through time, from heart rate (rides: power; runs: grade-adjusted pace). */
