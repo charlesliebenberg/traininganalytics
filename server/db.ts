@@ -222,7 +222,7 @@ const COVER_DAYS = 182;
  * the 6-month window, the first estimate after it, as long as its window covers the date:
  * the first rides back otherwise get the fitness from before the break (an FTP years old).
  */
-function estimateAt(sport: string, date: string, allowBackfill: boolean): EstimateRow | null {
+export function estimateAt(sport: string, date: string, allowBackfill: boolean): EstimateRow | null {
   const list = estimatesFor(sport);
   if (!list.length) return null;
   let i = -1;

@@ -4,10 +4,10 @@
  * activities so TSS and zones use the threshold that was true at the time.
  */
 import { addDays, format, parseISO, startOfWeek, subDays } from 'date-fns';
-import { estimateHrThresholds, estimateThreshold, limitDeclines, WINDOW_DAYS, type HrThresholds, type ThresholdEstimate, type ThresholdSport } from '../shared/analytics/thresholds';
+import { estimateHrThresholds, estimateThreshold, limitDeclines, WINDOW_DAYS, type FtpEstimate, type HrThresholds, type ThresholdEstimate, type ThresholdSport } from '../shared/analytics/thresholds';
 import { CURVE_DURATIONS } from '../shared/analytics/series';
 import { aggregateCurve, curvesInRange } from './aggregate';
-import { getPreferences, getSetting, log, q, resetEstimateCache, setSetting, transaction } from './db';
+import { estimateAt, getPreferences, getSetting, log, manualThresholds, q, resetEstimateCache, setSetting, transaction } from './db';
 import { recalculate, recalculateAsync } from './ingest';
 
 export const SPORTS: ThresholdSport[] = ['ride', 'run', 'swim'];
@@ -98,6 +98,23 @@ export const storedHrSeries = (): HrEstimate[] => q.all("SELECT data FROM thresh
 
 export function storedSeries(sport: ThresholdSport): ThresholdEstimate[] {
   return q.all('SELECT data FROM threshold_estimates WHERE sport = ? ORDER BY date', sport).map((r) => JSON.parse(r.data));
+}
+
+const brief = (e: ThresholdEstimate): FtpEstimate => ({ date: e.date, threshold: e.threshold, raw: e.raw, cp: e.cp, basis: e.basis ?? 'cp', effort: e.effort });
+
+/**
+ * The automatic FTP in effect on `date` and what set it — and next week's, when it will be
+ * different: a new best effort shows straight away, though it only applies from Monday.
+ */
+export function ftpEstimates(date: string): { now: FtpEstimate | null; next: FtpEstimate | null } {
+  if (!getPreferences().autoThresholds.ride) return { now: null, next: null };
+  const s = storedSeries('ride');
+  const at = estimateAt('ride', date, !manualThresholds(date));
+  const now = at ? s.find((e) => e.date === at.date) : undefined;
+  const next = s.find((e) => e.date > date && e.date > (now?.date ?? ''));
+  // a change worth a mention: half a percent, as for recalculating activities
+  const moves = next && (!now || Math.abs(next.threshold - now.threshold) / now.threshold > 0.005);
+  return { now: now ? brief(now) : null, next: next && moves ? brief(next) : null };
 }
 
 const state = { running: false, pending: false, timer: null as NodeJS.Timeout | null, lastRun: null as string | null };

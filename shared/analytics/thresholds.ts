@@ -17,6 +17,9 @@
  *      effort scores highest — three genuinely maximal efforts, spread out enough to pin
  *      down both the slope (CP / CS) and the intercept (W′ / D′).
  *   4. Least-squares line through those three points → CP and W′ (or CS and D′).
+ *   5. FTP is 96 % of CP, but never below an effort actually sustained: 95 % of the best
+ *      20 minutes, or any 30–60 minute effort scaled to an hour (98 % of 40 minutes, the
+ *      best hour in full).
  */
 import { CURVE_DURATIONS, linreg } from './series';
 import { nelderMead } from './models';
@@ -49,12 +52,26 @@ export interface ThresholdEstimate {
   threshold: number;
   /** threshold straight from this window's fit */
   raw: number;
-  /** which rule set the FTP: the CP fit, 95 % of the best 20 min, or the best 60 min */
-  basis?: 'cp' | '20min' | '60min';
+  /**
+   * which rule set the FTP: the CP fit, or an effort it can't sit below — 95 % of the best
+   * 20 min, a 30–50 min effort scaled to an hour, or the best hour
+   */
+  basis?: 'cp' | '20min' | 'long' | '60min';
+  /** the effort behind a floor */
+  effort?: FtpEffort;
   r2: number;
   points: EffortPoint[];
   /** number of activities with curve data in the window */
   activities: number;
+}
+
+export interface FtpEffort {
+  /** duration, s */
+  t: number;
+  /** best power for that duration in the window, W */
+  value: number;
+  activityId: number | null;
+  date: string | null;
 }
 
 export const ESTIMATE_CONFIG: Record<ThresholdSport, { tMin: number; tMax: number; factor: number; min: number; max: number; label: string }> = {
@@ -89,6 +106,39 @@ export function limitDeclines<T extends { date: string; raw: number; threshold: 
   });
 }
 export const MIN_ACTIVITIES = 4;
+
+/** The classic field test's ratio (an hour ≈ 95 % of 20 minutes) as a power law in time. */
+const HOUR_EXPONENT = Math.log(1 / 0.95) / Math.log(3);
+/**
+ * An hour's power from an all-out effort of `t` seconds (up to an hour): 20 min × 0.95,
+ * 30 min × 0.968, 40 min × 0.981, the hour itself in full.
+ */
+export const hourPower = (power: number, t: number) => power * Math.min(1, t / 3600) ** HOUR_EXPONENT;
+/** Efforts this long, scaled to an hour, are floors for FTP (besides the best 20 min), s. */
+export const LONG_EFFORTS: [number, number] = [1800, 3600];
+
+/** An FTP estimate in brief: its value, and the rule (and effort) that set it. */
+export type FtpEstimate = Pick<ThresholdEstimate, 'date' | 'threshold' | 'raw' | 'cp' | 'basis' | 'effort'>;
+
+/**
+ * The rule that set an automatic FTP, in words: "98% of 40 min", or in full "98% of your
+ * best 40 minutes (311 W)" (`date` adds when it was ridden). Given the applied threshold, a
+ * value held up by the decline limit says so.
+ */
+export function ftpBasisText(e: Pick<ThresholdEstimate, 'basis'> & Partial<Pick<ThresholdEstimate, 'effort' | 'cp' | 'raw' | 'threshold'>>, opts: { full?: boolean; date?: (d: string) => string } = {}): string {
+  const full = !!opts.full;
+  if (e.threshold != null && e.raw != null && e.threshold > e.raw + 1e-9) return full ? `the ${Math.round(MAX_WEEKLY_DECLINE * 100)}%-a-week limit on how fast it falls` : 'decline-limited';
+  const cpPct = `${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP`;
+  if (!e.basis || e.basis === 'cp') return full ? `the critical-power fit (${cpPct})` : cpPct;
+  const t = e.effort?.t ?? (e.basis === '20min' ? 1200 : 3600);
+  const v = e.effort?.value;
+  const when = e.effort?.date && opts.date ? ` on ${opts.date(e.effort.date)}` : '';
+  const what = v != null ? ` (${Math.round(v)} W${when})` : '';
+  if (e.basis === '20min' && e.raw != null && e.cp != null && Math.abs(e.raw - e.cp) < 0.01) return full ? `your critical power — 95% of your best 20 minutes${what} is higher, and FTP stays at or below CP` : 'capped at CP';
+  if (t >= 3600) return full ? `your best hour${when}` : 'best hour';
+  const pct = `${Math.round(hourPower(100, t))}%`;
+  return full ? `${pct} of your best ${Math.round(t / 60)} minutes${what}` : `${pct} of ${Math.round(t / 60)} min`;
+}
 
 interface Curve {
   values: (number | null)[];
@@ -188,28 +238,27 @@ export function estimateThreshold(
   }
   let threshold = cp * cfg.factor;
   let basis: ThresholdEstimate['basis'] = 'cp';
+  let effort: FtpEffort | undefined;
   if (sport === 'ride') {
-    // FTP can't be below what was actually sustained: 95 % of the best 20 min (the classic
-    // field test, capped at CP — for riders with a big W′ it overshoots) and the best
-    // 60 min are floors. Without all-out efforts the CP fit times 0.96 alone runs low: a
-    // 3 × 20 min session at 107 % of "FTP", below threshold heart rate, is the giveaway.
-    const at = (t: number) => {
-      const i = durations.indexOf(t);
-      return i >= 0 ? curve.values[i] ?? null : null;
-    };
-    const p20 = at(1200);
-    const p60 = at(3600);
-    if (p20 && Math.min(p20 * 0.95, cp) > threshold) {
-      threshold = Math.min(p20 * 0.95, cp);
-      basis = '20min';
-    }
-    if (p60 && p60 > threshold) {
-      threshold = p60;
-      basis = '60min';
-    }
+    // FTP can't be below what was actually sustained. The best 20 min and every effort of
+    // 30–60 min are floors, scaled to an hour (hourPower): 95 % of 20 min — the classic field
+    // test, capped at CP, as for riders with a big W′ it overshoots — 98 % of 40 min, the
+    // best hour in full. Without all-out efforts the CP fit times 0.96 alone runs low: a
+    // 3 × 20 min session at 107 % of "FTP", below threshold heart rate, or 40 minutes held at
+    // 104 %, is the giveaway.
+    durations.forEach((t, i) => {
+      const v = curve.values[i];
+      if (!v || (t !== 1200 && (t < LONG_EFFORTS[0] || t > LONG_EFFORTS[1]))) return;
+      const floor = t === 1200 ? Math.min(hourPower(v, t), cp) : hourPower(v, t);
+      if (floor > threshold + 1e-9) {
+        threshold = floor;
+        basis = t === 1200 ? '20min' : t >= 3600 ? '60min' : 'long';
+        effort = { t, value: v, activityId: curve.activityIds?.[i] ?? null, date: curve.dates?.[i] ?? null };
+      }
+    });
   }
   if (threshold < cfg.min || threshold > cfg.max) return null;
-  return { sport, ...meta, cp, wPrime, threshold, raw: threshold, r2: fit.r2, points: picks, basis };
+  return { sport, ...meta, cp, wPrime, threshold, raw: threshold, r2: fit.r2, points: picks, basis, ...(effort ? { effort } : {}) };
 }
 
 // ---------- heart-rate thresholds ----------

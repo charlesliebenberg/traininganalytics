@@ -11,7 +11,7 @@ import { generateSeasonPlan, generateWeekWorkouts, planReach } from './plan';
 import { decodePolyline, encodePolyline } from '../polyline';
 import { computeMetrics, movingMask, normalizeStreams } from './metrics';
 import { BUILTIN_WORKOUTS } from '../library';
-import { estimateHrThresholds, estimateThreshold, limitDeclines } from './thresholds';
+import { estimateHrThresholds, estimateThreshold, ftpBasisText, hourPower, limitDeclines } from './thresholds';
 import { byEffortDate, classifySession, detectPeaks, effortDate } from './comeback';
 import { daysToTarget, fitCapacity, loadForTarget, ltlSeries, projectCapacity, quantileLine, type CapacityDay } from './capacity';
 import { compareHrProfiles, hrPowerWindows, hrProfile } from './hrprofile';
@@ -475,6 +475,37 @@ describe('threshold floors and heart-rate thresholds', () => {
     expect(e.threshold).toBeGreaterThanOrEqual(295);
     expect(e.threshold).toBeGreaterThan(e.cp * 0.96);
     expect(['20min', '60min']).toContain(e.basis);
+  });
+
+  it('scales efforts of 30–60 minutes to an hour, the same way as 95 % of 20 minutes', () => {
+    expect(hourPower(300, 1200)).toBeCloseTo(285, 6);
+    expect(hourPower(300, 2400) / 300).toBeCloseTo(0.981, 3);
+    expect(hourPower(300, 1800) / 300).toBeCloseTo(0.968, 3);
+    expect(hourPower(300, 3600)).toBe(300);
+  });
+
+  it('lets a long effort set FTP: 40 minutes held above what the CP fit allows', () => {
+    // CP 299 W, W′ 22 kJ from 3–30 min; then 40 minutes held at 311 W (above the hyperbola's 308)
+    const values = CURVE_DURATIONS.map((t) => (t <= 1800 ? 299 + 22000 / t : t <= 2400 ? 311 : t <= 3600 ? 280 : null));
+    const activityIds = CURVE_DURATIONS.map((t) => (t > 1800 && t <= 2400 ? 1309 : 1));
+    const dates = CURVE_DURATIONS.map((t) => (t > 1800 && t <= 2400 ? '2026-10-10' : '2026-08-15'));
+    const e = estimateThreshold('ride', { values, activityIds, dates }, { date: '2026-10-12', windowFrom: '2026-04-13', windowTo: '2026-10-11', activities: 40 })!;
+    expect(e.cp).toBeCloseTo(299, 0);
+    expect(e.basis).toBe('long');
+    expect(e.threshold).toBeCloseTo(hourPower(311, 2400), 6);
+    expect(Math.round(e.threshold)).toBe(305);
+    expect(e.effort).toEqual({ t: 2400, value: 311, activityId: 1309, date: '2026-10-10' });
+    expect(ftpBasisText(e)).toBe('98% of 40 min');
+    expect(ftpBasisText(e, { full: true, date: (d) => d.slice(5) })).toBe('98% of your best 40 minutes (311 W on 10-10)');
+  });
+
+  it('says which rule set FTP', () => {
+    expect(ftpBasisText({ basis: 'cp' })).toBe('96% of CP');
+    expect(ftpBasisText({ basis: '60min' }, { full: true })).toBe('your best hour');
+    expect(ftpBasisText({ basis: '20min', effort: { t: 1200, value: 316, activityId: 1, date: null }, cp: 310, raw: 300.2 }, { full: true })).toBe('95% of your best 20 minutes (316 W)');
+    // 95 % of 316 W is above CP, so CP itself is the floor
+    expect(ftpBasisText({ basis: '20min', effort: { t: 1200, value: 316, activityId: 1, date: null }, cp: 299, raw: 299 })).toBe('capped at CP');
+    expect(ftpBasisText({ basis: 'long', effort: { t: 2400, value: 311, activityId: 1, date: null }, raw: 290, threshold: 296 })).toBe('decline-limited');
   });
 
   it('takes LTHR from sustained efforts, robust to one bad reading', () => {

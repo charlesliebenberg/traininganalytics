@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { parseISO } from 'date-fns';
 import { RefreshCw, Info, ChevronLeft, ChevronRight, Play, Pause } from 'lucide-react';
 import type { Preferences, Thresholds as Th } from '../../shared/types';
-import { ESTIMATE_CONFIG, MAX_WEEKLY_DECLINE, WINDOW_DAYS, type ThresholdEstimate, type ThresholdSport } from '../../shared/analytics/thresholds';
+import { ESTIMATE_CONFIG, ftpBasisText, hourPower, MAX_WEEKLY_DECLINE, WINDOW_DAYS, type ThresholdEstimate, type ThresholdSport } from '../../shared/analytics/thresholds';
 import { http, qs, useAction, useApi } from '../lib/api';
 import { alpha, useTokens } from '../lib/theme';
 import { fmtDate, fmtDurLabel, fmtDuration, fmtPace, iso } from '../lib/format';
@@ -34,8 +34,7 @@ const LABEL: Record<ThresholdSport, { name: string; model: string; cp: string; w
   swim: { name: 'Swim CSS', model: 'critical swim speed', cp: 'Critical speed', wp: 'D′' },
 };
 const BAND = ['Short', 'Medium', 'Long'];
-/** Which rule set the automatic FTP that week. */
-const BASIS: Record<string, string> = { cp: `${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP`, '20min': '95% of 20 min', '60min': 'best hour' };
+const pctOf = (t: number) => `${Math.round(hourPower(100, t))}%`;
 
 /** Formatting helpers per sport: power in W, run pace /km, swim pace /100m. */
 function fmt(sport: ThresholdSport) {
@@ -86,7 +85,7 @@ function HistoryChart({ sport, data, series, timeline, selected, onSelect }: { s
           const x = ps[0].value?.[0];
           const e = s.find((z) => X(z.date) === x);
           if (!e) return '';
-          return `<b>From ${fmtDate(e.date, 'd MMM yyyy')}</b><div style="opacity:.6;font-size:11px;margin-bottom:4px">window ${fmtDate(e.windowFrom, 'd MMM')} – ${fmtDate(e.windowTo, 'd MMM yyyy')}</div>${tipRow(t.accent, 'Applied', f.value(e.threshold))}${tipRow(t.muted, 'Raw fit', f.value(e.raw))}${sport === 'ride' && e.basis ? tipRow('transparent', 'Set by', BASIS[e.basis]) : ''}${tipRow('transparent', LABEL[sport].wp, wpText(sport, e.wPrime))}<div style="opacity:.6;font-size:11px;margin-top:4px">Click to inspect the fit</div>`;
+          return `<b>From ${fmtDate(e.date, 'd MMM yyyy')}</b><div style="opacity:.6;font-size:11px;margin-bottom:4px">window ${fmtDate(e.windowFrom, 'd MMM')} – ${fmtDate(e.windowTo, 'd MMM yyyy')}</div>${tipRow(t.accent, 'Applied', f.value(e.threshold))}${tipRow(t.muted, 'Raw fit', f.value(e.raw))}${sport === 'ride' && e.basis ? tipRow('transparent', 'Set by', ftpBasisText(e)) : ''}${tipRow('transparent', LABEL[sport].wp, wpText(sport, e.wPrime))}<div style="opacity:.6;font-size:11px;margin-top:4px">Click to inspect the fit</div>`;
         },
       },
       xAxis: {
@@ -215,17 +214,26 @@ function CurveFitChart({ sport, e, durations, values, yRange }: { sport: Thresho
     const model: [number, number][] = [];
     for (let d = cfg.tMin * 0.6; d <= hi; d *= 1.08) model.push([d, e.cp + e.wPrime / d]);
     const ticks = [15, 30, 60, 120, 300, 600, 1200, 1800, 3600, 7200].filter((x) => x >= lo && x <= hi);
+    const ride = sport === 'ride';
+    // the effort FTP can't sit below, when one set it
+    const floor = ride && e.basis && e.basis !== 'cp' && e.effort && e.effort.t >= lo && e.effort.t <= hi ? e.effort : null;
+    // 95 % of the best 20 min above CP: CP itself is the floor
+    const capped = e.basis === '20min' && Math.abs(e.raw - e.cp) < 0.01;
+    const floorRow = (d: number) => (floor && floor.t === d ? tipRow(t.series[2], 'Sets FTP', `${capped ? 'capped at CP' : `${pctOf(d)} of it`} → ${f.value(e.raw)}`) : '');
+    // on one of the chosen efforts, that effort's tooltip says it sets FTP too
+    const onPick = !!floor && e.points.some((p) => p.t === floor.t);
     return {
       animation: false,
       grid: { left: 64, right: 16, top: 34, bottom: 30 },
-      legend: { ...legendStyle(t), data: ['Best efforts (6 months)', `${LABEL[sport].model} model`, 'Chosen efforts'] },
+      legend: { ...legendStyle(t), data: ['Best efforts (6 months)', `${LABEL[sport].model} model`, 'Chosen efforts', ...(floor ? ['Sets FTP'] : [])] },
       tooltip: {
         trigger: 'item',
         ...tooltipStyle(t),
         formatter: (p: any) => {
           const [d, v] = p.value;
+          if (p.seriesName === 'Sets FTP' && floor) return `<b>Best ${fmtDurLabel(d)}</b>${tipRow('transparent', 'Power', f.value(v))}${floorRow(d)}${floor.date ? `<div style="opacity:.6;font-size:11px">${fmtDate(floor.date)}</div>` : ''}`;
           const pick = e.points.find((q) => q.t === d);
-          if (pick && p.seriesIndex === 2) return `<b>${BAND[pick.band]} effort · ${fmtDurLabel(d)}</b>${tipRow(t.series[1], 'Best', f.value(v))}${tipRow('transparent', 'vs envelope', `${(pick.score * 100).toFixed(1)}%`)}${pick.date ? `<div style="opacity:.6;font-size:11px">${fmtDate(pick.date)}</div>` : ''}`;
+          if (pick && p.seriesIndex === 2) return `<b>${BAND[pick.band]} effort · ${fmtDurLabel(d)}</b>${tipRow(t.series[1], 'Best', f.value(v))}${tipRow('transparent', 'vs envelope', `${(pick.score * 100).toFixed(1)}%`)}${floorRow(d)}${pick.date ? `<div style="opacity:.6;font-size:11px">${fmtDate(pick.date)}</div>` : ''}`;
           return `<b>${fmtDurLabel(Math.round(d))}</b>${tipRow(p.color, p.seriesName, f.value(v))}`;
         },
       },
@@ -252,7 +260,32 @@ function CurveFitChart({ sport, e, durations, values, yRange }: { sport: Thresho
           itemStyle: { color: t.series[1], borderColor: t.surface, borderWidth: 2 },
           data: e.points.map((p, i) => ({ value: [p.t, p.value], label: { position: i % 2 ? 'bottom' : 'top' } })),
           label: { show: true, color: t.ink, fontSize: 11, fontWeight: 600, distance: 8, formatter: (p: any) => `${fmtDurLabel(p.value[0])} · ${f.axis(p.value[1])}` },
+          ...(ride
+            ? {
+                markLine: {
+                  symbol: 'none',
+                  silent: true,
+                  data: [{ yAxis: e.threshold }],
+                  lineStyle: { color: t.series[2], type: 'dashed', width: 1.5 },
+                  label: { formatter: `FTP ${Math.round(e.threshold)} W`, position: 'insideStartTop', color: t.ink2, fontSize: 11 },
+                },
+              }
+            : {}),
         },
+        ...(floor
+          ? [
+              {
+                type: 'scatter',
+                name: 'Sets FTP',
+                // a ring around the effort: it can be one of the chosen efforts too
+                symbolSize: 22,
+                z: 11,
+                silent: onPick,
+                itemStyle: { color: 'transparent', borderColor: t.series[2], borderWidth: 3 },
+                data: [[floor.t, floor.value]],
+              },
+            ]
+          : []),
       ],
     };
   }, [e, durations, values, yRange, t, sport, f, cfg]);
@@ -380,7 +413,7 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
       ) : (
         <>
           <div className="card mb-4 grid grid-cols-2 gap-4 p-5 sm:grid-cols-3 xl:grid-cols-6">
-            <Stat label={`Current ${ESTIMATE_CONFIG[sport].label}`} accent={t.accent} value={current ? f.value(current.threshold) : '–'} sub={current ? (sport === 'ride' && current.basis ? `${fmtDate(current.date, 'd MMM')} · ${current.threshold > current.raw + 1e-9 ? 'decline-limited' : BASIS[current.basis]}` : `from ${fmtDate(current.date, 'd MMM')}`) : undefined} title={sport === 'ride' && current?.basis ? `Set by ${current.threshold > current.raw + 1e-9 ? 'the 1%-a-week decline limit' : current.basis === 'cp' ? 'the critical-power fit' : current.basis === '20min' ? '95% of your best 20 minutes' : 'your best hour'}` : undefined} />
+            <Stat label={`Current ${ESTIMATE_CONFIG[sport].label}`} accent={t.accent} value={current ? f.value(current.threshold) : '–'} sub={current ? (sport === 'ride' && current.basis ? `${fmtDate(current.date, 'd MMM')} · ${ftpBasisText(current)}` : `from ${fmtDate(current.date, 'd MMM')}`) : undefined} title={sport === 'ride' && current?.basis ? `Set by ${ftpBasisText(current, { full: true, date: (d) => fmtDate(d, 'd MMM yyyy') })}` : undefined} />
             <Stat label={LABEL[sport].cp} value={current ? f.value(current.cp) : '–'} sub={sport === 'ride' ? 'used for W′ balance' : 'threshold = CS'} />
             <Stat label={LABEL[sport].wp} value={current ? wpText(sport, current.wPrime) : '–'} sub={sport === 'ride' ? 'anaerobic capacity' : 'distance above CS'} />
             <Stat label="Manual value" value={manualNow?.value ? f.value(manualNow.value) : '–'} sub="Settings → Athlete" />
@@ -407,10 +440,23 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
               <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
                 <Card
                   title={`The fit for ${fmtDate(e.date, 'd MMM yyyy')}`}
-                  subtitle={`Best efforts ${fmtDate(e.windowFrom, 'd MMM yyyy')} – ${fmtDate(e.windowTo, 'd MMM yyyy')} (${e.activities} activities). Orange = the three efforts the model is fitted to.`}
+                  subtitle={`Best efforts ${fmtDate(e.windowFrom, 'd MMM yyyy')} – ${fmtDate(e.windowTo, 'd MMM yyyy')} (${e.activities} activities). Orange = the three efforts the model is fitted to${sport === 'ride' && e.basis && e.basis !== 'cp' ? '; green = the effort FTP can’t sit below' : ''}.`}
                   actions={<Badge>{e.threshold > e.raw + 1e-9 ? 'decline-limited' : 'raw fit'}</Badge>}
                 >
                   <CurveFitChart sport={sport} e={e} durations={curves.data.durations} values={curveByDate.get(e.date) ?? []} yRange={yRange} />
+                  {sport === 'ride' && (
+                    <div className="mt-2 text-[13px] text-ink-2">
+                      FTP <b className="text-ink">{f.value(e.threshold)}</b>, set by {ftpBasisText(e, { full: true, date: (d) => fmtDate(d, 'd MMM yyyy') })}.
+                      {e.basis && e.basis !== 'cp' && e.effort?.activityId ? (
+                        <>
+                          {' '}
+                          <Link to={`/activities/${e.effort.activityId}`} className="text-accent hover:underline">
+                            Open the ride →
+                          </Link>
+                        </>
+                      ) : null}
+                    </div>
+                  )}
                 </Card>
                 <Card title="Linear check" subtitle={sport === 'ride' ? 'Work vs time is a straight line: slope = CP, intercept = W′' : 'Distance vs time is a straight line: slope = CS, intercept = D′'}>
                   <LinearFitChart sport={sport} e={e} yMax={linearMax} />
@@ -474,7 +520,7 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
               <li>
                 Fit the {LABEL[sport].model} model through those three points (a straight line in {sport === 'ride' ? 'work' : 'distance'} vs time).{' '}
                 {sport === 'ride'
-                  ? `FTP = ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP, because CP from 3–30 min efforts sits slightly above one-hour power. Two floors catch a fit that runs low: 95% of your best 20 minutes (never above CP), and your best hour — FTP can't sit below an hour you've actually ridden.`
+                  ? `FTP = ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP, because CP from 3–30 min efforts sits slightly above one-hour power. But FTP can't sit below what you've actually held, scaled to an hour: 95% of your best 20 minutes (never above CP), and every effort from 30 to 60 minutes the same way — ${pctOf(1800)} of your best 30 minutes, ${pctOf(2400)} of your best 40, all of your best hour. The highest of these sets FTP.`
                   : sport === 'run'
                     ? 'Threshold pace = critical speed.'
                     : 'CSS is the critical speed.'}

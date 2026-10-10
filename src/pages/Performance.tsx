@@ -3,6 +3,7 @@ import { addDays, differenceInCalendarDays, parseISO, subDays, subYears } from '
 import type { Thresholds } from '../../shared/types';
 import { CURVE_DURATIONS } from '../../shared/analytics/series';
 import { ompd, POWER_PROFILE, PROFILE_LEVELS, profileLevel, type PdModel } from '../../shared/analytics/models';
+import { ftpBasisText, type FtpEstimate } from '../../shared/analytics/thresholds';
 import { qs, useApi } from '../lib/api';
 import { resolvePreset, type DateRange } from '../lib/range';
 import { alpha, useTokens } from '../lib/theme';
@@ -43,12 +44,12 @@ function compareRange(mode: string, r: DateRange): { from: string; to: string; l
   }
 }
 
-function ModelCard({ model, cp2, th, weight, basis }: { model: PdModel | null; cp2: { cp: number; wPrime: number; r2: number } | null; th: Thresholds; weight: number; basis: string | null }) {
+function ModelCard({ model, cp2, th, weight, ftp }: { model: PdModel | null; cp2: { cp: number; wPrime: number; r2: number } | null; th: Thresholds; weight: number; ftp: Pick<FtpEstimate, 'basis'> & Partial<FtpEstimate> }) {
   const t = useTokens();
   if (!model) return <Card title="Power-duration model">Not enough maximal efforts in this range to fit a model. Include some short sprints and 10–20 min efforts.</Card>;
   const diff = model.eftp - th.ftp;
   const auto = th.sources?.ftp === 'auto';
-  const basisText = !auto ? 'set manually' : basis === '20min' ? 'auto · 95 % of your best 20 min' : basis === '60min' ? 'auto · your best hour' : 'auto · 3-point critical-power fit';
+  const basisText = !auto ? 'set manually' : `auto · ${ftpBasisText(ftp)}`;
   return (
     <Card title="Power-duration model" subtitle="Omni-domain model (Puchowicz 2020) fitted to your curve's envelope">
       <div className="grid grid-cols-2 gap-4">
@@ -322,7 +323,7 @@ export function Performance() {
   const main = useCurve(kind, range);
   const other = useCurve(kind, cmp);
   const modelQ = useApi<{ model: PdModel | null; cp2: { cp: number; wPrime: number; r2: number } | null; weight: number; ftp: number }>(`/model${qs({ from: range.from, to: range.to })}`);
-  const th = useApi<{ current: Thresholds; ftpBasis: string | null }>('/thresholds');
+  const th = useApi<{ current: Thresholds; ftpBasis: FtpEstimate['basis'] | null; ftp?: { now: FtpEstimate | null } }>('/thresholds');
   const weight = th.data?.current.weight ?? 70;
   const powerLike = kind === 'power' || kind === 'np';
   const scale = (v: (number | null)[]) => (wkg && powerLike ? v.map((x) => (x == null ? null : x / weight)) : v);
@@ -403,7 +404,7 @@ export function Performance() {
         </Card>
         <div className="flex flex-col gap-4">
           {kind === 'power' || kind === 'np' ? (
-            th.data && <ModelCard model={model} cp2={modelQ.data?.cp2 ?? null} th={th.data.current} weight={weight} basis={th.data.ftpBasis} />
+            th.data && <ModelCard model={model} cp2={modelQ.data?.cp2 ?? null} th={th.data.current} weight={weight} ftp={th.data.ftp?.now ?? { basis: th.data.ftpBasis ?? 'cp' }} />
           ) : (
             <Card title="About this curve">
               <p className="text-xs leading-relaxed text-ink-2">

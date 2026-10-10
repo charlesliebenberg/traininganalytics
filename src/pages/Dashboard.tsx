@@ -4,6 +4,7 @@ import { differenceInCalendarDays, parseISO } from 'date-fns';
 import { ArrowRight, CalendarPlus, Flag, Zap } from 'lucide-react';
 import type { Activity, PlannedWorkout, PmcPoint, RaceEvent, Thresholds } from '../../shared/types';
 import type { PdModel } from '../../shared/analytics/models';
+import { ftpBasisText, type FtpEstimate } from '../../shared/analytics/thresholds';
 import { useApi } from '../lib/api';
 import { Card, PageHeader, Spinner, Stat, SportIcon, Button, Badge } from '../components/ui';
 import { PmcChart, FormLegend, formColor, MiniProfile } from '../components/charts';
@@ -27,7 +28,9 @@ interface DashboardData {
   nextEvent: (RaceEvent & { projected: PmcPoint | null }) | null;
   model: PdModel | null;
   thresholds: Thresholds;
-  ftpBasis: 'cp' | '20min' | '60min' | null;
+  ftpBasis: FtpEstimate['basis'] | null;
+  /** what set the automatic FTP, and next week's when it will be different */
+  ftp?: { now: FtpEstimate | null; next: FtpEstimate | null };
   weekly: { start: string; sports: Record<string, { time: number; tss: number }> }[];
   /** the most recent ride or run, and what it says about fitness */
   latest: (ActivityInsights & { id: number }) | null;
@@ -108,7 +111,10 @@ export function Dashboard() {
   const daysTo = data.nextEvent ? differenceInCalendarDays(parseISO(data.nextEvent.date), new Date()) : null;
   const wkg = thresholds.ftp && thresholds.weight ? thresholds.ftp / thresholds.weight : null;
   const auto = thresholds.sources?.ftp === 'auto';
-  const basis = !auto ? 'set manually' : data.ftpBasis === '20min' ? '95% of your best 20 minutes' : data.ftpBasis === '60min' ? 'your best hour' : 'the critical-power fit';
+  const onDay = (d: string) => fmtDate(d, 'd MMM');
+  const basis = !auto ? 'set manually' : ftpBasisText(data.ftp?.now ?? { basis: data.ftpBasis ?? 'cp' }, { full: true, date: onDay });
+  // a new best effort moves FTP from next Monday's estimate on
+  const next = auto ? (data.ftp?.next ?? null) : null;
   const projected = data.pmc.filter((p) => p.projected);
   const planned = projected.some((p) => p.tss > 0);
 
@@ -152,8 +158,18 @@ export function Dashboard() {
             accent={t.power}
             value={thresholds.ftp || '–'}
             unit="W"
-            sub={`${wkg ? `${wkg.toFixed(2)} W/kg · ` : ''}${auto ? 'auto' : 'manual'}`}
-            title={`The FTP every zone and TSS uses — ${auto ? `estimated automatically, set by ${basis}` : basis}.${model ? ` The power-duration model's critical power for the last 90 days is ${Math.round(model.eftp)} W.` : ''}`}
+            sub={
+              <>
+                {wkg ? `${wkg.toFixed(2)} W/kg · ` : ''}
+                {auto ? 'auto' : 'manual'}
+                {next && (
+                  <span className="block font-medium text-ink">
+                    {next.threshold > thresholds.ftp ? '↑' : '↓'} {Math.round(next.threshold)} W from {fmtDate(next.date, 'EEE')}
+                  </span>
+                )}
+              </>
+            }
+            title={`The FTP every zone and TSS uses — ${auto ? `estimated automatically, set by ${basis}` : basis}.${next ? ` From ${fmtDate(next.date, 'EEEE d MMMM')} (thresholds update weekly): ${Math.round(next.threshold)} W, set by ${ftpBasisText(next, { full: true, date: onDay })}.` : ''}${model ? ` The power-duration model's critical power for the last 90 days is ${Math.round(model.eftp)} W.` : ''}`}
           />
         </div>
       </div>

@@ -33,7 +33,7 @@ import { activityInsights, aerobicTrend, latestInsights } from './aerobic';
 import { keySets, trainingReview } from './sessions';
 import { topEfforts, type EffortMetric } from './efforts';
 import { snapshot } from './snapshot';
-import { SPORTS, estimateOn, estimateState, refreshEstimates, storedHrSeries, storedSeries } from './estimates';
+import { SPORTS, estimateOn, estimateState, ftpEstimates, refreshEstimates, storedHrSeries, storedSeries } from './estimates';
 import type { ThresholdSport } from '../shared/analytics/thresholds';
 import { stravaAuthUrl, stravaDisconnect, stravaExchangeCode, stravaHandleWebhook, stravaWebhookSubscribe } from './providers/strava';
 import { BUILTIN_WORKOUTS } from '../shared/library';
@@ -176,8 +176,10 @@ api.get('/thresholds', (c) =>
     current: thresholdsFor(today()),
     manual: manualThresholds(today()) ?? DEFAULT_THRESHOLDS,
     defaults: DEFAULT_THRESHOLDS,
-    // which rule set the automatic FTP: the CP fit, 95 % of the best 20 min, or the best hour
+    // which rule set the automatic FTP: the CP fit, 95 % of the best 20 min, a 30–50 min effort or the best hour
     ftpBasis: storedSeries('ride').filter((e) => e.date <= today()).pop()?.basis ?? null,
+    // the same, with the effort behind it; and next week's FTP when it will change
+    ftp: ftpEstimates(today()),
   }),
 );
 api.put('/thresholds', async (c) => {
@@ -386,8 +388,9 @@ api.get('/dashboard', (c) => {
     nextEvent: nextEvent ? { ...rowToEvent(nextEvent), projected: eventPoint } : null,
     model,
     thresholds: thresholdsFor(t),
-    // which rule set the automatic FTP (CP fit, best 20 min, best hour)
+    // which rule set the automatic FTP (CP fit, best 20 min, a 30–50 min effort, best hour)
     ftpBasis: storedSeries('ride').filter((e) => e.date <= t).pop()?.basis ?? null,
+    ftp: ftpEstimates(t),
     weekly: trends(iso(subDays(new Date(), 7 * 16)), t, 'week').map((b) => ({ start: b.start, sports: b.sports })),
   });
 });
