@@ -23,7 +23,7 @@ import {
   upsertThresholds,
   DEFAULT_THRESHOLDS,
 } from './db';
-import { aggregateCurve, dailyLoads, iso, modelHistory, pmc, powerModel, records, today, trends, type CurveType } from './aggregate';
+import { aggregateCurve, dailyLoads, iso, pmc, records, today, trends, type CurveType } from './aggregate';
 import { linkPlanned, recalculate, recalculateAsync } from './ingest';
 import { importFile } from './importers/files';
 import { clearDemo, isDemo, loadDemo } from './demo';
@@ -33,7 +33,7 @@ import { activityInsights, aerobicTrend, latestInsights } from './aerobic';
 import { keySets, trainingReview } from './sessions';
 import { topEfforts, type EffortMetric } from './efforts';
 import { snapshot } from './snapshot';
-import { SPORTS, estimateOn, estimateState, ftpEstimates, refreshEstimates, storedHrSeries, storedSeries } from './estimates';
+import { SPORTS, estimateModel, estimateOn, estimateState, ftpEstimates, moved, refreshEstimates, rideEstimates, storedHrSeries, storedSeries } from './estimates';
 import type { ThresholdSport } from '../shared/analytics/thresholds';
 import { stravaAuthUrl, stravaDisconnect, stravaExchangeCode, stravaHandleWebhook, stravaWebhookSubscribe } from './providers/strava';
 import { BUILTIN_WORKOUTS } from '../shared/library';
@@ -320,16 +320,33 @@ api.get('/curves', (c) => {
   return c.json(aggregateCurve(type, from, to, sport || null));
 });
 
+/**
+ * Your power-duration model now: the bike estimate in effect (its CP and W′ are the ones
+ * Thresholds, W′ balance and the ride insights use) with the curve model fitted around them,
+ * and next week's estimate when it moves CP or FTP.
+ */
 api.get('/model', (c) => {
-  const { from, to } = range(c, 90);
-  const m = powerModel(from, to);
-  const th = thresholdsFor(to);
-  return c.json({ ...m, weight: th.weight, ftp: th.ftp });
+  const t = today();
+  const { now, next } = rideEstimates(t);
+  const th = thresholdsFor(t);
+  return c.json({
+    estimate: now,
+    model: now ? estimateModel(now) : null,
+    next: now && next && (moved(now.cp, next.cp) || moved(now.threshold, next.threshold)) ? next : null,
+    weight: th.weight,
+    ftp: th.ftp,
+  });
 });
 
+/** The weekly bike estimates over a range (and next Monday's), with each one's Pmax. */
 api.get('/model/history', (c) => {
   const { from, to } = range(c, 365);
-  return c.json(modelHistory(from, to));
+  const until = iso(addDays(parseISO(to), 7));
+  return c.json(
+    storedSeries('ride')
+      .filter((e) => e.date >= from && e.date <= until)
+      .map((e) => ({ date: e.date, cp: Math.round(e.cp), wPrime: Math.round(e.wPrime), pmax: Math.round(estimateModel(e)?.pmax ?? 0) || null, ftp: thresholdsFor(e.date).ftp })),
+  );
 });
 
 api.get('/trends', (c) => {
@@ -375,7 +392,6 @@ api.get('/dashboard', (c) => {
   const nextEvent = q.get('SELECT * FROM events WHERE date >= ? ORDER BY CASE priority WHEN \'A\' THEN 0 ELSE 1 END, date LIMIT 1', t);
   const nextAny = q.all('SELECT * FROM events WHERE date >= ? ORDER BY date LIMIT 3', t).map(rowToEvent);
   const eventPoint = nextEvent ? points.find((p) => p.date === nextEvent.date) ?? null : null;
-  const model = powerModel(iso(subDays(new Date(), 90)), t).model;
   return c.json({
     latest: latestInsights(),
     today: todayPt,
@@ -386,7 +402,6 @@ api.get('/dashboard', (c) => {
     upcoming,
     events: nextAny,
     nextEvent: nextEvent ? { ...rowToEvent(nextEvent), projected: eventPoint } : null,
-    model,
     thresholds: thresholdsFor(t),
     // which rule set the automatic FTP (CP fit, best 20 min, a 30–50 min effort, best hour)
     ftpBasis: storedSeries('ride').filter((e) => e.date <= t).pop()?.basis ?? null,

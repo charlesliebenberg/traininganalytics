@@ -304,9 +304,11 @@ function LinearFitChart({ sport, e, yMax }: { sport: ThresholdSport; e: Threshol
     const isBike = sport === 'ride';
     const yv = (p: { t: number; value: number }) => (isBike ? (p.value * p.t) / 1000 : p.value * p.t);
     const maxT = ESTIMATE_CONFIG[sport].tMax * 1.05;
+    // the regression's own line (CP before any raise for a long effort)
+    const slope = e.cpRaised?.fit ?? e.cp;
     const line: [number, number][] = [
       [0, isBike ? e.wPrime / 1000 : e.wPrime],
-      [maxT / 60, isBike ? (e.cp * maxT + e.wPrime) / 1000 : e.cp * maxT + e.wPrime],
+      [maxT / 60, isBike ? (slope * maxT + e.wPrime) / 1000 : slope * maxT + e.wPrime],
     ];
     const yName = isBike ? 'Work (kJ)' : 'Distance (m)';
     return {
@@ -359,6 +361,9 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
   const timeline = useMemo(() => makeTimeline(data?.gaps ?? []), [data?.gaps]);
   const series = useMemo(() => (data?.series ?? []).filter((e) => !timeline.hidden(e.date)), [data?.series, timeline]);
   const current = series.filter((e) => e.date <= today).pop() ?? series[series.length - 1];
+  // next Monday's estimate, when it moves CP: a new effort shows before the week turns
+  const upcoming = current ? series.find((e) => e.date > today && e.date > current.date) : undefined;
+  const nextCp = sport === 'ride' && current && upcoming && Math.abs(upcoming.cp - current.cp) / current.cp > 0.005 ? upcoming : undefined;
   const sel = selected ?? current?.date ?? null;
   const index = Math.max(0, series.findIndex((e) => e.date === sel));
   const e = series[index] ?? null;
@@ -414,7 +419,24 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
         <>
           <div className="card mb-4 grid grid-cols-2 gap-4 p-5 sm:grid-cols-3 xl:grid-cols-6">
             <Stat label={`Current ${ESTIMATE_CONFIG[sport].label}`} accent={t.accent} value={current ? f.value(current.threshold) : '–'} sub={current ? (sport === 'ride' && current.basis ? `${fmtDate(current.date, 'd MMM')} · ${ftpBasisText(current)}` : `from ${fmtDate(current.date, 'd MMM')}`) : undefined} title={sport === 'ride' && current?.basis ? `Set by ${ftpBasisText(current, { full: true, date: (d) => fmtDate(d, 'd MMM yyyy') })}` : undefined} />
-            <Stat label={LABEL[sport].cp} value={current ? f.value(current.cp) : '–'} sub={sport === 'ride' ? 'used for W′ balance' : 'threshold = CS'} />
+            <Stat
+              label={LABEL[sport].cp}
+              value={current ? f.value(current.cp) : '–'}
+              sub={
+                sport === 'ride' ? (
+                  nextCp ? (
+                    <span className="font-medium text-ink">
+                      → {f.value(nextCp.cp)} from {fmtDate(nextCp.date, 'EEE')}
+                    </span>
+                  ) : (
+                    'used for W′ balance'
+                  )
+                ) : (
+                  'threshold = CS'
+                )
+              }
+              title={sport === 'ride' ? 'The same critical power W′ balance, the ride insights and Power & Performance use' : undefined}
+            />
             <Stat label={LABEL[sport].wp} value={current ? wpText(sport, current.wPrime) : '–'} sub={sport === 'ride' ? 'anaerobic capacity' : 'distance above CS'} />
             <Stat label="Manual value" value={manualNow?.value ? f.value(manualNow.value) : '–'} sub="Settings → Athlete" />
             <Stat label="Weeks estimated" value={series.length} sub={data.state.running ? 'recomputing…' : data.state.lastRun ? `updated ${fmtDate(data.state.lastRun, 'd MMM HH:mm')}` : undefined} />
@@ -444,6 +466,12 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
                   actions={<Badge>{e.threshold > e.raw + 1e-9 ? 'decline-limited' : 'raw fit'}</Badge>}
                 >
                   <CurveFitChart sport={sport} e={e} durations={curves.data.durations} values={curveByDate.get(e.date) ?? []} yRange={yRange} />
+                  {sport === 'ride' && e.cpRaised && (
+                    <div className="mt-2 text-[13px] text-ink-2">
+                      Critical power <b className="text-ink">{f.value(e.cp)}</b>: the line through the three efforts gives {f.value(e.cpRaised.fit)}, but you held {f.value(e.cpRaised.effort.value)} for {fmtDurLabel(e.cpRaised.effort.t)}
+                      {e.cpRaised.effort.date ? ` on ${fmtDate(e.cpRaised.effort.date, 'd MMM yyyy')}` : ''} — more than it allows — so CP is raised to cover it.
+                    </div>
+                  )}
                   {sport === 'ride' && (
                     <div className="mt-2 text-[13px] text-ink-2">
                       FTP <b className="text-ink">{f.value(e.threshold)}</b>, set by {ftpBasisText(e, { full: true, date: (d) => fmtDate(d, 'd MMM yyyy') })}.
@@ -461,7 +489,7 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
                 <Card title="Linear check" subtitle={sport === 'ride' ? 'Work vs time is a straight line: slope = CP, intercept = W′' : 'Distance vs time is a straight line: slope = CS, intercept = D′'}>
                   <LinearFitChart sport={sport} e={e} yMax={linearMax} />
                   <div className="mt-2 grid grid-cols-3 gap-3 rounded-lg bg-surface-2 p-3">
-                    <Stat label="Slope" value={<span className="text-base">{f.value(e.cp)}</span>} />
+                    <Stat label="Slope" value={<span className="text-base">{f.value(e.cpRaised?.fit ?? e.cp)}</span>} sub={e.cpRaised ? `CP raised to ${f.value(e.cp)}` : undefined} />
                     <Stat label="Intercept" value={<span className="text-base">{wpText(sport, e.wPrime)}</span>} />
                     <Stat label="R²" value={<span className="text-base">{e.r2.toFixed(4)}</span>} />
                   </div>
@@ -520,7 +548,7 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
               <li>
                 Fit the {LABEL[sport].model} model through those three points (a straight line in {sport === 'ride' ? 'work' : 'distance'} vs time).{' '}
                 {sport === 'ride'
-                  ? `FTP = ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP, because CP from 3–30 min efforts sits slightly above one-hour power. But FTP can't sit below what you've actually held, scaled to an hour: 95% of your best 20 minutes (never above CP), and every effort from 30 to 60 minutes the same way — ${pctOf(1800)} of your best 30 minutes, ${pctOf(2400)} of your best 40, all of your best hour. The highest of these sets FTP.`
+                  ? `Your efforts of 20 to 60 minutes check it: the model overstates what can be held that long, so if you've held more than it allows, CP is raised to cover it. FTP = ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP, because CP from 3–30 min efforts sits slightly above one-hour power. But FTP can't sit below what you've actually held, scaled to an hour: 95% of your best 20 minutes (never above CP), and every effort from 30 to 60 minutes the same way — ${pctOf(1800)} of your best 30 minutes, ${pctOf(2400)} of your best 40, all of your best hour. The highest of these sets FTP.`
                   : sport === 'run'
                     ? 'Threshold pace = critical speed.'
                     : 'CSS is the critical speed.'}

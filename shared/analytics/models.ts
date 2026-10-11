@@ -86,6 +86,8 @@ export interface PdModel {
 }
 
 const TCP_MAX = 1800;
+/** Longest effort an anchored model is fitted to (and good for), s. */
+export const FIXED_MAX = 3600;
 
 /**
  * Omni-domain power–duration model (Puchowicz, Baker & Clarke 2020):
@@ -100,9 +102,15 @@ export function ompd(t: number, m: Pick<PdModel, 'cp' | 'wPrime' | 'pmax' | 'a'>
 /**
  * Fit the OmPD model to a mean-max curve. Uses asymmetric loss so the model hugs the
  * upper envelope (sub-maximal points are penalised far less than points above the model).
+ *
+ * `fixed` holds CP and W′ (the threshold estimate's), and the decay beyond 30 min if given;
+ * the rest is fitted to efforts up to an hour. Free, CP is pinned by whichever efforts are
+ * hardest relative to the rest: strong 1–8 minute efforts lift it above everything ridden for
+ * 10–40 minutes, which it then takes as not all-out; and easy multi-hour rides drag the decay
+ * below the 40 and 60 minutes actually ridden.
  */
-export function fitPowerDuration(values: (number | null | undefined)[], durations = CURVE_DURATIONS): PdModel | null {
-  const pts = curvePoints(values, durations).filter((p) => p.t <= 4 * 3600);
+export function fitPowerDuration(values: (number | null | undefined)[], durations = CURVE_DURATIONS, fixed?: { cp: number; wPrime: number; a?: number }): PdModel | null {
+  const pts = curvePoints(values, durations).filter((p) => p.t <= (fixed ? FIXED_MAX : 4 * 3600));
   if (pts.length < 12 || !pts.some((p) => p.t >= 600) || !pts.some((p) => p.t <= 10)) return null;
   // weight each point by the log-time span it represents so the dense short end doesn't dominate
   const w = pts.map((pt, i) => {
@@ -112,8 +120,9 @@ export function fitPowerDuration(values: (number | null | undefined)[], duration
   });
   const p1 = pts[0].p;
   const p20 = pts.find((p) => p.t >= 1200)?.p ?? pts[pts.length - 1].p;
+  const unpack = (x: number[]) => (fixed ? [fixed.cp, fixed.wPrime, x[0], fixed.a ?? x[1]] : x);
   const loss = (x: number[]) => {
-    const [cp, wp, pmax, a] = x;
+    const [cp, wp, pmax, a] = unpack(x);
     if (cp <= 20 || wp < 1000 || wp > 80000 || pmax <= cp * 1.2 || a < 0 || a > cp * 0.5) return 1e12;
     let s = 0;
     for (let i = 0; i < pts.length; i++) {
@@ -125,8 +134,10 @@ export function fitPowerDuration(values: (number | null | undefined)[], duration
   };
   let best: number[] | null = null;
   let bestV = Infinity;
-  for (const wp0 of [12000, 20000, 30000]) {
-    const x = nelderMead(loss, [p20 * 0.95, wp0, p1 * 1.05, 25], { step: [p20 * 0.05, 3000, p1 * 0.05, 10], maxIter: 1500 });
+  const free = !fixed || fixed.a == null;
+  const starts = fixed ? [[Math.max(p1 * 1.05, fixed.cp * 1.3), ...(free ? [25] : [])]] : [12000, 20000, 30000].map((wp0) => [p20 * 0.95, wp0, p1 * 1.05, 25]);
+  for (const x0 of starts) {
+    const x = nelderMead(loss, x0, { step: fixed ? [p1 * 0.05, ...(free ? [10] : [])] : [p20 * 0.05, 3000, p1 * 0.05, 10], maxIter: 1500 });
     const v = loss(x);
     if (v < bestV) {
       bestV = v;
@@ -134,7 +145,7 @@ export function fitPowerDuration(values: (number | null | undefined)[], duration
     }
   }
   if (!best || bestV >= 1e12) return null;
-  const [cp, wPrime, pmax, a] = best;
+  const [cp, wPrime, pmax, a] = unpack(best);
   const model = { cp, wPrime, pmax, a };
   const eftp = cp;
   const p60 = ompd(3600, model);

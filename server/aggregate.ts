@@ -1,11 +1,10 @@
-import { addDays, differenceInCalendarDays, format, parseISO, startOfMonth, startOfWeek, subDays } from 'date-fns';
+import { addDays, differenceInCalendarDays, format, parseISO, startOfMonth, startOfWeek } from 'date-fns';
 import type { ActivityCurves, DailyLoad, PmcPoint, Sport } from '../shared/types';
 import { computePmc } from '../shared/analytics/pmc';
 import { CURVE_DURATIONS } from '../shared/analytics/series';
-import { fitCp2, fitPowerDuration, curvePoints, type PdModel } from '../shared/analytics/models';
 import { polarizationIndex } from '../shared/analytics/zones';
 import { BEST_EFFORT_DISTANCES } from '../shared/analytics/running';
-import { getPreferences, q, thresholdsFor } from './db';
+import { getPreferences, q } from './db';
 
 export const iso = (d: Date) => format(d, 'yyyy-MM-dd');
 export const today = () => iso(new Date());
@@ -88,25 +87,6 @@ export function aggregateCurve(type: CurveType, from: string, to: string, sport?
     }
   }
   return { durations: CURVE_DURATIONS, values, activityIds, dates, filled };
-}
-
-export function powerModel(from: string, to: string): { model: PdModel | null; cp2: ReturnType<typeof fitCp2> } {
-  const c = aggregateCurve('power', from, to, 'ride');
-  return { model: fitPowerDuration(c.values), cp2: fitCp2(curvePoints(c.values)) };
-}
-
-/** Rolling eFTP / CP / W' / Pmax estimates (42-day windows, weekly). */
-export function modelHistory(from: string, to: string, window = 42) {
-  const out: { date: string; eftp: number; cp: number; wPrime: number; pmax: number; ftp: number }[] = [];
-  let d = parseISO(from);
-  const end = parseISO(to);
-  while (d <= end) {
-    const ds = iso(d);
-    const { model } = powerModel(iso(subDays(d, window)), ds);
-    if (model) out.push({ date: ds, eftp: Math.round(model.eftp), cp: Math.round(model.cp), wPrime: Math.round(model.wPrime), pmax: Math.round(model.pmax), ftp: thresholdsFor(ds).ftp });
-    d = addDays(d, 7);
-  }
-  return out;
 }
 
 // ---------- daily loads & PMC ----------

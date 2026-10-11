@@ -490,13 +490,34 @@ describe('threshold floors and heart-rate thresholds', () => {
     const activityIds = CURVE_DURATIONS.map((t) => (t > 1800 && t <= 2400 ? 1309 : 1));
     const dates = CURVE_DURATIONS.map((t) => (t > 1800 && t <= 2400 ? '2026-10-10' : '2026-08-15'));
     const e = estimateThreshold('ride', { values, activityIds, dates }, { date: '2026-10-12', windowFrom: '2026-04-13', windowTo: '2026-10-11', activities: 40 })!;
-    expect(e.cp).toBeCloseTo(299, 0);
+    // the line through the 3–30 min efforts gives 299 W, but it allows only 308 W for 40 minutes
+    expect(e.cpRaised?.fit).toBeCloseTo(299, 0);
+    expect(e.cp).toBeCloseTo(311 - e.wPrime / 2400, 6);
+    expect(e.cpRaised?.effort).toEqual({ t: 2400, value: 311, activityId: 1309, date: '2026-10-10' });
     expect(e.basis).toBe('long');
     expect(e.threshold).toBeCloseTo(hourPower(311, 2400), 6);
     expect(Math.round(e.threshold)).toBe(305);
     expect(e.effort).toEqual({ t: 2400, value: 311, activityId: 1309, date: '2026-10-10' });
     expect(ftpBasisText(e)).toBe('98% of 40 min');
     expect(ftpBasisText(e, { full: true, date: (d) => d.slice(5) })).toBe('98% of your best 40 minutes (311 W on 10-10)');
+  });
+
+  it('leaves CP alone when no long effort sits above the model', () => {
+    const values = CURVE_DURATIONS.map((t) => (t <= 1800 ? 299 + 22000 / t : t <= 3600 ? 290 : null));
+    const e = estimateThreshold('ride', { values }, { date: '2026-10-12', windowFrom: '', windowTo: '', activities: 40 })!;
+    expect(e.cp).toBeCloseTo(299, 0);
+    expect(e.cpRaised).toBeUndefined();
+  });
+
+  it('draws an estimate as one curve: its CP and W′, reaching its FTP at an hour', () => {
+    const truth = { cp: 302, wPrime: 22000, pmax: 1100, a: 0 };
+    truth.a = (truth.cp + truth.wPrime / 3600 - 305) / Math.log(2);
+    const values = CURVE_DURATIONS.filter((t) => t <= 14400).map((t) => ompd(t, truth) * (t > 3600 ? 0.8 : 1));
+    const m = fitPowerDuration(values, CURVE_DURATIONS.filter((t) => t <= 14400), { cp: 302, wPrime: 22000, a: truth.a })!;
+    expect(m.cp).toBe(302);
+    expect(m.wPrime).toBe(22000);
+    expect(m.p60).toBeCloseTo(305, 0);
+    expect(Math.abs(m.pmax - 1100) / 1100).toBeLessThan(0.05);
   });
 
   it('says which rule set FTP', () => {

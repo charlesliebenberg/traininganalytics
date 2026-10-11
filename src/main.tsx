@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import './index.css';
-import { queryClient, setUnauthorizedHandler, useApi } from './lib/api';
+import { http, queryClient, setUnauthorizedHandler, useApi } from './lib/api';
 import { Login } from './pages/Login';
 import { ThemeContext, useThemeState } from './lib/theme';
 import { RangeProvider } from './lib/range';
@@ -46,6 +46,14 @@ function Prefs({ children }: { children: ReactNode }) {
       queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] !== '/preferences' });
     }
   }, [data?.units]);
+  // the server's "today" follows your time zone, so its pages and the browser's agree
+  useEffect(() => {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (data && tz && data.timezone !== tz)
+      http('/preferences', { method: 'PUT', json: { timezone: tz } })
+        .then(() => queryClient.invalidateQueries())
+        .catch(() => {});
+  }, [!!data, data?.timezone]);
   if (!data) return null;
   setUnits(data.units);
   return <>{children}</>;

@@ -254,6 +254,8 @@ export interface Preferences {
   crankLength: number; // mm
   /** Use rolling 6-month estimates (critical power / critical speed) instead of manual values */
   autoThresholds: { ride: boolean; run: boolean; swim: boolean; hr: boolean };
+  /** IANA time zone, from the athlete's browser: the server's "today" follows it */
+  timezone?: string;
 }
 
 export interface DailyLoad {

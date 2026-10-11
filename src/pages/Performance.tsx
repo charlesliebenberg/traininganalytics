@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react';
 import { addDays, differenceInCalendarDays, parseISO, subDays, subYears } from 'date-fns';
 import type { Thresholds } from '../../shared/types';
 import { CURVE_DURATIONS } from '../../shared/analytics/series';
-import { ompd, POWER_PROFILE, PROFILE_LEVELS, profileLevel, type PdModel } from '../../shared/analytics/models';
-import { ftpBasisText, type FtpEstimate } from '../../shared/analytics/thresholds';
+import { FIXED_MAX, ompd, POWER_PROFILE, PROFILE_LEVELS, profileLevel, type PdModel } from '../../shared/analytics/models';
+import { ftpBasisText, type ThresholdEstimate } from '../../shared/analytics/thresholds';
 import { qs, useApi } from '../lib/api';
 import { resolvePreset, type DateRange } from '../lib/range';
 import { alpha, useTokens } from '../lib/theme';
@@ -44,31 +44,73 @@ function compareRange(mode: string, r: DateRange): { from: string; to: string; l
   }
 }
 
-function ModelCard({ model, cp2, th, weight, ftp }: { model: PdModel | null; cp2: { cp: number; wPrime: number; r2: number } | null; th: Thresholds; weight: number; ftp: Pick<FtpEstimate, 'basis'> & Partial<FtpEstimate> }) {
-  const t = useTokens();
-  if (!model) return <Card title="Power-duration model">Not enough maximal efforts in this range to fit a model. Include some short sprints and 10–20 min efforts.</Card>;
-  const diff = model.eftp - th.ftp;
-  const auto = th.sources?.ftp === 'auto';
-  const basisText = !auto ? 'set manually' : `auto · ${ftpBasisText(ftp)}`;
+/** Your power-duration model now: the estimate Thresholds, W′ balance and the ride insights use. */
+interface ModelResponse {
+  estimate: ThresholdEstimate | null;
+  model: PdModel | null;
+  /** next Monday's estimate, when it moves CP or FTP */
+  next: ThresholdEstimate | null;
+  weight: number;
+  ftp: number;
+}
+
+/** "→ 302 W from Mon", on a line of its own. */
+function NextLine({ v, date }: { v: number; date: string }) {
   return (
-    <Card title="Power-duration model" subtitle="Omni-domain model (Puchowicz 2020) fitted to your curve's envelope">
+    <span className="block font-medium text-ink">
+      → {Math.round(v)} W from {fmtDate(date, 'EEE')}
+    </span>
+  );
+}
+
+function ModelCard({ data, th, weight }: { data: ModelResponse; th: Thresholds; weight: number }) {
+  const t = useTokens();
+  const { estimate: e, model, next } = data;
+  if (!e || !model) return <Card title="Your power-duration model">Not enough hard efforts in the last 6 months to estimate your critical power. It needs a few all-out efforts between 3 and 30 minutes.</Card>;
+  const auto = th.sources?.ftp === 'auto';
+  const moves = (a: number, b: number) => Math.abs(b - a) / a > 0.005;
+  const nextCp = next && moves(e.cp, next.cp) ? next : null;
+  const nextFtp = auto && next && moves(e.threshold, next.threshold) ? next : null;
+  const onDay = (d: string) => fmtDate(d, 'd MMM');
+  return (
+    <Card title="Your power-duration model" subtitle={`From your best efforts ${fmtDate(e.windowFrom, 'd MMM')} – ${fmtDate(e.windowTo, 'd MMM yyyy')}, as on Thresholds`}>
       <div className="grid grid-cols-2 gap-4">
-        <Stat label="Critical power (model)" accent={t.power} value={Math.round(model.eftp)} unit="W" sub={`${(model.eftp / weight).toFixed(2)} W/kg`} title="The model's maximal quasi-steady-state power" />
-        <Stat label="60-min power" value={Math.round(model.p60)} unit="W" sub="modelled" title="Power the model predicts you can hold for one hour" />
-        <Stat label="W′" value={(model.wPrime / 1000).toFixed(1)} unit="kJ" sub="anaerobic capacity" />
-        <Stat label="Pmax" value={Math.round(model.pmax)} unit="W" sub={`${(model.pmax / weight).toFixed(1)} W/kg`} />
-        <Stat label="Time to exhaustion" value={model.tte ? fmtDurLabel(model.tte) : '< 20m'} sub="longest effort at CP" />
-        <Stat label="Fit error" value={`${(model.error * 100).toFixed(1)}%`} sub={cp2 ? `2-param CP ${Math.round(cp2.cp)} W` : undefined} />
+        <Stat
+          label="Critical power"
+          accent={t.power}
+          value={Math.round(e.cp)}
+          unit="W"
+          sub={
+            <>
+              {(e.cp / weight).toFixed(2)} W/kg
+              {nextCp && <NextLine v={nextCp.cp} date={nextCp.date} />}
+            </>
+          }
+          title={`The highest power you can sustain before W′ starts to run down${e.cpRaised ? ` — raised from the fit's ${Math.round(e.cpRaised.fit)} W to cover your ${fmtDurLabel(e.cpRaised.effort.t)} at ${Math.round(e.cpRaised.effort.value)} W` : ''}`}
+        />
+        <Stat label="W′" value={(e.wPrime / 1000).toFixed(1)} unit="kJ" sub="anaerobic capacity" title="Work you can do above critical power before you have to ease off" />
+        <Stat
+          label="FTP"
+          value={th.ftp}
+          unit="W"
+          sub={
+            <>
+              {auto ? ftpBasisText(e) : 'set manually'}
+              {nextFtp && <NextLine v={nextFtp.threshold} date={nextFtp.date} />}
+            </>
+          }
+          title={auto ? `Set by ${ftpBasisText(e, { full: true, date: onDay })}` : 'Set manually in Settings'}
+        />
+        <Stat label="Pmax" value={Math.round(model.pmax)} unit="W" sub={`${(model.pmax / weight).toFixed(1)} W/kg`} title="Peak instantaneous power, from your sprints" />
+        <Stat label="Time to exhaustion" value={model.tte ? fmtDurLabel(model.tte) : '< 10m'} sub="longest effort at CP" title="The longest you've held critical power or more in these 6 months" />
+        <Stat label="Fit" value={`${(model.error * 100).toFixed(1)}%`} sub="error vs your best efforts" title="Typical gap between the curve and your best efforts up to an hour" />
       </div>
-      <div className="mt-4 flex items-start justify-between gap-3 rounded-lg bg-surface-2 p-3 text-xs">
-        <span className="text-ink-2">
-          FTP in use <b className="text-ink">{th.ftp} W</b> ({basisText}) · the model's CP is {diff >= 0 ? '+' : ''}
-          {Math.round(diff)} W. CP fitted to the whole curve usually sits a little above FTP, and further when your long efforts weren't all-out.
-        </span>
-        <Link to={auto ? '/thresholds' : '/settings'} className="shrink-0 text-accent hover:underline">
-          {auto ? 'How FTP is set →' : 'Change FTP →'}
+      <p className="mt-4 rounded-lg bg-surface-2 p-3 text-xs leading-relaxed text-ink-2">
+        One estimate across the app: the same critical power, W′ and FTP as Thresholds, W′ balance and your ride insights, updated every Monday. The dashed curve draws it — sprint power, then CP and W′ up to 30 minutes, easing to FTP at an hour.{' '}
+        <Link to="/thresholds" className="whitespace-nowrap text-accent hover:underline">
+          How it&apos;s estimated →
         </Link>
-      </div>
+      </p>
     </Card>
   );
 }
@@ -227,11 +269,12 @@ function PeaksTable({ kind }: { kind: Kind }) {
   );
 }
 
-type ModelPoint = { date: string; eftp: number; cp: number; wPrime: number; pmax: number; ftp: number };
+type ModelPoint = { date: string; cp: number; wPrime: number; pmax: number | null; ftp: number };
 
 function ModelHistory() {
   const t = useTokens();
-  const { data } = useApi<ModelPoint[]>(`/model/history${qs({ from: iso(subDays(new Date(), 364)), to: iso(new Date()) })}`);
+  const today = iso(new Date());
+  const { data } = useApi<ModelPoint[]>(`/model/history${qs({ from: iso(subDays(new Date(), 364)), to: today })}`);
   const option = useMemo(() => {
     if (!data?.length) return null;
     // weeks without a model are weeks without riding: break the lines there, and squeeze
@@ -243,7 +286,7 @@ function ModelHistory() {
     }
     const tl = makeTimeline(gaps);
     const x = data.map((d) => tl.toX(parseISO(d.date).getTime()));
-    const line = (v: (d: ModelPoint) => number) => {
+    const line = (v: (d: ModelPoint) => number | null) => {
       const out: (number | null)[][] = [];
       data.forEach((d, i) => {
         if (i && differenceInCalendarDays(parseISO(d.date), parseISO(data[i - 1].date)) > 7) out.push([(x[i - 1] + x[i]) / 2, null]);
@@ -260,7 +303,7 @@ function ModelHistory() {
     return {
       animation: false,
       grid: grids,
-      legend: { ...legendStyle(t), data: ['CP (model, 42 days)', 'FTP in use'] },
+      legend: { ...legendStyle(t), data: ['Critical power', 'FTP in use'] },
       axisPointer: { link: [{ xAxisIndex: 'all' }] },
       tooltip: {
         trigger: 'axis',
@@ -268,7 +311,7 @@ function ModelHistory() {
         formatter: (ps: any) => {
           const d = byX.get(ps[0]?.value?.[0]);
           if (!d) return '';
-          return `<b>${fmtDate(d.date)}</b><div style="opacity:.6;font-size:10px">42-day window</div>${tipRow(t.power, 'CP (model)', `${d.eftp} W`)}${tipRow(t.muted, 'FTP in use', `${d.ftp} W`)}${tipRow(t.series[2], "W′", `${(d.wPrime / 1000).toFixed(1)} kJ`)}${tipRow(t.series[1], 'Pmax', `${d.pmax} W`)}`;
+          return `<b>From ${fmtDate(d.date)}</b><div style="opacity:.6;font-size:10px">${d.date > today ? 'next week · ' : ''}6 months of best efforts</div>${tipRow(t.power, 'Critical power', `${d.cp} W`)}${tipRow(t.muted, 'FTP in use', `${d.ftp} W`)}${tipRow(t.series[2], "W′", `${(d.wPrime / 1000).toFixed(1)} kJ`)}${d.pmax ? tipRow(t.series[1], 'Pmax', `${d.pmax} W`) : ''}`;
         },
       },
       xAxis: grids.map((_, i) => ({ type: 'value', gridIndex: i, min: x[0], max: x[x.length - 1], ...axisStyle(t, { grid: false }), axisLabel: { show: i === 2, color: t.muted, fontSize: 10, hideOverlap: true, formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), 'd MMM yy')) } })),
@@ -280,13 +323,14 @@ function ModelHistory() {
       series: [
         {
           type: 'line',
-          name: 'CP (model, 42 days)',
+          name: 'Critical power',
           xAxisIndex: 0,
           yAxisIndex: 0,
           showSymbol: false,
-          smooth: 0.3,
+          // weekly estimates: a value holds until the next one
+          step: 'end',
           connectNulls: false,
-          data: line((d) => d.eftp),
+          data: line((d) => d.cp),
           lineStyle: { color: t.power, width: 2 },
           itemStyle: { color: t.power },
           markArea: tl.breaks.length
@@ -299,13 +343,13 @@ function ModelHistory() {
             : undefined,
         },
         { type: 'line', name: 'FTP in use', xAxisIndex: 0, yAxisIndex: 0, showSymbol: false, step: 'end', connectNulls: false, data: line((d) => d.ftp), lineStyle: { color: t.muted, width: 1.5 }, itemStyle: { color: t.muted } },
-        { type: 'line', name: "W′", xAxisIndex: 1, yAxisIndex: 1, showSymbol: false, smooth: 0.3, connectNulls: false, data: line((d) => d.wPrime), lineStyle: { color: t.series[2], width: 1.5 }, itemStyle: { color: t.series[2] } },
-        { type: 'line', name: 'Pmax', xAxisIndex: 2, yAxisIndex: 2, showSymbol: false, smooth: 0.3, connectNulls: false, data: line((d) => d.pmax), lineStyle: { color: t.series[1], width: 1.5 }, itemStyle: { color: t.series[1] } },
+        { type: 'line', name: "W′", xAxisIndex: 1, yAxisIndex: 1, showSymbol: false, step: 'end', connectNulls: false, data: line((d) => d.wPrime), lineStyle: { color: t.series[2], width: 1.5 }, itemStyle: { color: t.series[2] } },
+        { type: 'line', name: 'Pmax', xAxisIndex: 2, yAxisIndex: 2, showSymbol: false, step: 'end', connectNulls: false, data: line((d) => d.pmax ?? null), lineStyle: { color: t.series[1], width: 1.5 }, itemStyle: { color: t.series[1] } },
       ],
     };
-  }, [data, t]);
+  }, [data, t, today]);
   return (
-    <Card title="Model history" subtitle="Critical power, W′ and Pmax fitted weekly on rolling 42-day windows, against the FTP in use">
+    <Card title="Model history" subtitle="Your weekly estimates over the last year — critical power, W′ and FTP, the same as on Thresholds — with sprint power (Pmax)">
       {option ? <Chart option={option} height={420} /> : <Spinner />}
     </Card>
   );
@@ -322,8 +366,8 @@ export function Performance() {
   const cmp = compareRange(compare, range);
   const main = useCurve(kind, range);
   const other = useCurve(kind, cmp);
-  const modelQ = useApi<{ model: PdModel | null; cp2: { cp: number; wPrime: number; r2: number } | null; weight: number; ftp: number }>(`/model${qs({ from: range.from, to: range.to })}`);
-  const th = useApi<{ current: Thresholds; ftpBasis: FtpEstimate['basis'] | null; ftp?: { now: FtpEstimate | null } }>('/thresholds');
+  const modelQ = useApi<ModelResponse>('/model');
+  const th = useApi<{ current: Thresholds }>('/thresholds');
   const weight = th.data?.current.weight ?? 70;
   const powerLike = kind === 'power' || kind === 'np';
   const scale = (v: (number | null)[]) => (wkg && powerLike ? v.map((x) => (x == null ? null : x / weight)) : v);
@@ -333,8 +377,9 @@ export function Performance() {
   if (main.data) series.push({ name: range.label, color: t.series[0], durations: CURVE_DURATIONS, values: scale(main.data.values), meta: { ids: main.data.activityIds, dates: main.data.dates }, width: 2.5, area: true });
   if (other.data && cmp) series.push({ name: cmp.label, color: t.series[1], durations: CURVE_DURATIONS, values: scale(other.data.values), meta: { ids: other.data.activityIds, dates: other.data.dates } });
   if (showModel && model && kind === 'power') {
-    const md = CURVE_DURATIONS.filter((d) => d <= 4 * 3600);
-    series.push({ name: 'OmPD model', color: t.ink2, durations: md, values: scale(md.map((d) => ompd(d, model))), dashed: true, width: 1.5 });
+    // your estimate as a curve, up to the hour it reaches FTP
+    const md = CURVE_DURATIONS.filter((d) => d <= FIXED_MAX);
+    series.push({ name: 'Your model', color: t.ink2, durations: md, values: scale(md.map((d) => ompd(d, model))), dashed: true, width: 1.5 });
   }
   const unit = kind === 'hr' ? 'bpm' : kind === 'speed' ? paceUnit('run') : kind === 'vam' ? 'm/h' : wkg ? 'W/kg' : 'W';
   const format = kind === 'speed' ? (v: number) => fmtPaceSec(paceSeconds(v, 'run')) : wkg && powerLike ? (v: number) => v.toFixed(2) : (v: number) => `${Math.round(v)}`;
@@ -404,7 +449,7 @@ export function Performance() {
         </Card>
         <div className="flex flex-col gap-4">
           {kind === 'power' || kind === 'np' ? (
-            th.data && <ModelCard model={model} cp2={modelQ.data?.cp2 ?? null} th={th.data.current} weight={weight} ftp={th.data.ftp?.now ?? { basis: th.data.ftpBasis ?? 'cp' }} />
+            th.data && modelQ.data && <ModelCard data={modelQ.data} th={th.data.current} weight={weight} />
           ) : (
             <Card title="About this curve">
               <p className="text-xs leading-relaxed text-ink-2">

@@ -5,6 +5,7 @@
  */
 import { addDays, format, parseISO, startOfWeek, subDays } from 'date-fns';
 import { estimateHrThresholds, estimateThreshold, limitDeclines, WINDOW_DAYS, type FtpEstimate, type HrThresholds, type ThresholdEstimate, type ThresholdSport } from '../shared/analytics/thresholds';
+import { fitPowerDuration, type PdModel } from '../shared/analytics/models';
 import { CURVE_DURATIONS } from '../shared/analytics/series';
 import { aggregateCurve, curvesInRange } from './aggregate';
 import { estimateAt, getPreferences, getSetting, log, manualThresholds, q, resetEstimateCache, setSetting, transaction } from './db';
@@ -102,19 +103,43 @@ export function storedSeries(sport: ThresholdSport): ThresholdEstimate[] {
 
 const brief = (e: ThresholdEstimate): FtpEstimate => ({ date: e.date, threshold: e.threshold, raw: e.raw, cp: e.cp, basis: e.basis ?? 'cp', effort: e.effort });
 
+/** The bike estimate in effect on `date` (as thresholdsFor applies it), and the next one. */
+export function rideEstimates(date: string): { now: ThresholdEstimate | null; next: ThresholdEstimate | null } {
+  const s = storedSeries('ride');
+  const at = estimateAt('ride', date, !manualThresholds(date));
+  const now = (at && s.find((e) => e.date === at.date)) || null;
+  const next = s.find((e) => e.date > date && e.date > (now?.date ?? '')) ?? null;
+  return { now, next };
+}
+
+/** A change worth a mention: half a percent, as for recalculating activities. */
+export const moved = (a: number, b: number) => Math.abs(b - a) / a > 0.005;
+
 /**
  * The automatic FTP in effect on `date` and what set it — and next week's, when it will be
  * different: a new best effort shows straight away, though it only applies from Monday.
  */
 export function ftpEstimates(date: string): { now: FtpEstimate | null; next: FtpEstimate | null } {
   if (!getPreferences().autoThresholds.ride) return { now: null, next: null };
-  const s = storedSeries('ride');
-  const at = estimateAt('ride', date, !manualThresholds(date));
-  const now = at ? s.find((e) => e.date === at.date) : undefined;
-  const next = s.find((e) => e.date > date && e.date > (now?.date ?? ''));
-  // a change worth a mention: half a percent, as for recalculating activities
-  const moves = next && (!now || Math.abs(next.threshold - now.threshold) / now.threshold > 0.005);
-  return { now: now ? brief(now) : null, next: next && moves ? brief(next) : null };
+  const { now, next } = rideEstimates(date);
+  return { now: now ? brief(now) : null, next: next && (!now || moved(now.threshold, next.threshold)) ? brief(next) : null };
+}
+
+const models = new Map<string, PdModel | null>();
+/**
+ * An estimate drawn as one power-duration curve: sprint power (Pmax, fitted to the same 6
+ * months of best efforts), then its CP and W′ up to 30 minutes, falling to its FTP at an
+ * hour — so the model on Power & Performance tells the same story as Thresholds, W′ balance
+ * and the ride insights.
+ */
+export function estimateModel(e: ThresholdEstimate): PdModel | null {
+  const key = `${e.date}|${e.cp}|${e.wPrime}|${e.threshold}`;
+  if (!models.has(key)) {
+    // OmPD beyond 30 min: P(t) = CP + W′/t − A·ln(t / 30 min); A puts the hour at FTP
+    const a = Math.max(0, (e.cp + e.wPrime / 3600 - e.threshold) / Math.log(2));
+    models.set(key, fitPowerDuration(aggregateCurve('power', e.windowFrom, e.windowTo, 'ride').values, CURVE_DURATIONS, { cp: e.cp, wPrime: e.wPrime, a }));
+  }
+  return models.get(key)!;
 }
 
 const state = { running: false, pending: false, timer: null as NodeJS.Timeout | null, lastRun: null as string | null };
@@ -140,13 +165,14 @@ export async function refreshEstimates(opts: { force?: boolean } = {}): Promise<
     const auto = getPreferences().autoThresholds;
     for (const sport of SPORTS) {
       const next = computeSeries(sport);
-      const prev = new Map(storedSeries(sport).map((e) => [e.date, e.threshold]));
+      const prev = new Map(storedSeries(sport).map((e) => [e.date, e]));
       let earliest: string | null = null;
       const seen = new Set<string>();
       for (const e of next) {
         seen.add(e.date);
         const p = prev.get(e.date);
-        if (p == null || Math.abs(p - e.threshold) / e.threshold > 0.005) {
+        // bike CP and W′ drive W′ balance, so they count too
+        if (!p || moved(e.threshold, p.threshold) || (sport === 'ride' && (moved(e.cp, p.cp) || moved(e.wPrime, p.wPrime)))) {
           earliest ??= e.date;
           break;
         }
@@ -179,6 +205,7 @@ export async function refreshEstimates(opts: { force?: boolean } = {}): Promise<
       changedFrom.hr = earliest;
     }
     resetEstimateCache();
+    models.clear();
     if (auto.hr && (opts.force || changedFrom.hr)) {
       // the first estimate also covers everything before it
       const first = storedHrSeries()[0]?.date;

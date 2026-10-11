@@ -3,7 +3,6 @@ import { useMemo } from 'react';
 import { differenceInCalendarDays, parseISO } from 'date-fns';
 import { ArrowRight, CalendarPlus, Flag, Zap } from 'lucide-react';
 import type { Activity, PlannedWorkout, PmcPoint, RaceEvent, Thresholds } from '../../shared/types';
-import type { PdModel } from '../../shared/analytics/models';
 import { ftpBasisText, type FtpEstimate } from '../../shared/analytics/thresholds';
 import { useApi } from '../lib/api';
 import { Card, PageHeader, Spinner, Stat, SportIcon, Button, Badge } from '../components/ui';
@@ -26,7 +25,6 @@ interface DashboardData {
   upcoming: PlannedWorkout[];
   events: RaceEvent[];
   nextEvent: (RaceEvent & { projected: PmcPoint | null }) | null;
-  model: PdModel | null;
   thresholds: Thresholds;
   ftpBasis: FtpEstimate['basis'] | null;
   /** what set the automatic FTP, and next week's when it will be different */
@@ -106,7 +104,7 @@ export function Dashboard() {
   const nav = useNavigate();
   if (status.data && status.data.activityCount === 0 && !status.data.job) return <Onboarding />;
   if (isLoading || !data) return <Spinner />;
-  const { today, form, week, model, thresholds } = data;
+  const { today, form, week, thresholds } = data;
   const formC = form ? formColor(t, form.id) : t.muted;
   const daysTo = data.nextEvent ? differenceInCalendarDays(parseISO(data.nextEvent.date), new Date()) : null;
   const wkg = thresholds.ftp && thresholds.weight ? thresholds.ftp / thresholds.weight : null;
@@ -169,7 +167,7 @@ export function Dashboard() {
                 )}
               </>
             }
-            title={`The FTP every zone and TSS uses — ${auto ? `estimated automatically, set by ${basis}` : basis}.${next ? ` From ${fmtDate(next.date, 'EEEE d MMMM')} (thresholds update weekly): ${Math.round(next.threshold)} W, set by ${ftpBasisText(next, { full: true, date: onDay })}.` : ''}${model ? ` The power-duration model's critical power for the last 90 days is ${Math.round(model.eftp)} W.` : ''}`}
+            title={`The FTP every zone and TSS uses — ${auto ? `estimated automatically, set by ${basis}` : basis}.${next ? ` From ${fmtDate(next.date, 'EEEE d MMMM')} (thresholds update weekly): ${Math.round(next.threshold)} W, set by ${ftpBasisText(next, { full: true, date: onDay })}.` : ''}${thresholds.cp ? ` Critical power ${thresholds.cp} W, W′ ${(thresholds.wPrime / 1000).toFixed(1)} kJ.` : ''}`}
           />
         </div>
       </div>

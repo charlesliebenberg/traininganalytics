@@ -158,10 +158,34 @@ export function getPreferences(): Preferences {
 }
 
 export function setPreferences(p: Partial<Preferences>): Preferences {
+  if (p.timezone !== undefined && !validTimezone(p.timezone)) {
+    p = { ...p };
+    delete p.timezone;
+  }
   const next = { ...getPreferences(), ...p };
   prefCache = null;
   q.run('INSERT INTO settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value', 'preferences', JSON.stringify(next));
+  applyTimezone(next.timezone);
   return next;
+}
+
+const validTimezone = (tz: unknown): tz is string => {
+  if (typeof tz !== 'string' || !tz) return false;
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Run the server's local dates in the athlete's time zone: "today", week boundaries and the
+ * dates of imported files. On a UTC host an Australian morning is still yesterday, so the
+ * pages computed here and the ones computed in the browser would disagree until midday.
+ */
+export function applyTimezone(tz: string | undefined) {
+  if (validTimezone(tz) && process.env.TZ !== tz) process.env.TZ = tz;
 }
 
 export function getSetting<T>(key: string): T | null {
