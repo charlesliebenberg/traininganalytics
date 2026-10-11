@@ -1,5 +1,5 @@
 import { config, stravaConfigured } from '../config';
-import { log, q, upsertThresholds, listThresholds, DEFAULT_THRESHOLDS, getSetting, setSetting } from '../db';
+import { log, q, upsertThresholds, listThresholds, DEFAULT_THRESHOLDS, getSetting, setSetting, applyTimezone, athleteTimezone } from '../db';
 import { saveActivity, type LapInput } from '../ingest';
 import { normalizeStreams } from '../../shared/analytics/metrics';
 import type { Sport } from '../../shared/types';
@@ -119,6 +119,8 @@ interface StravaSummary {
   type: string;
   start_date: string;
   start_date_local: string;
+  /** "(GMT+10:00) Australia/Sydney" */
+  timezone?: string;
   elapsed_time: number;
   moving_time: number;
   distance: number;
@@ -212,13 +214,20 @@ export async function stravaSyncList(payload: ListPayload): Promise<void> {
   const liteBefore = Date.now() - LITE_AFTER_DAYS * 86400_000;
   let newest = 0;
   let oldest = Infinity;
+  let zone: string | undefined;
   for (const a of list) {
     const start = Date.parse(a.start_date);
+    if (a.timezone && Math.floor(start / 1000) >= newest) zone = a.timezone;
     const existing = q.get("SELECT id, detailed FROM activities WHERE source = 'strava' AND external_id = ?", String(a.id));
     if (!existing) saveActivity({ ...summaryInput(a), raw: a });
     if (!existing?.detailed) enqueue('strava', 'detail', String(a.id), start < liteBefore ? { lite: true } : null, mode === 'poll' ? 5 : 1, start);
     newest = Math.max(newest, Math.floor(start / 1000));
     oldest = Math.min(oldest, Math.floor(start / 1000));
+  }
+  // where the athlete last rode sets the server's "today" until their browser says otherwise
+  if (zone && mode === 'poll') {
+    setSetting('strava_timezone', zone);
+    applyTimezone(athleteTimezone());
   }
   if (mode === 'backfill') {
     if (list.length === PER_PAGE && Number.isFinite(oldest)) enqueue('strava', 'list', `backfill-${oldest}`, { mode: 'backfill', before: oldest }, 8);

@@ -13,9 +13,9 @@ import { ingestEvents } from './ingest';
 import { scheduleEstimateRefresh, upgradeMetrics } from './estimates';
 import { warmAerobic } from './aerobic';
 import { warmEffortSeries } from './efforts';
-import { applyTimezone, getPreferences, log } from './db';
+import { applyTimezone, athleteTimezone, log } from './db';
 
-applyTimezone(getPreferences().timezone);
+applyTimezone(athleteTimezone());
 
 const app = new Hono();
 

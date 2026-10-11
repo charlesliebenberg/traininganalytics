@@ -188,6 +188,18 @@ export function applyTimezone(tz: string | undefined) {
   if (validTimezone(tz) && process.env.TZ !== tz) process.env.TZ = tz;
 }
 
+/** The zone of the athlete's latest Strava activity: "(GMT+10:00) Australia/Sydney" → "Australia/Sydney". */
+export function stravaTimezone(): string | undefined {
+  const raw =
+    getSetting<string>('strava_timezone') ??
+    (q.get(`SELECT json_extract(summary, '$.timezone') AS tz FROM activities WHERE summary IS NOT NULL AND json_extract(summary, '$.timezone') IS NOT NULL ORDER BY start_time DESC LIMIT 1`)?.tz as string | undefined);
+  const tz = raw?.replace(/^\(.*?\)\s*/, '');
+  return validTimezone(tz) ? tz : undefined;
+}
+
+/** The athlete's time zone: what their browser reports, else where they last rode. */
+export const athleteTimezone = () => getPreferences().timezone ?? stravaTimezone();
+
 export function getSetting<T>(key: string): T | null {
   const row = q.get('SELECT value FROM settings WHERE key = ?', key);
   return row ? (JSON.parse(row.value) as T) : null;

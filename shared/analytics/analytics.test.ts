@@ -499,6 +499,8 @@ describe('threshold floors and heart-rate thresholds', () => {
     expect(e.cpRaised?.by).toBe('ftp');
     expect(e.cp).toBeCloseTo(hourPower(311, 2400) / 0.96, 6);
     expect(e.cp).toBeGreaterThan(e.threshold);
+    // and above the 40 minutes actually held: CP can't sit below a 30–60 minute effort
+    expect(e.cp).toBeGreaterThan(311);
     // the 3-minute effort is the one the new CP leaves least room above it
     expect(e.wPrime).toBeCloseTo(22000 - (e.cp - 299) * 180, -1);
     expect(e.cpRaised?.effort).toEqual({ t: 2400, value: 311, activityId: 1309, date: '2026-10-10' });
