@@ -17,11 +17,13 @@
  *      effort scores highest — three genuinely maximal efforts, spread out enough to pin
  *      down both the slope (CP / CS) and the intercept (W′ / D′).
  *   4. Least-squares line through those three points → CP and W′ (or CS and D′).
- *   5. Bike: the model overstates what can be held for longer than ~30 min, so an effort of
- *      20–60 min above it means CP is too low — CP is raised to cover it, W′ kept.
- *   6. FTP is 96 % of CP, but never below an effort actually sustained: 95 % of the best
+ *   5. FTP is 96 % of CP, but never below an effort actually sustained: 95 % of the best
  *      20 minutes, or any 30–60 minute effort scaled to an hour (98 % of 40 minutes, the
  *      best hour in full).
+ *   6. Bike: CP stays above FTP. A long effort that shows a higher FTP than 96 % of CP shows
+ *      CP runs low — the fit's long point was paced, not all-out — so CP is raised to match
+ *      and W′ refitted to the shorter efforts. And the model overstates what can be held
+ *      beyond ~30 min, so an effort of 20–60 min above it raises CP to cover it.
  */
 import { CURVE_DURATIONS, linreg } from './series';
 import { nelderMead } from './models';
@@ -61,8 +63,12 @@ export interface ThresholdEstimate {
   basis?: 'cp' | '20min' | 'long' | '60min';
   /** the effort behind a floor */
   effort?: FtpEffort;
-  /** CP as fitted, and the sustained effort it was raised to cover (bike) */
-  cpRaised?: { fit: number; effort: FtpEffort };
+  /**
+   * Bike: CP and W′ as fitted, when a sustained effort raised CP — `ftp`: the FTP it shows
+   * needs CP above it (FTP = 96 % of CP; W′ refitted to the shorter efforts); `cover`: the
+   * model allowed less than was held for 20–60 min (W′ kept)
+   */
+  cpRaised?: { fit: number; wPrimeFit: number; effort: FtpEffort; by: 'ftp' | 'cover' };
   r2: number;
   points: EffortPoint[];
   /** number of activities with curve data in the window */
@@ -95,8 +101,11 @@ export const WINDOW_DAYS = 182;
  */
 export const MAX_WEEKLY_DECLINE = 0.01;
 
-/** Apply the decline limit across a weekly series (sorted by date). */
-export function limitDeclines<T extends { date: string; raw: number; threshold: number }>(series: T[]): T[] {
+/**
+ * Apply the decline limit across a weekly series (sorted by date). CP (or CS) is held up in
+ * step, so the threshold never ends up above it.
+ */
+export function limitDeclines<T extends { date: string; raw: number; threshold: number; cp?: number }>(series: T[]): T[] {
   let prev: T | null = null;
   return series.map((e) => {
     let threshold = e.raw;
@@ -104,7 +113,7 @@ export function limitDeclines<T extends { date: string; raw: number; threshold: 
       const weeks = Math.max(1, Math.round((Date.parse(e.date) - Date.parse(prev.date)) / (7 * 86400000)));
       threshold = Math.max(e.raw, prev.threshold * (1 - MAX_WEEKLY_DECLINE) ** weeks);
     }
-    const out = { ...e, threshold };
+    const out = { ...e, threshold, ...(e.cp != null && threshold > e.raw ? { cp: (e.cp * threshold) / e.raw } : {}) };
     prev = out;
     return out;
   });
@@ -122,6 +131,8 @@ export const hourPower = (power: number, t: number) => power * Math.min(1, t / 3
 export const LONG_EFFORTS: [number, number] = [1800, 3600];
 /** Efforts this long can't sit above the critical-power model (bike), s. */
 export const SUSTAINED_EFFORTS: [number, number] = [1200, 3600];
+/** Smallest W′ a refit may give, J. */
+const MIN_WPRIME = 3000;
 
 /** An FTP estimate in brief: its value, and the rule (and effort) that set it. */
 export type FtpEstimate = Pick<ThresholdEstimate, 'date' | 'threshold' | 'raw' | 'cp' | 'basis' | 'effort'>;
@@ -242,40 +253,63 @@ export function estimateThreshold(
     cp = ref.cp;
     wPrime = ref.wPrime;
   }
-  // The two-parameter model overstates what can be held for longer than ~30 minutes, so a
-  // 20–60 minute effort above it is proof CP is too low (the best 30 minutes of a 40-minute
-  // effort, taken as all-out, drags it down). Raise CP to cover it, keeping W′: 40 minutes
-  // at 311 W with W′ 22 kJ needs CP ≥ 302 W.
   let cpRaised: ThresholdEstimate['cpRaised'];
-  if (sport === 'ride') {
-    const fitCp = cp;
-    durations.forEach((t, i) => {
-      const v = curve.values[i];
-      if (!v || t < SUSTAINED_EFFORTS[0] || t > SUSTAINED_EFFORTS[1] || v - wPrime / t <= cp) return;
-      cp = v - wPrime / t;
-      cpRaised = { fit: fitCp, effort: { t, value: v, activityId: curve.activityIds?.[i] ?? null, date: curve.dates?.[i] ?? null } };
-    });
-    // a rounding hair isn't worth a mention
-    if (cpRaised && cp - cpRaised.fit < 0.5) cpRaised = undefined;
-  }
   let threshold = cp * cfg.factor;
   let basis: ThresholdEstimate['basis'] = 'cp';
   let effort: FtpEffort | undefined;
   if (sport === 'ride') {
+    const fitCp = cp;
+    const fitWPrime = wPrime;
+    const effortAt = (i: number): FtpEffort => ({ t: durations[i], value: curve.values[i]!, activityId: curve.activityIds?.[i] ?? null, date: curve.dates?.[i] ?? null });
+    // the best effort of 30–60 min, scaled to an hour (hourPower)
+    let long: { ftp: number; i: number } | null = null;
+    durations.forEach((t, i) => {
+      const v = curve.values[i];
+      if (v && t >= LONG_EFFORTS[0] && t <= LONG_EFFORTS[1] && (!long || hourPower(v, t) > long.ftp)) long = { ftp: hourPower(v, t), i };
+    });
+    // CP stays above FTP. When a long effort shows more than 96 % of CP, the fit runs low:
+    // its long point was paced, not all-out (the best 30 minutes inside a 40-minute ride, the
+    // last rep of 3 × 20), which drags CP down and inflates W′. Heart rate agrees: 20 minutes
+    // at 315 W with heart rate level from minute 5 is below CP, not 13 W above it. Raise CP to
+    // match, and refit W′ to the efforts it has to cover — every effort of 3–30 minutes.
+    const lg = long as { ftp: number; i: number } | null;
+    if (lg && lg.ftp / cfg.factor > cp + 0.5) {
+      cp = lg.ftp / cfg.factor;
+      let w = 0;
+      durations.forEach((t, i) => {
+        const v = curve.values[i];
+        if (v && t >= cfg.tMin && t <= 1800 && !curve.filled?.[i]) w = Math.max(w, (v - cp) * t);
+      });
+      wPrime = Math.max(MIN_WPRIME, w);
+      cpRaised = { fit: fitCp, wPrimeFit: fitWPrime, effort: effortAt(lg.i), by: 'ftp' };
+    }
+    // the model overstates what can be held beyond ~30 minutes, so a 20–60 minute effort above
+    // it is proof CP is too low: raise CP to cover it, keeping W′ (40 minutes at 311 W with
+    // W′ 22 kJ needs CP ≥ 302 W)
+    durations.forEach((t, i) => {
+      const v = curve.values[i];
+      if (!v || t < SUSTAINED_EFFORTS[0] || t > SUSTAINED_EFFORTS[1] || v - wPrime / t <= cp + 1e-9) return;
+      cp = v - wPrime / t;
+      cpRaised = { fit: fitCp, wPrimeFit: fitWPrime, effort: effortAt(i), by: cpRaised?.by ?? 'cover' };
+    });
+    // a rounding hair isn't worth a mention
+    if (cpRaised && cp - cpRaised.fit < 0.5) cpRaised = undefined;
+
     // FTP can't be below what was actually sustained. The best 20 min and every effort of
-    // 30–60 min are floors, scaled to an hour (hourPower): 95 % of 20 min — the classic field
-    // test, capped at CP, as for riders with a big W′ it overshoots — 98 % of 40 min, the
-    // best hour in full. Without all-out efforts the CP fit times 0.96 alone runs low: a
-    // 3 × 20 min session at 107 % of "FTP", below threshold heart rate, or 40 minutes held at
-    // 104 %, is the giveaway.
+    // 30–60 min are floors, scaled to an hour: 95 % of 20 min — the classic field test,
+    // capped at CP, as for riders with a big W′ it overshoots — 98 % of 40 min, the best hour
+    // in full. Without all-out efforts the CP fit times 0.96 alone runs low: a 3 × 20 min
+    // session at 107 % of "FTP", below threshold heart rate, is the giveaway. A long effort
+    // that raised CP sets FTP at exactly 96 % of it: it wins the tie.
+    threshold = cp * cfg.factor;
     durations.forEach((t, i) => {
       const v = curve.values[i];
       if (!v || (t !== 1200 && (t < LONG_EFFORTS[0] || t > LONG_EFFORTS[1]))) return;
       const floor = t === 1200 ? Math.min(hourPower(v, t), cp) : hourPower(v, t);
-      if (floor > threshold + 1e-9) {
+      if (floor > threshold + (t === 1200 ? 1e-9 : -1e-6)) {
         threshold = floor;
         basis = t === 1200 ? '20min' : t >= 3600 ? '60min' : 'long';
-        effort = { t, value: v, activityId: curve.activityIds?.[i] ?? null, date: curve.dates?.[i] ?? null };
+        effort = effortAt(i);
       }
     });
   }

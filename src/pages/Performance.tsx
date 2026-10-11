@@ -86,7 +86,7 @@ function ModelCard({ data, th, weight }: { data: ModelResponse; th: Thresholds; 
               {nextCp && <NextLine v={nextCp.cp} date={nextCp.date} />}
             </>
           }
-          title={`The highest power you can sustain before W′ starts to run down${e.cpRaised ? ` — raised from the fit's ${Math.round(e.cpRaised.fit)} W to cover your ${fmtDurLabel(e.cpRaised.effort.t)} at ${Math.round(e.cpRaised.effort.value)} W` : ''}`}
+          title={`The highest power you can sustain before W′ starts to run down, a few percent above FTP${e.cpRaised ? ` — raised from the fit's ${Math.round(e.cpRaised.fit)} W by your ${fmtDurLabel(e.cpRaised.effort.t)} at ${Math.round(e.cpRaised.effort.value)} W` : ''}`}
         />
         <Stat label="W′" value={(e.wPrime / 1000).toFixed(1)} unit="kJ" sub="anaerobic capacity" title="Work you can do above critical power before you have to ease off" />
         <Stat

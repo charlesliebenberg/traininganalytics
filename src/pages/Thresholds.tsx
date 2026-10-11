@@ -304,11 +304,12 @@ function LinearFitChart({ sport, e, yMax }: { sport: ThresholdSport; e: Threshol
     const isBike = sport === 'ride';
     const yv = (p: { t: number; value: number }) => (isBike ? (p.value * p.t) / 1000 : p.value * p.t);
     const maxT = ESTIMATE_CONFIG[sport].tMax * 1.05;
-    // the regression's own line (CP before any raise for a long effort)
+    // the regression's own line (CP and W′ before any raise for a long effort)
     const slope = e.cpRaised?.fit ?? e.cp;
+    const icpt = e.cpRaised?.wPrimeFit ?? e.wPrime;
     const line: [number, number][] = [
-      [0, isBike ? e.wPrime / 1000 : e.wPrime],
-      [maxT / 60, isBike ? (slope * maxT + e.wPrime) / 1000 : slope * maxT + e.wPrime],
+      [0, isBike ? icpt / 1000 : icpt],
+      [maxT / 60, isBike ? (slope * maxT + icpt) / 1000 : slope * maxT + icpt],
     ];
     const yName = isBike ? 'Work (kJ)' : 'Distance (m)';
     return {
@@ -469,7 +470,10 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
                   {sport === 'ride' && e.cpRaised && (
                     <div className="mt-2 text-[13px] text-ink-2">
                       Critical power <b className="text-ink">{f.value(e.cp)}</b>: the line through the three efforts gives {f.value(e.cpRaised.fit)}, but you held {f.value(e.cpRaised.effort.value)} for {fmtDurLabel(e.cpRaised.effort.t)}
-                      {e.cpRaised.effort.date ? ` on ${fmtDate(e.cpRaised.effort.date, 'd MMM yyyy')}` : ''} — more than it allows — so CP is raised to cover it.
+                      {e.cpRaised.effort.date ? ` on ${fmtDate(e.cpRaised.effort.date, 'd MMM yyyy')}` : ''}
+                      {e.cpRaised.by === 'ftp'
+                        ? ` — an FTP of ${f.value(hourPower(e.cpRaised.effort.value, e.cpRaised.effort.t))}, and FTP is ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of critical power. The line's longest effort was paced, not all-out, so CP is raised to match, with W′ refitted to your shorter efforts (${wpText(sport, e.cpRaised.wPrimeFit)} → ${wpText(sport, e.wPrime)}).`
+                        : ' — more than the line allows — so CP is raised to cover it.'}
                     </div>
                   )}
                   {sport === 'ride' && (
@@ -490,7 +494,7 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
                   <LinearFitChart sport={sport} e={e} yMax={linearMax} />
                   <div className="mt-2 grid grid-cols-3 gap-3 rounded-lg bg-surface-2 p-3">
                     <Stat label="Slope" value={<span className="text-base">{f.value(e.cpRaised?.fit ?? e.cp)}</span>} sub={e.cpRaised ? `CP raised to ${f.value(e.cp)}` : undefined} />
-                    <Stat label="Intercept" value={<span className="text-base">{wpText(sport, e.wPrime)}</span>} />
+                    <Stat label="Intercept" value={<span className="text-base">{wpText(sport, e.cpRaised?.wPrimeFit ?? e.wPrime)}</span>} sub={e.cpRaised && Math.abs(e.cpRaised.wPrimeFit - e.wPrime) >= 100 ? `W′ now ${wpText(sport, e.wPrime)}` : undefined} />
                     <Stat label="R²" value={<span className="text-base">{e.r2.toFixed(4)}</span>} />
                   </div>
                 </Card>
@@ -548,7 +552,7 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
               <li>
                 Fit the {LABEL[sport].model} model through those three points (a straight line in {sport === 'ride' ? 'work' : 'distance'} vs time).{' '}
                 {sport === 'ride'
-                  ? `Your efforts of 20 to 60 minutes check it: the model overstates what can be held that long, so if you've held more than it allows, CP is raised to cover it. FTP = ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP, because CP from 3–30 min efforts sits slightly above one-hour power. But FTP can't sit below what you've actually held, scaled to an hour: 95% of your best 20 minutes (never above CP), and every effort from 30 to 60 minutes the same way — ${pctOf(1800)} of your best 30 minutes, ${pctOf(2400)} of your best 40, all of your best hour. The highest of these sets FTP.`
+                  ? `FTP = ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP, because CP sits slightly above one-hour power. But FTP can't sit below what you've actually held, scaled to an hour: 95% of your best 20 minutes (never above CP), and every effort from 30 to 60 minutes the same way — ${pctOf(1800)} of your best 30 minutes, ${pctOf(2400)} of your best 40, all of your best hour. The highest of these sets FTP. And CP stays above FTP: when a long effort shows a higher FTP than ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of the fitted CP, the line's longest effort was paced rather than all-out, so CP is raised to match and W′ refitted to your shorter efforts.`
                   : sport === 'run'
                     ? 'Threshold pace = critical speed.'
                     : 'CSS is the critical speed.'}
