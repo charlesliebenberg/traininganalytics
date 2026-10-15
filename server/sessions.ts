@@ -53,7 +53,8 @@ function findingsFor(acts: { id: number; sport: string; date: string; curves: st
     const models = storedSeries('ride');
     for (const a of rides) {
       const c = JSON.parse(a.curves!);
-      const est = models.filter((e) => e.date <= a.date).pop();
+      // the model from before the ride (its own day's estimate already includes it)
+      const est = models.filter((e) => e.date < a.date).pop();
       out.set(a.id, rideEffortFindings({ date: a.date, power: c.power, fatigue: c.fatigue }, history.filter((h) => h.id !== a.id), est ? { cp: est.cp, wPrime: est.wPrime } : null));
     }
   }

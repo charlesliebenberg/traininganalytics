@@ -27,8 +27,8 @@ interface DashboardData {
   nextEvent: (RaceEvent & { projected: PmcPoint | null }) | null;
   thresholds: Thresholds;
   ftpBasis: FtpEstimate['basis'] | null;
-  /** what set the automatic FTP, and next week's when it will be different */
-  ftp?: { now: FtpEstimate | null; next: FtpEstimate | null };
+  /** what set the automatic FTP */
+  ftp?: { now: FtpEstimate | null };
   weekly: { start: string; sports: Record<string, { time: number; tss: number }> }[];
   /** the most recent ride or run, and what it says about fitness */
   latest: (ActivityInsights & { id: number }) | null;
@@ -111,8 +111,6 @@ export function Dashboard() {
   const auto = thresholds.sources?.ftp === 'auto';
   const onDay = (d: string) => fmtDate(d, 'd MMM');
   const basis = !auto ? 'set manually' : ftpBasisText(data.ftp?.now ?? { basis: data.ftpBasis ?? 'cp' }, { full: true, date: onDay });
-  // a new best effort moves FTP from next Monday's estimate on
-  const next = auto ? (data.ftp?.next ?? null) : null;
   const projected = data.pmc.filter((p) => p.projected);
   const planned = projected.some((p) => p.tss > 0);
 
@@ -156,18 +154,8 @@ export function Dashboard() {
             accent={t.power}
             value={thresholds.ftp || '–'}
             unit="W"
-            sub={
-              <>
-                {wkg ? `${wkg.toFixed(2)} W/kg · ` : ''}
-                {auto ? 'auto' : 'manual'}
-                {next && (
-                  <span className="block font-medium text-ink">
-                    {next.threshold > thresholds.ftp ? '↑' : '↓'} {Math.round(next.threshold)} W from {fmtDate(next.date, 'EEE')}
-                  </span>
-                )}
-              </>
-            }
-            title={`The FTP every zone and TSS uses — ${auto ? `estimated automatically, set by ${basis}` : basis}.${next ? ` From ${fmtDate(next.date, 'EEEE d MMMM')} (thresholds update weekly): ${Math.round(next.threshold)} W, set by ${ftpBasisText(next, { full: true, date: onDay })}.` : ''}${thresholds.cp ? ` Critical power ${thresholds.cp} W, W′ ${(thresholds.wPrime / 1000).toFixed(1)} kJ.` : ''}`}
+            sub={`${wkg ? `${wkg.toFixed(2)} W/kg · ` : ''}${auto ? 'auto' : 'manual'}`}
+            title={`The FTP every zone and TSS uses — ${auto ? `estimated automatically, set by ${basis}` : basis}.${thresholds.cp ? ` Critical power ${thresholds.cp} W, W′ ${(thresholds.wPrime / 1000).toFixed(1)} kJ.` : ''}`}
           />
         </div>
       </div>

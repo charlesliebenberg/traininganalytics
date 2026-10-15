@@ -280,6 +280,15 @@ describe('threshold history', () => {
     expect(s[1].threshold).toBeCloseTo(297, 0);
     expect(s[2].threshold).toBe(320);
   });
+  it('lets a daily series fall a seventh of the weekly limit a day', () => {
+    const s = limitDeclines([
+      { date: '2026-01-05', raw: 300, threshold: 300 },
+      { date: '2026-01-06', raw: 250, threshold: 250 },
+      { date: '2026-01-12', raw: 250, threshold: 250 },
+    ]);
+    expect(s[1].threshold).toBeCloseTo(300 * 0.99 ** (1 / 7), 6);
+    expect(s[2].threshold).toBeCloseTo(297, 6);
+  });
   it('skips points copied from longer efforts', () => {
     const values = CURVE_DURATIONS.map((t) => 280 + 20000 / t);
     const filled = CURVE_DURATIONS.map((t) => t > 300 && t < 1200);
@@ -309,8 +318,8 @@ describe('comeback analytics', () => {
     // a rolling estimate that keeps reporting March efforts for months after riding stopped
     const pts = (d: string) => [{ t: 300, value: 400, activityId: 1, date: d, score: 1, band: 0 }];
     const stale = ['2020-03-23', '2020-05-04', '2020-08-17'].map((date) => ({ date, raw: 357, points: pts('2020-03-15') }));
-    expect(effortDate(stale[2])).toBe('2020-03-16');
-    expect(byEffortDate(stale)).toEqual([{ date: '2020-03-16', value: 357 }]);
+    expect(effortDate(stale[2])).toBe('2020-03-15');
+    expect(byEffortDate(stale)).toEqual([{ date: '2020-03-15', value: 357 }]);
   });
   it('builds a gentle comeback plan that reaches the target without a race taper', () => {
     const weeks = generateSeasonPlan({ startDate: '2026-01-05', raceDate: '2026-06-01', startCtl: 25, startAtl: 25, targetCtl: 75, maxRamp: 5, initialRamp: 3, initialWeeks: 4, pattern: '3:1', taperWeeks: 2, maxWeeklyHours: 16, sport: 'ride', goal: 'fitness' });

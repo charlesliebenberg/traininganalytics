@@ -1,13 +1,14 @@
 /**
- * Rolling threshold history: every week, estimate FTP / run threshold pace / CSS from the
- * previous 6 months of best efforts, store it, and (in auto mode) recompute affected
- * activities so TSS and zones use the threshold that was true at the time.
+ * Rolling threshold history: every day, estimate FTP / run threshold pace / CSS from the
+ * 6 months of best efforts up to and including that day, store it, and (in auto mode)
+ * recompute affected activities so TSS and zones use the threshold that was true at the
+ * time — a ride that sets a new best gets the threshold it earned, from that day on.
  */
-import { addDays, format, parseISO, startOfWeek, subDays } from 'date-fns';
-import { estimateHrThresholds, estimateThreshold, limitDeclines, WINDOW_DAYS, type FtpEstimate, type HrThresholds, type ThresholdEstimate, type ThresholdSport } from '../shared/analytics/thresholds';
+import { addDays, format, parseISO, subDays } from 'date-fns';
+import { estimateHrThresholds, estimateThreshold, limitDeclines, MIN_ACTIVITIES, WINDOW_DAYS, type FtpEstimate, type HrThresholds, type ThresholdEstimate, type ThresholdSport } from '../shared/analytics/thresholds';
 import { fitPowerDuration, type PdModel } from '../shared/analytics/models';
 import { CURVE_DURATIONS } from '../shared/analytics/series';
-import { aggregateCurve, curvesInRange } from './aggregate';
+import { aggregateCurve, curvesInRange, today, type AggregatedCurve } from './aggregate';
 import { estimateAt, getPreferences, getSetting, log, manualThresholds, q, resetEstimateCache, setSetting, transaction } from './db';
 import { recalculate, recalculateAsync } from './ingest';
 
@@ -15,24 +16,119 @@ export const SPORTS: ThresholdSport[] = ['ride', 'run', 'swim'];
 const iso = (d: Date) => format(d, 'yyyy-MM-dd');
 const curveType = (sport: ThresholdSport) => (sport === 'ride' ? 'power' : 'speed') as 'power' | 'speed';
 
-/** Estimate as of `date`, using the 6 months that end the day before. */
+/** The 6 months an estimate for `date` looks at: up to and including that day. */
+export const windowOf = (date: string) => ({ windowFrom: iso(subDays(parseISO(date), WINDOW_DAYS - 1)), windowTo: date });
+
+/** Estimate as of `date`, from the 6 months up to and including it. */
 export function estimateOn(sport: ThresholdSport, date: string): ThresholdEstimate | null {
-  const windowTo = iso(subDays(parseISO(date), 1));
-  const windowFrom = iso(subDays(parseISO(date), WINDOW_DAYS));
+  const { windowFrom, windowTo } = windowOf(date);
   const curve = aggregateCurve(curveType(sport), windowFrom, windowTo, sport);
   const activities = curvesInRange(windowFrom, windowTo, sport).filter((r) => r.curves[curveType(sport)]?.some((v) => v != null)).length;
   return estimateThreshold(sport, curve, { date, windowFrom, windowTo, activities });
 }
 
-/** Weekly estimates (Mondays) from the sport's first activity until next Monday. */
+/** Each day's best-effort curve, kept from the last series computed: [from date, curve] where it changed. */
+const dayCurves = new Map<ThresholdSport, { date: string; curve: AggregatedCurve | null }[]>();
+
+/** The window's best-effort curve on `date`, as the daily series saw it. */
+export function curveOn(sport: ThresholdSport, date: string): AggregatedCurve | null {
+  const list = dayCurves.get(sport);
+  if (!list?.length || date < list[0].date) return null;
+  let lo = 0;
+  let hi = list.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (list[mid].date <= date) lo = mid;
+    else hi = mid - 1;
+  }
+  return list[lo].curve;
+}
+
+/**
+ * Daily estimates from the sport's first activity to today. One pass slides the 6-month
+ * window along the activities: a day whose window neither gained nor lost an activity, or
+ * whose best efforts came out the same, keeps the fit of the day before.
+ */
 export function computeSeries(sport: ThresholdSport): ThresholdEstimate[] {
-  const first = q.get('SELECT MIN(local_date) AS d FROM activities WHERE sport = ? AND curves IS NOT NULL', sport)?.d as string | undefined;
-  if (!first) return [];
+  const type = curveType(sport);
+  const end = today();
+  const rows = curvesInRange('0000-01-01', end, sport)
+    .map((r) => ({ id: r.id, date: r.local_date, values: r.curves[type] }))
+    .filter((r): r is { id: number; date: string; values: (number | null)[] } => !!r.values?.some((v) => v != null))
+    .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
+  const curves: { date: string; curve: AggregatedCurve | null }[] = [];
+  dayCurves.set(sport, curves);
+  if (!rows.length) return [];
+  const n = CURVE_DURATIONS.length;
+  // best value per duration over rows[lo, hi), as aggregateCurve builds it
+  const aggregate = (lo: number, hi: number): AggregatedCurve => {
+    const values: (number | null)[] = new Array(n).fill(null);
+    const activityIds: (number | null)[] = new Array(n).fill(null);
+    const dates: (string | null)[] = new Array(n).fill(null);
+    const filled: boolean[] = new Array(n).fill(false);
+    for (let k = lo; k < hi; k++) {
+      const r = rows[k];
+      for (let i = 0; i < r.values.length && i < n; i++) {
+        const v = r.values[i];
+        if (v != null && (values[i] == null || v > values[i]!)) {
+          values[i] = v;
+          activityIds[i] = r.id;
+          dates[i] = r.date;
+        }
+      }
+    }
+    for (let i = n - 2; i >= 0; i--) {
+      if (values[i + 1] != null && (values[i] == null || values[i]! < values[i + 1]!)) {
+        values[i] = values[i + 1];
+        activityIds[i] = activityIds[i + 1];
+        dates[i] = dates[i + 1];
+        filled[i] = true;
+      }
+    }
+    return { durations: CURVE_DURATIONS, values, activityIds, dates, filled };
+  };
   const out: ThresholdEstimate[] = [];
-  const end = addDays(new Date(), 7);
-  for (let d = startOfWeek(addDays(parseISO(first), 7), { weekStartsOn: 1 }); d <= end; d = addDays(d, 7)) {
-    const e = estimateOn(sport, iso(d));
-    if (e) out.push(e);
+  let lo = 0;
+  let hi = 0;
+  let curve: AggregatedCurve | null = null;
+  let key = '';
+  let fitted = false;
+  let fit: ThresholdEstimate | null = null;
+  for (let d = parseISO(rows[0].date); iso(d) <= end; d = addDays(d, 1)) {
+    const date = iso(d);
+    const { windowFrom } = windowOf(date);
+    let moved = false;
+    while (hi < rows.length && rows[hi].date <= date) {
+      hi++;
+      moved = true;
+    }
+    while (lo < hi && rows[lo].date < windowFrom) {
+      lo++;
+      moved = true;
+    }
+    const activities = hi - lo;
+    if (activities < MIN_ACTIVITIES) {
+      if (curve) curves.push({ date, curve: null });
+      curve = null;
+      key = '';
+      continue;
+    }
+    if (moved || !curve) {
+      const c = aggregate(lo, hi);
+      const k = `${c.values.join()}|${c.activityIds.join()}|${c.filled.join()}`;
+      if (k !== key) {
+        curve = c;
+        key = k;
+        fitted = false;
+        curves.push({ date, curve: c });
+      }
+    }
+    const meta = { date, windowFrom, windowTo: date, activities };
+    if (!fitted) {
+      fit = estimateThreshold(sport, curve!, meta);
+      fitted = true;
+    }
+    if (fit) out.push({ ...fit, ...meta });
   }
   return limitDeclines(out);
 }
@@ -41,13 +137,13 @@ export interface HrEstimate extends HrThresholds {
   date: string;
   rides: number;
   runs: number;
-  /** what this week's own windows show, before the best-ever value is carried forward */
+  /** what this day's own windows show, before the best-ever value is carried forward */
   raw: HrThresholds;
 }
 
 /**
- * Weekly heart-rate thresholds: LTHR from the 6 months before each Monday, max HR from the
- * 12 months before. Heart-rate thresholds are set mostly by age, not fitness, so the best
+ * Daily heart-rate thresholds: LTHR from the 6 months up to and including each day, max HR
+ * from the 12 months. Heart-rate thresholds are set mostly by age, not fitness, so the best
  * value ever measured carries forward, less 0.7 bpm a year (the age decline of max HR):
  * easy blocks and comebacks don't hold hard 30-minute efforts, and a threshold that drifted
  * down with them would make easy riding look hard.
@@ -59,23 +155,38 @@ export function computeHrSeries(): HrEstimate[] {
   );
   if (!rows.length) return [];
   const out: HrEstimate[] = [];
-  const end = addDays(new Date(), 7);
+  const end = today();
   let lo6 = 0;
   let lo12 = 0;
   let hi = 0;
   const best: Partial<Record<'lthr' | 'runLthr' | 'maxHr', { v: number; d: string }>> = {};
-  for (let d = startOfWeek(addDays(parseISO(rows[0].d), 7), { weekStartsOn: 1 }); d <= end; d = addDays(d, 7)) {
+  let e: HrThresholds = { lthr: null, runLthr: null, maxHr: null };
+  let rides: number[] = [];
+  let runs: number[] = [];
+  for (let d = parseISO(rows[0].d); iso(d) <= end; d = addDays(d, 1)) {
     const date = iso(d);
-    const from6 = iso(subDays(d, WINDOW_DAYS));
-    const from12 = iso(subDays(d, 365));
-    while (hi < rows.length && rows[hi].d < date) hi++;
-    while (lo6 < hi && rows[lo6].d < from6) lo6++;
-    while (lo12 < hi && rows[lo12].d < from12) lo12++;
-    const win6 = rows.slice(lo6, hi);
-    const rides = win6.filter((r) => r.sport === 'ride' && r.h30).map((r) => r.h30!);
-    const runs = win6.filter((r) => r.sport === 'run' && r.h30).map((r) => r.h30!);
-    const maxima = rows.slice(lo12, hi).map((r) => r.mx ?? 0);
-    const e = estimateHrThresholds(rides, runs, maxima);
+    const from6 = windowOf(date).windowFrom;
+    const from12 = iso(subDays(d, 364));
+    let moved = date === rows[0].d;
+    while (hi < rows.length && rows[hi].d <= date) {
+      hi++;
+      moved = true;
+    }
+    while (lo6 < hi && rows[lo6].d < from6) {
+      lo6++;
+      moved = true;
+    }
+    while (lo12 < hi && rows[lo12].d < from12) {
+      lo12++;
+      moved = true;
+    }
+    // the windows only change when an activity enters or leaves them
+    if (moved) {
+      const win6 = rows.slice(lo6, hi);
+      rides = win6.filter((r) => r.sport === 'ride' && r.h30).map((r) => r.h30!);
+      runs = win6.filter((r) => r.sport === 'run' && r.h30).map((r) => r.h30!);
+      e = estimateHrThresholds(rides, runs, rows.slice(lo12, hi).map((r) => r.mx ?? 0));
+    }
     const carried = (k: 'lthr' | 'runLthr' | 'maxHr') => {
       const b = best[k];
       return b ? b.v - (0.7 * (Date.parse(date) - Date.parse(b.d))) / (365.25 * 86400000) : null;
@@ -95,37 +206,38 @@ export function computeHrSeries(): HrEstimate[] {
   return out;
 }
 
-export const storedHrSeries = (): HrEstimate[] => q.all("SELECT data FROM threshold_estimates WHERE sport = 'hr' ORDER BY date").map((r) => JSON.parse(r.data));
+/** Stored series, parsed once per refresh: daily estimates are thousands of rows. */
+const stored = new Map<string, unknown[]>();
+function loadStored<T>(sport: string): T[] {
+  if (!stored.has(sport)) stored.set(sport, q.all('SELECT data FROM threshold_estimates WHERE sport = ? ORDER BY date', sport).map((r) => JSON.parse(r.data)));
+  return [...(stored.get(sport) as T[])];
+}
+
+export const storedHrSeries = (): HrEstimate[] => loadStored<HrEstimate>('hr');
 
 export function storedSeries(sport: ThresholdSport): ThresholdEstimate[] {
-  return q.all('SELECT data FROM threshold_estimates WHERE sport = ? ORDER BY date', sport).map((r) => JSON.parse(r.data));
+  return loadStored<ThresholdEstimate>(sport);
 }
 
 const brief = (e: ThresholdEstimate): FtpEstimate => ({ date: e.date, threshold: e.threshold, raw: e.raw, cp: e.cp, basis: e.basis ?? 'cp', effort: e.effort });
 
-/** The bike estimate in effect on `date` (as thresholdsFor applies it), and the next one. */
-export function rideEstimates(date: string): { now: ThresholdEstimate | null; next: ThresholdEstimate | null } {
-  const s = storedSeries('ride');
+/** The bike estimate in effect on `date`, as thresholdsFor applies it. */
+export function rideEstimates(date: string): { now: ThresholdEstimate | null } {
   const at = estimateAt('ride', date, !manualThresholds(date));
-  const now = (at && s.find((e) => e.date === at.date)) || null;
-  const next = s.find((e) => e.date > date && e.date > (now?.date ?? '')) ?? null;
-  return { now, next };
+  return { now: (at && storedSeries('ride').find((e) => e.date === at.date)) || null };
 }
 
 /** A change worth a mention: half a percent, as for recalculating activities. */
 export const moved = (a: number, b: number) => Math.abs(b - a) / a > 0.005;
 
-/**
- * The automatic FTP in effect on `date` and what set it — and next week's, when it will be
- * different: a new best effort shows straight away, though it only applies from Monday.
- */
-export function ftpEstimates(date: string): { now: FtpEstimate | null; next: FtpEstimate | null } {
-  if (!getPreferences().autoThresholds.ride) return { now: null, next: null };
-  const { now, next } = rideEstimates(date);
-  return { now: now ? brief(now) : null, next: next && (!now || moved(now.threshold, next.threshold)) ? brief(next) : null };
+/** The automatic FTP in effect on `date`, and what set it. */
+export function ftpEstimates(date: string): { now: FtpEstimate | null } {
+  if (!getPreferences().autoThresholds.ride) return { now: null };
+  const { now } = rideEstimates(date);
+  return { now: now ? brief(now) : null };
 }
 
-const models = new Map<string, PdModel | null>();
+const models = new Map<AggregatedCurve | string, Map<string, PdModel | null>>();
 /**
  * An estimate drawn as one power-duration curve: sprint power (Pmax, fitted to the same 6
  * months of best efforts), then its CP and W′ up to 30 minutes, falling to its FTP at an
@@ -133,16 +245,22 @@ const models = new Map<string, PdModel | null>();
  * and the ride insights.
  */
 export function estimateModel(e: ThresholdEstimate): PdModel | null {
-  const key = `${e.date}|${e.cp}|${e.wPrime}|${e.threshold}`;
-  if (!models.has(key)) {
+  // days that share a curve and an estimate share a fit
+  const curve = curveOn('ride', e.date);
+  const byCurve = curve ?? e.date;
+  const key = `${e.cp}|${e.wPrime}|${e.threshold}`;
+  if (!models.has(byCurve)) models.set(byCurve, new Map());
+  const fits = models.get(byCurve)!;
+  if (!fits.has(key)) {
     // OmPD beyond 30 min: P(t) = CP + W′/t − A·ln(t / 30 min); A puts the hour at FTP
     const a = Math.max(0, (e.cp + e.wPrime / 3600 - e.threshold) / Math.log(2));
-    models.set(key, fitPowerDuration(aggregateCurve('power', e.windowFrom, e.windowTo, 'ride').values, CURVE_DURATIONS, { cp: e.cp, wPrime: e.wPrime, a }));
+    const values = (curve ?? aggregateCurve('power', e.windowFrom, e.windowTo, 'ride')).values;
+    fits.set(key, fitPowerDuration(values, CURVE_DURATIONS, { cp: e.cp, wPrime: e.wPrime, a }));
   }
-  return models.get(key)!;
+  return fits.get(key)!;
 }
 
-const state = { running: false, pending: false, timer: null as NodeJS.Timeout | null, lastRun: null as string | null };
+const state = { running: false, pending: false, timer: null as NodeJS.Timeout | null, lastRun: null as string | null, day: null as string | null };
 
 /**
  * Recompute every sport's series. Where a threshold changed by more than 0.5 % and auto mode
@@ -154,6 +272,7 @@ export async function refreshEstimates(opts: { force?: boolean } = {}): Promise<
     return {};
   }
   state.running = true;
+  state.day = today();
   const changedFrom: Record<string, string | null> = {};
   try {
     // one-off backfill: swims synced before swim speed curves existed
@@ -205,6 +324,7 @@ export async function refreshEstimates(opts: { force?: boolean } = {}): Promise<
       changedFrom.hr = earliest;
     }
     resetEstimateCache();
+    stored.clear();
     models.clear();
     if (auto.hr && (opts.force || changedFrom.hr)) {
       // the first estimate also covers everything before it
@@ -278,3 +398,8 @@ export function scheduleEstimateRefresh(delayMs = 5000) {
 }
 
 export const estimateState = () => ({ running: state.running, lastRun: state.lastRun });
+
+/** Estimates run through today: on a new day, roll them on even if nothing was synced. */
+export function refreshOnNewDay() {
+  if (state.day && state.day !== today() && !state.running && !state.timer) scheduleEstimateRefresh(0);
+}

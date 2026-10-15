@@ -14,7 +14,10 @@ import { breakNames, makeTimeline, monthsText, type Gap, type Timeline } from '.
 interface SeriesResponse {
   sport: ThresholdSport;
   auto: boolean;
+  /** the daily estimates, cut to the days they change */
   series: ThresholdEstimate[];
+  /** days estimated in all */
+  days?: number;
   manual: { date: string; value: number }[];
   gaps: Gap[];
   firstActivity: string | null;
@@ -23,7 +26,8 @@ interface SeriesResponse {
 }
 interface CurvesResponse {
   durations: number[];
-  weeks: { date: string; values: (number | null)[] }[];
+  /** the window's best-effort curve behind each change in the series */
+  curves: { date: string; values: (number | null)[] }[];
 }
 
 const DAY = 86400_000;
@@ -150,7 +154,7 @@ function HistoryChart({ sport, data, series, timeline, selected, onSelect }: { s
   );
 }
 
-/** Step, drag or play through every week's fit. */
+/** Step, drag or play through every change in the estimate. */
 function Scrubber({ series, index, onIndex, timeline }: { series: ThresholdEstimate[]; index: number; onIndex: (i: number) => void; timeline: Timeline }) {
   const [playing, setPlaying] = useState(false);
   const idx = useRef(index);
@@ -179,7 +183,7 @@ function Scrubber({ series, index, onIndex, timeline }: { series: ThresholdEstim
   return (
     <div className="card sticky top-2 z-[600] mt-4 flex flex-wrap items-center gap-3 px-4 py-3 lg:top-3">
       <div className="flex items-center gap-1">
-        <Button size="sm" variant="ghost" icon={<ChevronLeft className="h-4 w-4" />} onClick={() => onIndex(Math.max(0, index - 1))} disabled={index === 0} title="Previous week (←)" />
+        <Button size="sm" variant="ghost" icon={<ChevronLeft className="h-4 w-4" />} onClick={() => onIndex(Math.max(0, index - 1))} disabled={index === 0} title="Previous change (←)" />
         <Button
           size="sm"
           variant="primary"
@@ -190,16 +194,16 @@ function Scrubber({ series, index, onIndex, timeline }: { series: ThresholdEstim
           }}
           title="Play through time"
         />
-        <Button size="sm" variant="ghost" icon={<ChevronRight className="h-4 w-4" />} onClick={() => onIndex(Math.min(series.length - 1, index + 1))} disabled={index === series.length - 1} title="Next week (→)" />
+        <Button size="sm" variant="ghost" icon={<ChevronRight className="h-4 w-4" />} onClick={() => onIndex(Math.min(series.length - 1, index + 1))} disabled={index === series.length - 1} title="Next change (→)" />
       </div>
       <div className="w-44 text-[13px]">
-        <div className="font-semibold">Week of {fmtDate(e.date, 'd MMM yyyy')}</div>
+        <div className="font-semibold">From {fmtDate(e.date, 'd MMM yyyy')}</div>
         <div className="text-[11px] text-muted">
           {index + 1} / {series.length}
           {breakBefore ? ` · after ${monthsText(breakBefore.days)} off` : ''}
         </div>
       </div>
-      <input type="range" min={0} max={series.length - 1} value={index} onChange={(ev) => onIndex(Number(ev.target.value))} className="min-w-[200px] flex-1 accent-[var(--accent)]" aria-label="Week" />
+      <input type="range" min={0} max={series.length - 1} value={index} onChange={(ev) => onIndex(Number(ev.target.value))} className="min-w-[200px] flex-1 accent-[var(--accent)]" aria-label="Date" />
     </div>
   );
 }
@@ -238,7 +242,7 @@ function CurveFitChart({ sport, e, durations, values, yRange }: { sport: Thresho
         },
       },
       xAxis: { type: 'log', min: lo, max: hi, ...axisStyle(t), splitLine: { show: false }, axisLabel: { color: t.muted, fontSize: 11, customValues: ticks, formatter: (v: number) => fmtDurLabel(Math.round(v)) }, axisTick: { show: true, customValues: ticks } },
-      // fixed range across weeks, so scrubbing through time shows real change, not axis jumps
+      // fixed range across dates, so scrubbing through time shows real change, not axis jumps
       yAxis: valueAxis(t, { inverse: sport !== 'ride', min: yRange[0], max: yRange[1], axisLabel: { color: t.muted, fontSize: 11, formatter: f.axis } }),
       series: [
         {
@@ -362,20 +366,17 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
   const timeline = useMemo(() => makeTimeline(data?.gaps ?? []), [data?.gaps]);
   const series = useMemo(() => (data?.series ?? []).filter((e) => !timeline.hidden(e.date)), [data?.series, timeline]);
   const current = series.filter((e) => e.date <= today).pop() ?? series[series.length - 1];
-  // next Monday's estimate, when it moves CP: a new effort shows before the week turns
-  const upcoming = current ? series.find((e) => e.date > today && e.date > current.date) : undefined;
-  const nextCp = sport === 'ride' && current && upcoming && Math.abs(upcoming.cp - current.cp) / current.cp > 0.005 ? upcoming : undefined;
   const sel = selected ?? current?.date ?? null;
   const index = Math.max(0, series.findIndex((e) => e.date === sel));
   const e = series[index] ?? null;
-  const curveByDate = useMemo(() => new Map(curves.data?.weeks.map((w) => [w.date, w.values]) ?? []), [curves.data]);
-  // fixed chart ranges across all weeks
+  const curveByDate = useMemo(() => new Map(curves.data?.curves.map((w) => [w.date, w.values]) ?? []), [curves.data]);
+  // fixed chart ranges across all dates
   const yRange = useMemo<[number, number]>(() => {
     if (!curves.data) return [0, 1];
     const [lo, hi] = curveSpan(sport);
     let mn = Infinity,
       mx = -Infinity;
-    for (const w of curves.data.weeks)
+    for (const w of curves.data.curves)
       w.values.forEach((v, i) => {
         const d = curves.data!.durations[i];
         if (v == null || d < lo || d > hi) return;
@@ -400,7 +401,7 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
     <div>
       <PageHeader
         title="Thresholds"
-        subtitle={`FTP, run threshold pace and swim CSS estimated weekly from your last ${Math.round(WINDOW_DAYS / 30)} months of best efforts`}
+        subtitle={`FTP, run threshold pace and swim CSS estimated every day from your last ${Math.round(WINDOW_DAYS / 30)} months of best efforts, that day included`}
         actions={
           <>
             {tabs}
@@ -423,24 +424,12 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
             <Stat
               label={LABEL[sport].cp}
               value={current ? f.value(current.cp) : '–'}
-              sub={
-                sport === 'ride' ? (
-                  nextCp ? (
-                    <span className="font-medium text-ink">
-                      → {f.value(nextCp.cp)} from {fmtDate(nextCp.date, 'EEE')}
-                    </span>
-                  ) : (
-                    'used for W′ balance'
-                  )
-                ) : (
-                  'threshold = CS'
-                )
-              }
+              sub={sport === 'ride' ? 'used for W′ balance' : 'threshold = CS'}
               title={sport === 'ride' ? 'The same critical power W′ balance, the ride insights and Power & Performance use' : undefined}
             />
             <Stat label={LABEL[sport].wp} value={current ? wpText(sport, current.wPrime) : '–'} sub={sport === 'ride' ? 'anaerobic capacity' : 'distance above CS'} />
             <Stat label="Manual value" value={manualNow?.value ? f.value(manualNow.value) : '–'} sub="Settings → Athlete" />
-            <Stat label="Weeks estimated" value={series.length} sub={data.state.running ? 'recomputing…' : data.state.lastRun ? `updated ${fmtDate(data.state.lastRun, 'd MMM HH:mm')}` : undefined} />
+            <Stat label="Days estimated" value={(data.days ?? series.length).toLocaleString('en-US')} sub={data.state.running ? 'recomputing…' : data.state.lastRun ? `updated ${fmtDate(data.state.lastRun, 'd MMM HH:mm')}` : undefined} />
             <div>
               <div className="text-[11px] font-medium tracking-wide text-muted uppercase">Zones & TSS use</div>
               <div className="mt-2">
@@ -450,7 +439,7 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
             </div>
           </div>
 
-          <Card title="History" subtitle="Applied value (used for zones and TSS on that date), the raw fit for each weekly window, and your manual setting. Breaks of 3+ months without activities are collapsed. Click anywhere, or use the timeline below, to inspect a week.">
+          <Card title="History" subtitle="Applied value (used for zones and TSS on that date), the raw fit for each day's window, and your manual setting. Breaks of 3+ months without activities are collapsed. Click anywhere, or use the timeline below, to inspect an estimate.">
             <HistoryChart sport={sport} data={data} series={series} timeline={timeline} selected={sel} onSelect={setSelected} />
           </Card>
 
@@ -536,14 +525,14 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
             </>
           ) : (
             <Card className="mt-4">
-              <Empty title="No estimate for this week" />
+              <Empty title="No estimate for this date" />
             </Card>
           )}
 
           <Card className="mt-4" title={<span className="flex items-center gap-2"><Info className="h-4 w-4 text-muted" />How the estimate works</span>}>
             <ol className="list-decimal space-y-1.5 pl-5 text-[13px] leading-relaxed text-ink-2">
               <li>
-                Each week, take your best {sport === 'ride' ? 'power' : 'pace'} for every duration over the previous {Math.round(WINDOW_DAYS / 30)} months, between {fmtDurLabel(ESTIMATE_CONFIG[sport].tMin)} and {fmtDurLabel(ESTIMATE_CONFIG[sport].tMax)}. That range is long enough to be aerobic-dominant and short enough that you can go all-out.
+                Each day, take your best {sport === 'ride' ? 'power' : 'pace'} for every duration over the {Math.round(WINDOW_DAYS / 30)} months up to and including that day, between {fmtDurLabel(ESTIMATE_CONFIG[sport].tMin)} and {fmtDurLabel(ESTIMATE_CONFIG[sport].tMax)}. That range is long enough to be aerobic-dominant and short enough that you can go all-out.
               </li>
               <li>Fit a curve to the upper edge of those efforts, so easy sessions that happen to be your "best 30 minutes" don't drag it down.</li>
               <li>
@@ -558,9 +547,9 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
                     : 'CSS is the critical speed.'}
               </li>
               <li>
-                Fitness is lost slowly, but a big effort leaves the window all at once. So the applied value can drop by at most {Math.round(MAX_WEEKLY_DECLINE * 100)}% per week. Rises apply immediately.
+                Fitness is lost slowly, but a big effort leaves the window all at once. So the applied value can drop by at most {Math.round(MAX_WEEKLY_DECLINE * 100)}% per week, a little each day. Rises apply immediately.
               </li>
-              <li>Each activity uses the estimate that was current on its date. Heart-rate thresholds (LTHR, max HR) have their own tab.</li>
+              <li>Each activity uses its own day's estimate, so a ride that sets a new best gets the threshold it earned, and everything after it is recalculated — a ride uploaded late too. Heart-rate thresholds (LTHR, max HR) have their own tab.</li>
             </ol>
           </Card>
         </>
@@ -579,12 +568,13 @@ interface HrWeek extends HrValues {
   date: string;
   rides: number;
   runs: number;
-  /** what that week's own windows measured, before the best value is carried forward */
+  /** what that day's own windows measured, before the best value is carried forward */
   raw?: HrValues;
 }
 interface HrResponse {
   auto: boolean;
   series: HrWeek[];
+  days?: number;
   manual: { date: string; lthr: number; runLthr: number; maxHr: number }[];
   gaps: Gap[];
   state: { running: boolean; lastRun: string | null };
@@ -660,7 +650,7 @@ function HrHistoryChart({ series, timeline }: { series: HrWeek[]; timeline: Time
                 }
               : undefined,
         })),
-        // what each week's window measured on its own: the evidence behind the lines
+        // what each day's window measured on its own: the evidence behind the lines
         ...HR_LINES.map((l) => ({
           type: 'scatter',
           name: l.name,
@@ -697,7 +687,7 @@ function HeartRateThresholds({ tabs }: { tabs: ReactNode }) {
     <div>
       <PageHeader
         title="Thresholds"
-        subtitle="Lactate-threshold and maximum heart rate from your hardest sustained efforts, estimated weekly"
+        subtitle="Lactate-threshold and maximum heart rate from your hardest sustained efforts, estimated every day"
         actions={
           <>
             {tabs}
@@ -718,7 +708,7 @@ function HeartRateThresholds({ tabs }: { tabs: ReactNode }) {
             <Stat label="Run LTHR" value={bpm(current?.runLthr)} sub={measured('runLthr', '6 mo')} />
             <Stat label="Max HR" value={bpm(current?.maxHr)} sub={measured('maxHr', '12 mo')} />
             <Stat label="Manual values" value={manualNow ? `${manualNow.lthr} / ${manualNow.maxHr}` : '–'} sub="LTHR / max HR" title="Set in Settings → Athlete & zones" />
-            <Stat label="Weeks estimated" value={series.length} sub={data.state.running ? 'recomputing…' : data.state.lastRun ? `updated ${fmtDate(data.state.lastRun, 'd MMM HH:mm')}` : undefined} />
+            <Stat label="Days estimated" value={(data.days ?? series.length).toLocaleString('en-US')} sub={data.state.running ? 'recomputing…' : data.state.lastRun ? `updated ${fmtDate(data.state.lastRun, 'd MMM HH:mm')}` : undefined} />
             <div>
               <div className="text-[11px] font-medium tracking-wide text-muted uppercase">Zones & TSS use</div>
               <div className="mt-2">
@@ -728,13 +718,13 @@ function HeartRateThresholds({ tabs }: { tabs: ReactNode }) {
             </div>
           </div>
 
-          <Card title="History" subtitle="Lines: the values applied on each date. Faint dots: what that week's own window measured — after a break or an easy block they sit lower, because there were no hard efforts to show the threshold, not because it fell. Breaks of 3+ months without heart-rate data are collapsed.">
+          <Card title="History" subtitle="Lines: the values applied on each date. Faint dots: what that day's own window measured — after a break or an easy block they sit lower, because there were no hard efforts to show the threshold, not because it fell. Breaks of 3+ months without heart-rate data are collapsed.">
             <HrHistoryChart series={series} timeline={timeline} />
           </Card>
 
           <Card className="mt-4" title={<span className="flex items-center gap-2"><Info className="h-4 w-4 text-muted" />How the estimate works</span>}>
             <ol className="list-decimal space-y-1.5 pl-5 text-[13px] leading-relaxed text-ink-2">
-              <li>LTHR is the heart rate you can hold for about an hour, the way Friel's field test reads it from 30 minutes of hard solo riding or running. Each week, take every ride's best 30-minute average heart rate from the previous 6 months; the second-highest is the bike LTHR (the highest when there are only a few rides), so one strap glitch can't set it.</li>
+              <li>LTHR is the heart rate you can hold for about an hour, the way Friel's field test reads it from 30 minutes of hard solo riding or running. Each day, take every ride's best 30-minute average heart rate from the 6 months up to and including it; the second-highest is the bike LTHR (the highest when there are only a few rides), so one strap glitch can't set it.</li>
               <li>Run LTHR comes from runs the same way, but never sits below the bike value — running usually holds a few beats higher, and a block of easy running would otherwise drag it down.</li>
               <li>Max HR is the second-highest activity maximum over 12 months (a single spike can't set it), and at least 5 beats above LTHR.</li>
               <li>Heart-rate thresholds are set mostly by age, not fitness: an easy block or a long break doesn't lower them, it just lacks the hard efforts that show them. So the best value measured carries forward, less 0.7 bpm a year (the typical age decline of max HR), and only a higher reading replaces it.</li>

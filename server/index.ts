@@ -10,7 +10,7 @@ import { api } from './api';
 import { authEnabled, requireAuth, session } from './auth';
 import { startScheduler } from './sync';
 import { ingestEvents } from './ingest';
-import { scheduleEstimateRefresh, upgradeMetrics } from './estimates';
+import { refreshOnNewDay, scheduleEstimateRefresh, upgradeMetrics } from './estimates';
 import { warmAerobic } from './aerobic';
 import { warmEffortSeries } from './efforts';
 import { applyTimezone, athleteTimezone, log } from './db';
@@ -46,6 +46,8 @@ serve({ fetch: app.fetch, port: config.port }, (info) => {
     scheduleEstimateRefresh();
     scheduleWarm();
   });
+  // thresholds are estimated for every day up to today
+  setInterval(refreshOnNewDay, 10 * 60_000);
   // after a metrics change, rebuild stored activities once (in the background); otherwise
   // just refresh the threshold estimates
   setTimeout(() => {

@@ -48,29 +48,15 @@ function compareRange(mode: string, r: DateRange): { from: string; to: string; l
 interface ModelResponse {
   estimate: ThresholdEstimate | null;
   model: PdModel | null;
-  /** next Monday's estimate, when it moves CP or FTP */
-  next: ThresholdEstimate | null;
   weight: number;
   ftp: number;
 }
 
-/** "→ 302 W from Mon", on a line of its own. */
-function NextLine({ v, date }: { v: number; date: string }) {
-  return (
-    <span className="block font-medium text-ink">
-      → {Math.round(v)} W from {fmtDate(date, 'EEE')}
-    </span>
-  );
-}
-
 function ModelCard({ data, th, weight }: { data: ModelResponse; th: Thresholds; weight: number }) {
   const t = useTokens();
-  const { estimate: e, model, next } = data;
+  const { estimate: e, model } = data;
   if (!e || !model) return <Card title="Your power-duration model">Not enough hard efforts in the last 6 months to estimate your critical power. It needs a few all-out efforts between 3 and 30 minutes.</Card>;
   const auto = th.sources?.ftp === 'auto';
-  const moves = (a: number, b: number) => Math.abs(b - a) / a > 0.005;
-  const nextCp = next && moves(e.cp, next.cp) ? next : null;
-  const nextFtp = auto && next && moves(e.threshold, next.threshold) ? next : null;
   const onDay = (d: string) => fmtDate(d, 'd MMM');
   return (
     <Card title="Your power-duration model" subtitle={`From your best efforts ${fmtDate(e.windowFrom, 'd MMM')} – ${fmtDate(e.windowTo, 'd MMM yyyy')}, as on Thresholds`}>
@@ -80,12 +66,7 @@ function ModelCard({ data, th, weight }: { data: ModelResponse; th: Thresholds; 
           accent={t.power}
           value={Math.round(e.cp)}
           unit="W"
-          sub={
-            <>
-              {(e.cp / weight).toFixed(2)} W/kg
-              {nextCp && <NextLine v={nextCp.cp} date={nextCp.date} />}
-            </>
-          }
+          sub={`${(e.cp / weight).toFixed(2)} W/kg`}
           title={`The highest power you can sustain before W′ starts to run down, a few percent above FTP${e.cpRaised ? ` — raised from the fit's ${Math.round(e.cpRaised.fit)} W by your ${fmtDurLabel(e.cpRaised.effort.t)} at ${Math.round(e.cpRaised.effort.value)} W` : ''}`}
         />
         <Stat label="W′" value={(e.wPrime / 1000).toFixed(1)} unit="kJ" sub="anaerobic capacity" title="Work you can do above critical power before you have to ease off" />
@@ -93,12 +74,7 @@ function ModelCard({ data, th, weight }: { data: ModelResponse; th: Thresholds; 
           label="FTP"
           value={th.ftp}
           unit="W"
-          sub={
-            <>
-              {auto ? ftpBasisText(e) : 'set manually'}
-              {nextFtp && <NextLine v={nextFtp.threshold} date={nextFtp.date} />}
-            </>
-          }
+          sub={auto ? ftpBasisText(e) : 'set manually'}
           title={auto ? `Set by ${ftpBasisText(e, { full: true, date: onDay })}` : 'Set manually in Settings'}
         />
         <Stat label="Pmax" value={Math.round(model.pmax)} unit="W" sub={`${(model.pmax / weight).toFixed(1)} W/kg`} title="Peak instantaneous power, from your sprints" />
@@ -106,7 +82,7 @@ function ModelCard({ data, th, weight }: { data: ModelResponse; th: Thresholds; 
         <Stat label="Fit" value={`${(model.error * 100).toFixed(1)}%`} sub="error vs your best efforts" title="Typical gap between the curve and your best efforts up to an hour" />
       </div>
       <p className="mt-4 rounded-lg bg-surface-2 p-3 text-xs leading-relaxed text-ink-2">
-        One estimate across the app: the same critical power, W′ and FTP as Thresholds, W′ balance and your ride insights, updated every Monday. The dashed curve draws it — sprint power, then CP and W′ up to 30 minutes, easing to FTP at an hour.{' '}
+        One estimate across the app: the same critical power, W′ and FTP as Thresholds, W′ balance and your ride insights, updated every day. The dashed curve draws it — sprint power, then CP and W′ up to 30 minutes, easing to FTP at an hour.{' '}
         <Link to="/thresholds" className="whitespace-nowrap text-accent hover:underline">
           How it&apos;s estimated →
         </Link>
@@ -311,7 +287,7 @@ function ModelHistory() {
         formatter: (ps: any) => {
           const d = byX.get(ps[0]?.value?.[0]);
           if (!d) return '';
-          return `<b>From ${fmtDate(d.date)}</b><div style="opacity:.6;font-size:10px">${d.date > today ? 'next week · ' : ''}6 months of best efforts</div>${tipRow(t.power, 'Critical power', `${d.cp} W`)}${tipRow(t.muted, 'FTP in use', `${d.ftp} W`)}${tipRow(t.series[2], "W′", `${(d.wPrime / 1000).toFixed(1)} kJ`)}${d.pmax ? tipRow(t.series[1], 'Pmax', `${d.pmax} W`) : ''}`;
+          return `<b>From ${fmtDate(d.date)}</b><div style="opacity:.6;font-size:10px">6 months of best efforts, to that day</div>${tipRow(t.power, 'Critical power', `${d.cp} W`)}${tipRow(t.muted, 'FTP in use', `${d.ftp} W`)}${tipRow(t.series[2], "W′", `${(d.wPrime / 1000).toFixed(1)} kJ`)}${d.pmax ? tipRow(t.series[1], 'Pmax', `${d.pmax} W`) : ''}`;
         },
       },
       xAxis: grids.map((_, i) => ({ type: 'value', gridIndex: i, min: x[0], max: x[x.length - 1], ...axisStyle(t, { grid: false }), axisLabel: { show: i === 2, color: t.muted, fontSize: 10, hideOverlap: true, formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), 'd MMM yy')) } })),
@@ -327,7 +303,7 @@ function ModelHistory() {
           xAxisIndex: 0,
           yAxisIndex: 0,
           showSymbol: false,
-          // weekly estimates: a value holds until the next one
+          // a value holds until the estimate next changes
           step: 'end',
           connectNulls: false,
           data: line((d) => d.cp),
@@ -349,7 +325,7 @@ function ModelHistory() {
     };
   }, [data, t, today]);
   return (
-    <Card title="Model history" subtitle="Your weekly estimates over the last year — critical power, W′ and FTP, the same as on Thresholds — with sprint power (Pmax)">
+    <Card title="Model history" subtitle="Your daily estimates over the last year — critical power, W′ and FTP, the same as on Thresholds — with sprint power (Pmax)">
       {option ? <Chart option={option} height={420} /> : <Spinner />}
     </Card>
   );

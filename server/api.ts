@@ -33,8 +33,9 @@ import { activityInsights, aerobicTrend, latestInsights } from './aerobic';
 import { keySets, trainingReview } from './sessions';
 import { topEfforts, type EffortMetric } from './efforts';
 import { snapshot } from './snapshot';
-import { SPORTS, estimateModel, estimateOn, estimateState, ftpEstimates, moved, refreshEstimates, rideEstimates, storedHrSeries, storedSeries } from './estimates';
-import type { ThresholdSport } from '../shared/analytics/thresholds';
+import { SPORTS, curveOn, estimateModel, estimateOn, estimateState, ftpEstimates, refreshEstimates, rideEstimates, storedHrSeries, storedSeries, windowOf } from './estimates';
+import type { ThresholdEstimate, ThresholdSport } from '../shared/analytics/thresholds';
+import { CURVE_DURATIONS } from '../shared/analytics/series';
 import { stravaAuthUrl, stravaDisconnect, stravaExchangeCode, stravaHandleWebhook, stravaWebhookSubscribe } from './providers/strava';
 import { BUILTIN_WORKOUTS } from '../shared/library';
 import { workoutMetrics } from '../shared/analytics/workout';
@@ -127,37 +128,50 @@ function dateGaps(dates: string[]) {
   }
   return gaps;
 }
+/**
+ * A daily series cut down to the days it changes (and the first day after each gap, and the
+ * last day): a value holds until the next entry, so charts and scrubbing lose nothing.
+ */
+function changes<T extends { date: string }>(series: T[], key: (e: T) => string): T[] {
+  return series.filter((e, i) => {
+    const prev = series[i - 1];
+    return !prev || i === series.length - 1 || key(prev) !== key(e) || differenceInCalendarDays(parseISO(e.date), parseISO(prev.date)) > 1;
+  });
+}
+const estimateKey = (e: ThresholdEstimate) => `${e.threshold.toFixed(2)}|${e.raw.toFixed(2)}|${e.cp.toFixed(2)}|${Math.round(e.wPrime)}|${e.basis}|${e.points.map((p) => `${p.t}:${p.value}`).join()}`;
+
 api.get('/estimates', (c) => {
   const sport = (c.req.query('sport') ?? 'ride') as ThresholdSport;
   const manual = listThresholds().map((t) => ({ date: t.date, value: sport === 'ride' ? t.ftp : sport === 'run' ? t.runThresholdSpeed : t.swimCss }));
   const dates = q.all('SELECT DISTINCT local_date AS d FROM activities WHERE sport = ? ORDER BY local_date', sport).map((r) => r.d as string);
-  return c.json({ sport, auto: getPreferences().autoThresholds[sport], series: storedSeries(sport), manual, gaps: dateGaps(dates), firstActivity: dates[0] ?? null, state: estimateState(), current: thresholdsFor(today()) });
+  const daily = storedSeries(sport);
+  return c.json({ sport, auto: getPreferences().autoThresholds[sport], series: changes(daily, estimateKey), days: daily.length, manual, gaps: dateGaps(dates), firstActivity: dates[0] ?? null, state: estimateState(), current: thresholdsFor(today()) });
 });
 api.get('/estimates/hr', (c) => {
   const manual = listThresholds().map((t) => ({ date: t.date, lthr: t.lthr, runLthr: t.runLthr, maxHr: t.maxHr }));
   const dates = q.all('SELECT DISTINCT local_date AS d FROM activities WHERE has_hr = 1 ORDER BY local_date').map((r) => r.d as string);
-  return c.json({ auto: getPreferences().autoThresholds.hr, series: storedHrSeries(), manual, gaps: dateGaps(dates), firstActivity: dates[0] ?? null, state: estimateState(), current: thresholdsFor(today()) });
+  const daily = storedHrSeries();
+  const r = (v: number | null) => (v == null ? '-' : Math.round(v));
+  const hrKey = (e: (typeof daily)[number]) => `${r(e.lthr)}|${r(e.runLthr)}|${r(e.maxHr)}|${r(e.raw.lthr)}|${r(e.raw.runLthr)}|${r(e.raw.maxHr)}`;
+  return c.json({ auto: getPreferences().autoThresholds.hr, series: changes(daily, hrKey), days: daily.length, manual, gaps: dateGaps(dates), firstActivity: dates[0] ?? null, state: estimateState(), current: thresholdsFor(today()) });
 });
 api.get('/estimates/detail', (c) => {
   const sport = (c.req.query('sport') ?? 'ride') as ThresholdSport;
   const date = c.req.query('date') ?? today();
   const stored = storedSeries(sport).find((e) => e.date === date);
   const estimate = stored ?? estimateOn(sport, date);
-  const from = estimate?.windowFrom ?? iso(subDays(parseISO(date), 182));
-  const to = estimate?.windowTo ?? iso(subDays(parseISO(date), 1));
+  const { windowFrom: from, windowTo: to } = estimate ?? windowOf(date);
   return c.json({ estimate, curve: aggregateCurve(sport === 'ride' ? 'power' : 'speed', from, to, sport), from, to });
 });
-/** Every stored week's best-effort curve, trimmed to the plotted duration range, for scrubbing through time. */
+/** The best-effort curve behind each change in the series, trimmed to the plotted durations, for scrubbing through time. */
 api.get('/estimates/curves', (c) => {
   const sport = (c.req.query('sport') ?? 'ride') as ThresholdSport;
   const type = sport === 'ride' ? 'power' : 'speed';
-  const series = storedSeries(sport);
-  const first = aggregateCurve(type, '0000-01-01', '0000-01-02', sport);
-  const keep = first.durations.map((d, i) => [d, i] as const).filter(([d]) => d >= 10 && d <= 4 * 3600);
+  const keep = CURVE_DURATIONS.map((d, i) => [d, i] as const).filter(([d]) => d >= 10 && d <= 4 * 3600);
   return c.json({
     durations: keep.map(([d]) => d),
-    weeks: series.map((e) => {
-      const cv = aggregateCurve(type, e.windowFrom, e.windowTo, sport);
+    curves: changes(storedSeries(sport), estimateKey).map((e) => {
+      const cv = curveOn(sport, e.date) ?? aggregateCurve(type, e.windowFrom, e.windowTo, sport);
       return { date: e.date, values: keep.map(([, i]) => cv.values[i]) };
     }),
   });
@@ -178,7 +192,7 @@ api.get('/thresholds', (c) =>
     defaults: DEFAULT_THRESHOLDS,
     // which rule set the automatic FTP: the CP fit, 95 % of the best 20 min, a 30–50 min effort or the best hour
     ftpBasis: storedSeries('ride').filter((e) => e.date <= today()).pop()?.basis ?? null,
-    // the same, with the effort behind it; and next week's FTP when it will change
+    // the same, with the effort behind it
     ftp: ftpEstimates(today()),
   }),
 );
@@ -321,31 +335,24 @@ api.get('/curves', (c) => {
 });
 
 /**
- * Your power-duration model now: the bike estimate in effect (its CP and W′ are the ones
- * Thresholds, W′ balance and the ride insights use) with the curve model fitted around them,
- * and next week's estimate when it moves CP or FTP.
+ * Your power-duration model now: the bike estimate in effect today (its CP and W′ are the
+ * ones Thresholds, W′ balance and the ride insights use) with the curve model fitted around them.
  */
 api.get('/model', (c) => {
   const t = today();
-  const { now, next } = rideEstimates(t);
+  const { now } = rideEstimates(t);
   const th = thresholdsFor(t);
-  return c.json({
-    estimate: now,
-    model: now ? estimateModel(now) : null,
-    next: now && next && (moved(now.cp, next.cp) || moved(now.threshold, next.threshold)) ? next : null,
-    weight: th.weight,
-    ftp: th.ftp,
-  });
+  return c.json({ estimate: now, model: now ? estimateModel(now) : null, weight: th.weight, ftp: th.ftp });
 });
 
-/** The weekly bike estimates over a range (and next Monday's), with each one's Pmax. */
+/** The daily bike estimates over a range, cut to the days they change, with each one's Pmax. */
 api.get('/model/history', (c) => {
   const { from, to } = range(c, 365);
-  const until = iso(addDays(parseISO(to), 7));
   return c.json(
-    storedSeries('ride')
-      .filter((e) => e.date >= from && e.date <= until)
-      .map((e) => ({ date: e.date, cp: Math.round(e.cp), wPrime: Math.round(e.wPrime), pmax: Math.round(estimateModel(e)?.pmax ?? 0) || null, ftp: thresholdsFor(e.date).ftp })),
+    changes(
+      storedSeries('ride').filter((e) => e.date >= from && e.date <= to),
+      estimateKey,
+    ).map((e) => ({ date: e.date, cp: Math.round(e.cp), wPrime: Math.round(e.wPrime), pmax: Math.round(estimateModel(e)?.pmax ?? 0) || null, ftp: thresholdsFor(e.date).ftp })),
   );
 });
 

@@ -9,7 +9,7 @@ import { generateSeasonPlan } from '../shared/analytics/plan';
 import { CURVE_DURATIONS } from '../shared/analytics/series';
 import { ACTIVITY_LIST_COLUMNS, getPreferences, getSetting, listThresholds, q, rowToActivity, setSetting, thresholdsFor } from './db';
 import { aggregateCurve, firstActivityDate, pmc } from './aggregate';
-import { estimateOn, storedSeries } from './estimates';
+import { estimateOn, storedSeries, windowOf } from './estimates';
 
 const iso = (d: Date) => format(d, 'yyyy-MM-dd');
 const today = () => iso(new Date());
@@ -135,9 +135,9 @@ const at = (curve: { values: (number | null)[] }, t: number) => curve.values[CUR
 
 function peakCard(date: string, ftp: number | null, extra: { rank?: number; pinned?: boolean; label?: string }) {
   // the estimate that first reported these efforts, else a fresh one for the date
-  const est = storedSeries('ride').find((e) => effortDate(e) === date) ?? storedSeries('ride').find((e) => e.date === date) ?? estimateOn('ride', date);
-  const from = est?.windowFrom ?? iso(subDays(parseISO(date), 182));
-  const to = est?.windowTo ?? iso(subDays(parseISO(date), 1));
+  const series = storedSeries('ride');
+  const est = series.find((e) => effortDate(e) === date) ?? series.find((e) => e.date === date) ?? estimateOn('ride', date);
+  const { windowFrom: from, windowTo: to } = est ?? windowOf(date);
   const curve = aggregateCurve('power', from, to, 'ride');
   const durable = aggregateCurve('fatigue:2000', from, to, 'ride');
   const pt = pmcMap().get(date);

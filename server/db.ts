@@ -233,7 +233,7 @@ export function listThresholds(): Thresholds[] {
   return thresholdCache;
 }
 
-/** Weekly rolling estimates per sport, sorted by date (loaded from threshold_estimates). */
+/** Daily rolling estimates per sport, sorted by date (loaded from threshold_estimates). */
 type EstimateRow = { date: string; threshold: number; wPrime: number; cp?: number; lthr?: number | null; runLthr?: number | null; maxHr?: number | null };
 let estimateCache: Record<string, EstimateRow[]> | null = null;
 

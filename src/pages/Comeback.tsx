@@ -52,7 +52,7 @@ export function Comeback() {
       {!peaks.length || !peak ? (
         <Card>
           <Empty icon={<Mountain className="h-8 w-8" />} title="No peaks found yet">
-            Peaks come from your weekly FTP estimates, which need rides with power. If your history is still syncing from Strava, check back once it finishes (Settings → Connections), or pin a date you know you were flying below.
+            Peaks come from your daily FTP estimates, which need rides with power. If your history is still syncing from Strava, check back once it finishes (Settings → Connections), or pin a date you know you were flying below.
           </Empty>
           <div className="flex justify-center pb-6">
             <PinForm />

@@ -282,13 +282,12 @@ export function summarizeBuild(acts: Activity[], pmc: PmcPoint[], to: string, we
 // ---------- dating estimates by their efforts ----------
 
 /**
- * When an estimate was actually earned: the day after its most recent effort. A 6-month
- * rolling estimate keeps reporting old efforts long after training stops, so its own date
- * says little about when the athlete was that fit.
+ * When an estimate was actually earned: the day of its most recent effort (daily estimates
+ * include their own day). A 6-month rolling estimate keeps reporting old efforts long after
+ * training stops, so its own date says little about when the athlete was that fit.
  */
 export function effortDate(e: { date: string; points?: { date: string | null }[] }): string {
-  const last = (e.points ?? []).map((p) => p.date).filter((d): d is string => !!d).sort().pop();
-  return last ? iso(addDays(parseISO(last), 1)) : e.date;
+  return (e.points ?? []).map((p) => p.date).filter((d): d is string => !!d).sort().pop() ?? e.date;
 }
 
 /** One value per distinct effort date (the best estimate that relied on it), dated by effortDate. */

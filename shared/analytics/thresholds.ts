@@ -93,6 +93,7 @@ export const ESTIMATE_CONFIG: Record<ThresholdSport, { tMin: number; tMax: numbe
   swim: { tMin: 60, tMax: 1500, factor: 1, min: 0.4, max: 2.3, label: 'CSS' },
 };
 
+/** Days of best efforts behind each daily estimate, the day itself included. */
 export const WINDOW_DAYS = 182;
 /**
  * Fitness is lost slowly, but a 6-month window drops a big effort all at once when it ages
@@ -102,7 +103,7 @@ export const WINDOW_DAYS = 182;
 export const MAX_WEEKLY_DECLINE = 0.01;
 
 /**
- * Apply the decline limit across a weekly series (sorted by date). CP (or CS) is held up in
+ * Apply the decline limit across a series (sorted by date). CP (or CS) is held up in
  * step, so the threshold never ends up above it.
  */
 export function limitDeclines<T extends { date: string; raw: number; threshold: number; cp?: number }>(series: T[]): T[] {
@@ -110,7 +111,8 @@ export function limitDeclines<T extends { date: string; raw: number; threshold: 
   return series.map((e) => {
     let threshold = e.raw;
     if (prev) {
-      const weeks = Math.max(1, Math.round((Date.parse(e.date) - Date.parse(prev.date)) / (7 * 86400000)));
+      // daily estimates fall by a seventh of the weekly limit, compounding to it over a week
+      const weeks = (Date.parse(e.date) - Date.parse(prev.date)) / (7 * 86400000);
       threshold = Math.max(e.raw, prev.threshold * (1 - MAX_WEEKLY_DECLINE) ** weeks);
     }
     const out = { ...e, threshold, ...(e.cp != null && threshold > e.raw ? { cp: (e.cp * threshold) / e.raw } : {}) };

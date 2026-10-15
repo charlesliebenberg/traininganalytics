@@ -213,9 +213,10 @@ export function activityInsights(id: number): ActivityInsights | null {
         const h = JSON.parse(r.curves as string) as ActivityCurves;
         return { date: r.local_date as string, power: h.power, fatigue: h.fatigue };
       });
-    // the model in effect that day was fitted to the six months before it
+    // the model from before this ride: that day's own estimate already includes it, and a
+    // new best can't beat a model fitted to itself
     const est = storedSeries('ride')
-      .filter((e) => e.date <= date)
+      .filter((e) => e.date < date)
       .pop();
     efforts = rideEffortFindings({ date, power: c.power, fatigue: c.fatigue }, history, est ? { cp: est.cp, wPrime: est.wPrime } : null);
   } else if (a.sport === 'run' && a.best_efforts) {
