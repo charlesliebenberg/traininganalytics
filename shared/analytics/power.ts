@@ -109,6 +109,19 @@ export function wPrimeBalance(watts: Series, cp: number, wPrime: number): number
   return out;
 }
 
+/** The lowest W' balance reached, J (same model as wPrimeBalance). */
+export function wPrimeMin(watts: ArrayLike<number | null>, cp: number, wPrime: number): number {
+  let bal = wPrime;
+  let min = wPrime;
+  for (let i = 0; i < watts.length; i++) {
+    const p = watts[i] ?? 0;
+    if (p > cp) bal -= p - cp;
+    else bal += ((wPrime - bal) * (cp - p)) / wPrime;
+    if (bal < min) min = bal;
+  }
+  return min;
+}
+
 /** Count of W' "matches burned": drops of >= minFraction of W' from a local peak. */
 export function matchesBurned(wbal: number[], wPrime: number, minFraction = 0.1): number {
   const thr = wPrime * minFraction;

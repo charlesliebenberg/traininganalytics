@@ -5,11 +5,11 @@
  * time — a ride that sets a new best gets the threshold it earned, from that day on.
  */
 import { addDays, format, parseISO, subDays } from 'date-fns';
-import { estimateHrThresholds, estimateThreshold, limitDeclines, MIN_ACTIVITIES, WINDOW_DAYS, type FtpEstimate, type HrThresholds, type ThresholdEstimate, type ThresholdSport } from '../shared/analytics/thresholds';
+import { cpForReps, estimateHrThresholds, estimateThreshold, limitDeclines, MIN_ACTIVITIES, WINDOW_DAYS, type FtpEstimate, type HrThresholds, type ThresholdEstimate, type ThresholdSport } from '../shared/analytics/thresholds';
 import { fitPowerDuration, type PdModel } from '../shared/analytics/models';
-import { CURVE_DURATIONS } from '../shared/analytics/series';
+import { CURVE_DURATIONS, resample1Hz } from '../shared/analytics/series';
 import { aggregateCurve, curvesInRange, today, type AggregatedCurve } from './aggregate';
-import { estimateAt, getPreferences, getSetting, log, manualThresholds, q, resetEstimateCache, setSetting, transaction } from './db';
+import { estimateAt, getPreferences, getSetting, loadStreams, log, manualThresholds, q, resetEstimateCache, setSetting, transaction } from './db';
 import { recalculate, recalculateAsync } from './ingest';
 
 export const SPORTS: ThresholdSport[] = ['ride', 'run', 'swim'];
@@ -24,7 +24,23 @@ export function estimateOn(sport: ThresholdSport, date: string): ThresholdEstima
   const { windowFrom, windowTo } = windowOf(date);
   const curve = aggregateCurve(curveType(sport), windowFrom, windowTo, sport);
   const activities = curvesInRange(windowFrom, windowTo, sport).filter((r) => r.curves[curveType(sport)]?.some((v) => v != null)).length;
-  return estimateThreshold(sport, curve, { date, windowFrom, windowTo, activities });
+  const sets = sport === 'ride' ? repSets().filter((x) => x.date >= windowFrom && x.date <= windowTo) : [];
+  return fitDay(sport, curve, { date, windowFrom, windowTo, activities }, sets);
+}
+
+/** A day's estimate: the fit to its best efforts, with CP raised if an interval set in its window needs it. */
+function fitDay(sport: ThresholdSport, curve: AggregatedCurve, meta: { date: string; windowFrom: string; windowTo: string; activities: number }, sets: RepSet[]): ThresholdEstimate | null {
+  const fit = estimateThreshold(sport, curve, meta);
+  if (!fit) return null;
+  // the lowest CP that could ride every interval set in the window, with this W′
+  let need: { cp: number; set: RepSet } | null = null;
+  for (const x of sets) {
+    const cp = cpForReps(x.watts, fit.cp, fit.wPrime);
+    if (cp > (need?.cp ?? fit.cp) + 0.5) need = { cp, set: x };
+  }
+  if (!need) return fit;
+  const effort = { t: need.set.rep, value: need.set.out, activityId: need.set.id, date: need.set.date };
+  return estimateThreshold(sport, curve, meta, { repsCp: { cp: need.cp, effort, set: { reps: need.set.reps, rest: need.set.rest } } }) ?? fit;
 }
 
 /** Each day's best-effort curve, kept from the last series computed: [from date, curve] where it changed. */
@@ -44,10 +60,64 @@ export function curveOn(sport: ThresholdSport, date: string): AggregatedCurve | 
   return list[lo].curve;
 }
 
+/** A ride's main interval set: 2+ reps of 3 minutes or more, from its first rep to its last (reps and recoveries at their averages). */
+interface RepSet {
+  id: number;
+  date: string;
+  watts: number[];
+  reps: number;
+  /** shortest rep, s */
+  rep: number;
+  /** the set's mean power over its reps, W */
+  out: number;
+  rest: number | null;
+}
+const repSetCache = new Map<number, { updated: string; set: RepSet | null }>();
+
+/** Every ride's main interval set, read from its streams once (until the ride changes). */
+function repSets(): RepSet[] {
+  const rows = q.all(
+    "SELECT id, local_date, updated_at, session FROM activities WHERE sport = 'ride' AND has_power = 1 AND session IS NOT NULL AND json_extract(session, '$.main.kind') IN ('reps', 'ladder')",
+  );
+  const out: RepSet[] = [];
+  for (const r of rows) {
+    let c = repSetCache.get(r.id as number);
+    if (!c || c.updated !== r.updated_at) {
+      let set: RepSet | null = null;
+      const m = JSON.parse(r.session as string).main as { reps: { start: number; end: number; out: number }[]; out: number; rest: number | null } | null;
+      const rep = m?.reps.length ? Math.min(...m.reps.map((x) => x.end - x.start)) : 0;
+      if (m && m.reps.length >= 2 && rep >= 180) {
+        const st = loadStreams(r.id as number);
+        if (st?.watts && st.time.length > 1) {
+          const raw = resample1Hz(st.time, st.watts, st.time[st.time.length - 1] + 1, { gapValue: 0 }).map((v) => v ?? 0);
+          // each rep at its average, each recovery at its own: the question is whether these
+          // powers can be repeated with these rests, not every surge on a hill (second-by-second
+          // variability drains W′ in the model far more than it does the rider)
+          const watts: number[] = [];
+          m.reps.forEach((x, k) => {
+            if (k) {
+              const from = m.reps[k - 1].end;
+              const mean = raw.slice(from, x.start).reduce((a, b) => a + b, 0) / Math.max(1, x.start - from);
+              for (let i = from; i < x.start; i++) watts.push(mean);
+            }
+            for (let i = x.start; i < x.end; i++) watts.push(x.out);
+          });
+          set = { id: r.id as number, date: r.local_date as string, watts, reps: m.reps.length, rep, out: m.out, rest: m.rest };
+        }
+      }
+      c = { updated: r.updated_at as string, set };
+      repSetCache.set(r.id as number, c);
+    }
+    if (c.set) out.push(c.set);
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+
 /**
  * Daily estimates from the sport's first activity to today. One pass slides the 6-month
  * window along the activities: a day whose window neither gained nor lost an activity, or
- * whose best efforts came out the same, keeps the fit of the day before.
+ * whose best efforts came out the same, keeps the fit of the day before. On the bike, the
+ * model must also be able to ride every interval set in the window.
  */
 export function computeSeries(sport: ThresholdSport): ThresholdEstimate[] {
   const type = curveType(sport);
@@ -88,8 +158,11 @@ export function computeSeries(sport: ThresholdSport): ThresholdEstimate[] {
     return { durations: CURVE_DURATIONS, values, activityIds, dates, filled };
   };
   const out: ThresholdEstimate[] = [];
+  const sets = sport === 'ride' ? repSets() : [];
   let lo = 0;
   let hi = 0;
+  let setLo = 0;
+  let setHi = 0;
   let curve: AggregatedCurve | null = null;
   let key = '';
   let fitted = false;
@@ -105,6 +178,15 @@ export function computeSeries(sport: ThresholdSport): ThresholdEstimate[] {
     while (lo < hi && rows[lo].date < windowFrom) {
       lo++;
       moved = true;
+    }
+    // interval sets in the window: a new one needs checking even if no best changed
+    while (setHi < sets.length && sets[setHi].date <= date) {
+      setHi++;
+      fitted = false;
+    }
+    while (setLo < setHi && sets[setLo].date < windowFrom) {
+      setLo++;
+      fitted = false;
     }
     const activities = hi - lo;
     if (activities < MIN_ACTIVITIES) {
@@ -125,7 +207,7 @@ export function computeSeries(sport: ThresholdSport): ThresholdEstimate[] {
     }
     const meta = { date, windowFrom, windowTo: date, activities };
     if (!fitted) {
-      fit = estimateThreshold(sport, curve!, meta);
+      fit = fitDay(sport, curve!, meta, sets.slice(setLo, setHi));
       fitted = true;
     }
     if (fit) out.push({ ...fit, ...meta });
@@ -219,7 +301,7 @@ export function storedSeries(sport: ThresholdSport): ThresholdEstimate[] {
   return loadStored<ThresholdEstimate>(sport);
 }
 
-const brief = (e: ThresholdEstimate): FtpEstimate => ({ date: e.date, threshold: e.threshold, raw: e.raw, cp: e.cp, basis: e.basis ?? 'cp', effort: e.effort });
+const brief = (e: ThresholdEstimate): FtpEstimate => ({ date: e.date, threshold: e.threshold, raw: e.raw, cp: e.cp, basis: e.basis ?? 'cp', effort: e.effort, cpRaised: e.cpRaised });
 
 /** The bike estimate in effect on `date`, as thresholdsFor applies it. */
 export function rideEstimates(date: string): { now: ThresholdEstimate | null } {

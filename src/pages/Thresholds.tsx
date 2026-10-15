@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { parseISO } from 'date-fns';
 import { RefreshCw, Info, ChevronLeft, ChevronRight, Play, Pause } from 'lucide-react';
 import type { Preferences, Thresholds as Th } from '../../shared/types';
-import { ESTIMATE_CONFIG, ftpBasisText, hourPower, MAX_WEEKLY_DECLINE, WINDOW_DAYS, type ThresholdEstimate, type ThresholdSport } from '../../shared/analytics/thresholds';
+import { ESTIMATE_CONFIG, ftpBasisText, hourPower, MAX_WEEKLY_DECLINE, repsText, WINDOW_DAYS, type ThresholdEstimate, type ThresholdSport } from '../../shared/analytics/thresholds';
 import { http, qs, useAction, useApi } from '../lib/api';
 import { alpha, useTokens } from '../lib/theme';
 import { fmtDate, fmtDurLabel, fmtDuration, fmtPace, iso } from '../lib/format';
@@ -456,7 +456,14 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
                   actions={<Badge>{e.threshold > e.raw + 1e-9 ? 'decline-limited' : 'raw fit'}</Badge>}
                 >
                   <CurveFitChart sport={sport} e={e} durations={curves.data.durations} values={curveByDate.get(e.date) ?? []} yRange={yRange} />
-                  {sport === 'ride' && e.cpRaised && (
+                  {sport === 'ride' && e.cpRaised?.by === 'reps' && e.cpRaised.set && (
+                    <div className="mt-2 text-[13px] text-ink-2">
+                      Critical power <b className="text-ink">{f.value(e.cp)}</b>: the fit gives {f.value(e.cpRaised.fit)}, but at that the model couldn&apos;t ride your {repsText(e.cpRaised.set.reps, e.cpRaised.effort.t)} at {f.value(e.cpRaised.effort.value)}
+                      {e.cpRaised.set.rest != null ? ` with ${fmtDuration(Math.round(e.cpRaised.set.rest))} recoveries` : ''}
+                      {e.cpRaised.effort.date ? ` on ${fmtDate(e.cpRaised.effort.date, 'd MMM yyyy')}` : ''} — W′ ({wpText(sport, e.wPrime)}) would run out before the last rep. One best effort can lean on W′; repeating it after a short rest can&apos;t, so CP is raised to the lowest value that makes the set possible.
+                    </div>
+                  )}
+                  {sport === 'ride' && e.cpRaised && e.cpRaised.by !== 'reps' && (
                     <div className="mt-2 text-[13px] text-ink-2">
                       Critical power <b className="text-ink">{f.value(e.cp)}</b>: the line through the three efforts gives {f.value(e.cpRaised.fit)}, but you held {f.value(e.cpRaised.effort.value)} for {fmtDurLabel(e.cpRaised.effort.t)}
                       {e.cpRaised.effort.date ? ` on ${fmtDate(e.cpRaised.effort.date, 'd MMM yyyy')}` : ''}
@@ -541,7 +548,7 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
               <li>
                 Fit the {LABEL[sport].model} model through those three points (a straight line in {sport === 'ride' ? 'work' : 'distance'} vs time).{' '}
                 {sport === 'ride'
-                  ? `FTP = ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP, because CP sits slightly above one-hour power. But FTP can't sit below what you've actually held, scaled to an hour: 95% of your best 20 minutes (never above CP), and every effort from 30 to 60 minutes the same way — ${pctOf(1800)} of your best 30 minutes, ${pctOf(2400)} of your best 40, all of your best hour. The highest of these sets FTP. And CP stays above FTP: when a long effort shows a higher FTP than ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of the fitted CP, the line's longest effort was paced rather than all-out, so CP is raised to match and W′ refitted to your shorter efforts.`
+                  ? `FTP = ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP, because CP sits slightly above one-hour power. But FTP can't sit below what you've actually held, scaled to an hour: 95% of your best 20 minutes (never above CP), and every effort from 30 to 60 minutes the same way — ${pctOf(1800)} of your best 30 minutes, ${pctOf(2400)} of your best 40, all of your best hour. The highest of these sets FTP. And CP stays above FTP: when a long effort shows a higher FTP than ${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of the fitted CP, the line's longest effort was paced rather than all-out, so CP is raised to match and W′ refitted to your shorter efforts. Interval sets count too: the model has to be able to ride every set of 2 or more reps of 3+ minutes in the window — each rep at its average power, with the recoveries you took — so a 2 × 10 that a big W′ alone couldn't explain raises CP.`
                   : sport === 'run'
                     ? 'Threshold pace = critical speed.'
                     : 'CSS is the critical speed.'}

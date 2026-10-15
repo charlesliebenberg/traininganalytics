@@ -27,6 +27,7 @@
  */
 import { CURVE_DURATIONS, linreg } from './series';
 import { nelderMead } from './models';
+import { wPrimeMin } from './power';
 
 export type ThresholdSport = 'ride' | 'run' | 'swim';
 
@@ -64,11 +65,13 @@ export interface ThresholdEstimate {
   /** the effort behind a floor */
   effort?: FtpEffort;
   /**
-   * Bike: CP and W′ as fitted, when a sustained effort raised CP — `ftp`: the FTP it shows
-   * needs CP above it (FTP = 96 % of CP; W′ refitted to the shorter efforts); `cover`: the
-   * model allowed less than was held for 20–60 min (W′ kept)
+   * Bike: CP and W′ as fitted, when an effort raised CP — `ftp`: the FTP it shows needs CP
+   * above it (FTP = 96 % of CP; W′ refitted to the shorter efforts); `cover`: the model
+   * allowed less than was held for 20–60 min (W′ kept); `reps`: an interval set the model
+   * couldn't ride — W′ would run out before its last rep (W′ kept; `effort` is its shortest
+   * rep at the set's power)
    */
-  cpRaised?: { fit: number; wPrimeFit: number; effort: FtpEffort; by: 'ftp' | 'cover' };
+  cpRaised?: { fit: number; wPrimeFit: number; effort: FtpEffort; by: 'ftp' | 'cover' | 'reps'; set?: { reps: number; rest: number | null } };
   r2: number;
   points: EffortPoint[];
   /** number of activities with curve data in the window */
@@ -122,6 +125,9 @@ export function limitDeclines<T extends { date: string; raw: number; threshold: 
 }
 export const MIN_ACTIVITIES = 4;
 
+/** "2 × 10 min": an interval set by its rep count and (shortest) rep length. */
+export const repsText = (reps: number, t: number) => `${reps} × ${Math.round(t / 60)} min`;
+
 /** The classic field test's ratio (an hour ≈ 95 % of 20 minutes) as a power law in time. */
 const HOUR_EXPONENT = Math.log(1 / 0.95) / Math.log(3);
 /**
@@ -136,18 +142,43 @@ export const SUSTAINED_EFFORTS: [number, number] = [1200, 3600];
 /** Smallest W′ a refit may give, J. */
 const MIN_WPRIME = 3000;
 
+/**
+ * The lowest CP that could ride an interval set from a full W′: W′ balance (with this W′)
+ * never below zero through its reps and recoveries. A single best effort can be explained by
+ * a big W′; doing it again after a few minutes' rest can't — 2 × 10 min at 347 and 357 W with
+ * 5 minutes between needs CP 324 W when W′ is 23.5 kJ, not 318.
+ */
+export function cpForReps(watts: ArrayLike<number | null>, cp: number, wPrime: number): number {
+  if (wPrimeMin(watts, cp, wPrime) >= 0) return cp;
+  let lo = cp;
+  let hi = cp * 1.5;
+  if (wPrimeMin(watts, hi, wPrime) < 0) return hi;
+  for (let k = 0; k < 40; k++) {
+    const mid = (lo + hi) / 2;
+    if (wPrimeMin(watts, mid, wPrime) >= 0) hi = mid;
+    else lo = mid;
+  }
+  return hi;
+}
+
 /** An FTP estimate in brief: its value, and the rule (and effort) that set it. */
-export type FtpEstimate = Pick<ThresholdEstimate, 'date' | 'threshold' | 'raw' | 'cp' | 'basis' | 'effort'>;
+export type FtpEstimate = Pick<ThresholdEstimate, 'date' | 'threshold' | 'raw' | 'cp' | 'basis' | 'effort' | 'cpRaised'>;
 
 /**
  * The rule that set an automatic FTP, in words: "98% of 40 min", or in full "98% of your
  * best 40 minutes (311 W)" (`date` adds when it was ridden). Given the applied threshold, a
  * value held up by the decline limit says so.
  */
-export function ftpBasisText(e: Pick<ThresholdEstimate, 'basis'> & Partial<Pick<ThresholdEstimate, 'effort' | 'cp' | 'raw' | 'threshold'>>, opts: { full?: boolean; date?: (d: string) => string } = {}): string {
+export function ftpBasisText(e: Pick<ThresholdEstimate, 'basis'> & Partial<Pick<ThresholdEstimate, 'effort' | 'cp' | 'raw' | 'threshold' | 'cpRaised'>>, opts: { full?: boolean; date?: (d: string) => string } = {}): string {
   const full = !!opts.full;
   if (e.threshold != null && e.raw != null && e.threshold > e.raw + 1e-9) return full ? `the ${Math.round(MAX_WEEKLY_DECLINE * 100)}%-a-week limit on how fast it falls` : 'decline-limited';
   const cpPct = `${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of CP`;
+  // an interval set that raised CP sets FTP through it
+  const rs = e.cpRaised?.by === 'reps' && e.cpRaised.set ? e.cpRaised : null;
+  if ((!e.basis || e.basis === 'cp') && rs)
+    return full
+      ? `${Math.round(ESTIMATE_CONFIG.ride.factor * 100)}% of critical power, which your ${repsText(rs.set!.reps, rs.effort.t)} at ${Math.round(rs.effort.value)} W${rs.effort.date && opts.date ? ` on ${opts.date(rs.effort.date)}` : ''} raised to ${Math.round(e.cp ?? 0)} W`
+      : `${cpPct} · ${repsText(rs.set!.reps, rs.effort.t)}`;
   if (!e.basis || e.basis === 'cp') return full ? `the critical-power fit (${cpPct})` : cpPct;
   const t = e.effort?.t ?? (e.basis === '20min' ? 1200 : 3600);
   const v = e.effort?.value;
@@ -223,6 +254,8 @@ export function estimateThreshold(
   sport: ThresholdSport,
   curve: Curve,
   meta: { date: string; windowFrom: string; windowTo: string; activities: number },
+  /** bike: the CP the window's interval sets need (from cpForReps with this estimate's W′) */
+  opts: { repsCp?: { cp: number; effort: FtpEffort; set: { reps: number; rest: number | null } } } = {},
 ): ThresholdEstimate | null {
   const cfg = ESTIMATE_CONFIG[sport];
   const durations = curve.durations ?? CURVE_DURATIONS;
@@ -298,6 +331,11 @@ export function estimateThreshold(
       cp = v - wPrime / t;
       cpRaised = { fit: fitCp, wPrimeFit: fitWPrime, effort: effortAt(i), by: cpRaised?.by ?? 'cover' };
     });
+    // and the model must be able to ride every interval set in the window (W′ kept)
+    if (opts.repsCp && opts.repsCp.cp > cp + 1e-9) {
+      cp = opts.repsCp.cp;
+      cpRaised = { fit: fitCp, wPrimeFit: fitWPrime, effort: opts.repsCp.effort, by: 'reps', set: opts.repsCp.set };
+    }
     // a rounding hair isn't worth a mention
     if (cpRaised && cp - cpRaised.fit < 0.5) cpRaised = undefined;
 

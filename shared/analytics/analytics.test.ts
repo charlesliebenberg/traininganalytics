@@ -11,7 +11,7 @@ import { generateSeasonPlan, generateWeekWorkouts, planReach } from './plan';
 import { decodePolyline, encodePolyline } from '../polyline';
 import { computeMetrics, movingMask, normalizeStreams } from './metrics';
 import { BUILTIN_WORKOUTS } from '../library';
-import { estimateHrThresholds, estimateThreshold, ftpBasisText, hourPower, limitDeclines } from './thresholds';
+import { cpForReps, estimateHrThresholds, estimateThreshold, ftpBasisText, hourPower, limitDeclines } from './thresholds';
 import { byEffortDate, classifySession, detectPeaks, effortDate } from './comeback';
 import { daysToTarget, fitCapacity, loadForTarget, ltlSeries, projectCapacity, quantileLine, type CapacityDay } from './capacity';
 import { compareHrProfiles, hrPowerWindows, hrProfile } from './hrprofile';
@@ -561,6 +561,30 @@ describe('threshold floors and heart-rate thresholds', () => {
     const e = estimateThreshold('ride', { values, filled }, { date: '2026-10-15', windowFrom: '', windowTo: '', activities: 30 })!;
     expect(e.basis).not.toBe('20min');
     expect(e.threshold).toBeLessThan(330 * 0.95 - 1);
+  });
+
+  it('raises CP until the model could ride a set of repeated reps', () => {
+    // 2 × 10 min at 347 and 357 W with 281 s at 180 W between, from a full W′ of 23.5 kJ
+    const set = [...Array(600).fill(347), ...Array(281).fill(180), ...Array(600).fill(357)];
+    const cp = cpForReps(set, 318, 23500);
+    expect(cp).toBeGreaterThan(321);
+    expect(cp).toBeLessThan(327);
+    expect(cpForReps(set, cp, 23500)).toBe(cp);
+    // a set the model can already ride leaves CP alone
+    expect(cpForReps([...Array(600).fill(300), ...Array(300).fill(150), ...Array(600).fill(305)], 318, 23500)).toBe(318);
+  });
+
+  it('takes the CP an interval set needs, keeping W′, and FTP follows it', () => {
+    const values = CURVE_DURATIONS.map((t) => (t <= 1200 ? 299 + 22000 / t : t <= 3600 ? 280 : null));
+    const meta = { date: '2026-10-15', windowFrom: '', windowTo: '', activities: 30 };
+    const base = estimateThreshold('ride', { values }, meta)!;
+    const e = estimateThreshold('ride', { values }, meta, { repsCp: { cp: 324, effort: { t: 600, value: 352, activityId: 1314, date: '2026-10-15' }, set: { reps: 2, rest: 281 } } })!;
+    expect(e.cp).toBe(324);
+    expect(e.wPrime).toBeCloseTo(base.wPrime, 6);
+    expect(e.cpRaised?.by).toBe('reps');
+    expect(e.threshold).toBeCloseTo(324 * 0.96, 6);
+    expect(ftpBasisText(e)).toBe('96% of CP · 2 × 10 min');
+    expect(ftpBasisText(e, { full: true })).toBe('96% of critical power, which your 2 × 10 min at 352 W raised to 324 W');
   });
 
   it('says which rule set FTP', () => {

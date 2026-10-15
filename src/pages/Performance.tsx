@@ -3,7 +3,7 @@ import { addDays, differenceInCalendarDays, parseISO, subDays, subYears } from '
 import type { Thresholds } from '../../shared/types';
 import { CURVE_DURATIONS } from '../../shared/analytics/series';
 import { FIXED_MAX, ompd, POWER_PROFILE, PROFILE_LEVELS, profileLevel, type PdModel } from '../../shared/analytics/models';
-import { ftpBasisText, type ThresholdEstimate } from '../../shared/analytics/thresholds';
+import { ftpBasisText, repsText, type ThresholdEstimate } from '../../shared/analytics/thresholds';
 import { qs, useApi } from '../lib/api';
 import { resolvePreset, type DateRange } from '../lib/range';
 import { alpha, useTokens } from '../lib/theme';
@@ -67,7 +67,7 @@ function ModelCard({ data, th, weight }: { data: ModelResponse; th: Thresholds; 
           value={Math.round(e.cp)}
           unit="W"
           sub={`${(e.cp / weight).toFixed(2)} W/kg`}
-          title={`The highest power you can sustain before W′ starts to run down, a few percent above FTP${e.cpRaised ? ` — raised from the fit's ${Math.round(e.cpRaised.fit)} W by your ${fmtDurLabel(e.cpRaised.effort.t)} at ${Math.round(e.cpRaised.effort.value)} W` : ''}`}
+          title={`The highest power you can sustain before W′ starts to run down, a few percent above FTP${e.cpRaised ? ` — raised from the fit's ${Math.round(e.cpRaised.fit)} W by your ${e.cpRaised.by === 'reps' && e.cpRaised.set ? repsText(e.cpRaised.set.reps, e.cpRaised.effort.t) : fmtDurLabel(e.cpRaised.effort.t)} at ${Math.round(e.cpRaised.effort.value)} W` : ''}`}
         />
         <Stat label="W′" value={(e.wPrime / 1000).toFixed(1)} unit="kJ" sub="anaerobic capacity" title="Work you can do above critical power before you have to ease off" />
         <Stat

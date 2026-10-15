@@ -23,6 +23,24 @@ describe('daily threshold estimates', () => {
     for (let i = 70; i >= 8; i -= 3) add(iso(subDays(new Date(), i)), curve(280, 260));
     // a week ago: 40 minutes at 300 W, a new best
     add(iso(subDays(new Date(), 7)), series.CURVE_DURATIONS.map((t) => (t <= 1800 ? 280 + 20000 / t : t <= 2400 ? 300 : t <= 3600 ? 270 : null)));
+    // two days ago: 2 × 10 min at 330 and 336 W with 4 minutes at 150 W between — no new best
+    // at any one duration, but more than the model could repeat
+    const { saveStreams } = await import('./db');
+    const reps = [
+      { start: 600, end: 1200, out: 330 },
+      { start: 1440, end: 2040, out: 336 },
+    ];
+    const watts = Array.from({ length: 2640 }, (_, i) => (i >= 600 && i < 1200 ? 330 : i >= 1440 && i < 2040 ? 336 : 150));
+    const d2 = iso(subDays(new Date(), 2));
+    const r = q.run(
+      "INSERT INTO activities(source, external_id, name, sport, start_time, local_date, has_power, detailed, curves, session) VALUES('file', ?, '2 × 10', 'ride', ?, ?, 1, 1, ?, ?)",
+      `reps-${d2}`,
+      `${d2}T08:00:00.000Z`,
+      d2,
+      JSON.stringify({ power: series.CURVE_DURATIONS.map((t) => (t <= 600 ? 336 : t <= 1200 ? 300 : null)) }),
+      JSON.stringify({ type: 'threshold', main: { kind: 'reps', reps, out: 333, rest: 240 } }),
+    );
+    saveStreams(Number(r.lastInsertRowid), { time: watts.map((_, i) => i), watts });
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -40,12 +58,22 @@ describe('daily threshold estimates', () => {
     expect(new Set(s.map((e) => e.date)).size).toBe(s.length);
   });
 
+  it('raises CP on the day of an interval set the model could not repeat', () => {
+    const s = estimates.computeSeries('ride');
+    const before = s.find((e) => e.date === iso(subDays(new Date(), 3)))!;
+    const on = s.find((e) => e.date === iso(subDays(new Date(), 2)))!;
+    expect(on.cpRaised?.by).toBe('reps');
+    expect(on.cp).toBeGreaterThan(before.cp + 1);
+    expect(on.threshold).toBeGreaterThanOrEqual(before.threshold);
+  });
+
   it('gives each day the estimate a from-scratch fit of its own 6 months gives', () => {
     const s = estimates.computeSeries('ride');
     for (const e of s) {
       const f = estimates.estimateOn('ride', e.date)!;
       expect(f.raw).toBeCloseTo(e.raw, 9);
       expect(f.activities).toBe(e.activities);
+      if (e.threshold <= e.raw + 1e-9) expect(f.cp).toBeCloseTo(e.cp, 9);
     }
   });
 
