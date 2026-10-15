@@ -264,9 +264,13 @@ export function estimateThreshold(
     const fitWPrime = wPrime;
     const effortAt = (i: number): FtpEffort => ({ t: durations[i], value: curve.values[i]!, activityId: curve.activityIds?.[i] ?? null, date: curve.dates?.[i] ?? null });
     // the best effort of 30–60 min, scaled to an hour (hourPower)
+    // only efforts actually ridden at each length: a value copied down from a longer effort
+    // overstates an interval session (2 × 10 min with a recovery holds more for 25 minutes
+    // than for any 20)
+    const real = (i: number) => (curve.filled?.[i] ? null : curve.values[i]);
     let long: { ftp: number; i: number } | null = null;
     durations.forEach((t, i) => {
-      const v = curve.values[i];
+      const v = real(i);
       if (v && t >= LONG_EFFORTS[0] && t <= LONG_EFFORTS[1] && (!long || hourPower(v, t) > long.ftp)) long = { ftp: hourPower(v, t), i };
     });
     // CP stays above FTP. When a long effort shows more than 96 % of CP, the fit runs low:
@@ -289,7 +293,7 @@ export function estimateThreshold(
     // it is proof CP is too low: raise CP to cover it, keeping W′ (40 minutes at 311 W with
     // W′ 22 kJ needs CP ≥ 302 W)
     durations.forEach((t, i) => {
-      const v = curve.values[i];
+      const v = real(i);
       if (!v || t < SUSTAINED_EFFORTS[0] || t > SUSTAINED_EFFORTS[1] || v - wPrime / t <= cp + 1e-9) return;
       cp = v - wPrime / t;
       cpRaised = { fit: fitCp, wPrimeFit: fitWPrime, effort: effortAt(i), by: cpRaised?.by ?? 'cover' };
@@ -305,7 +309,7 @@ export function estimateThreshold(
     // that raised CP sets FTP at exactly 96 % of it: it wins the tie.
     threshold = cp * cfg.factor;
     durations.forEach((t, i) => {
-      const v = curve.values[i];
+      const v = real(i);
       if (!v || (t !== 1200 && (t < LONG_EFFORTS[0] || t > LONG_EFFORTS[1]))) return;
       const floor = t === 1200 ? Math.min(hourPower(v, t), cp) : hourPower(v, t);
       if (floor > threshold + (t === 1200 ? 1e-9 : -1e-6)) {

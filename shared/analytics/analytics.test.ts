@@ -550,6 +550,19 @@ describe('threshold floors and heart-rate thresholds', () => {
     expect(Math.abs(m.pmax - 1100) / 1100).toBeLessThan(0.05);
   });
 
+  it('counts only efforts actually ridden at each length, not values copied down from longer ones', () => {
+    // 2 × 10 min with a recovery: its best 25 minutes beat any 20, so the curve's 20 minutes is a copy
+    const values = CURVE_DURATIONS.map((t) => (t <= 1800 ? 280 + 20000 / t : t <= 3600 ? 270 : null));
+    const filled = CURVE_DURATIONS.map(() => false);
+    const i20 = CURVE_DURATIONS.indexOf(1200);
+    values[CURVE_DURATIONS.indexOf(1320)] = values[CURVE_DURATIONS.indexOf(1500)] = 330;
+    values[i20] = 330;
+    filled[i20] = filled[CURVE_DURATIONS.indexOf(1320)] = true;
+    const e = estimateThreshold('ride', { values, filled }, { date: '2026-10-15', windowFrom: '', windowTo: '', activities: 30 })!;
+    expect(e.basis).not.toBe('20min');
+    expect(e.threshold).toBeLessThan(330 * 0.95 - 1);
+  });
+
   it('says which rule set FTP', () => {
     expect(ftpBasisText({ basis: 'cp' })).toBe('96% of CP');
     expect(ftpBasisText({ basis: '60min' }, { full: true })).toBe('your best hour');
