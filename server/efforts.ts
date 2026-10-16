@@ -6,6 +6,8 @@
  */
 import { bestWindow, fillGaps, hasData } from '../shared/analytics/series';
 import { cleanRunSpeed } from '../shared/analytics/running';
+import type { DayForm } from '../shared/analytics/pmc';
+import { formOn } from './aggregate';
 import { db, loadStreams, q, streamEvents, thresholdsFor } from './db';
 
 export type EffortMetric = 'power' | 'pace' | 'hr';
@@ -118,6 +120,8 @@ export interface EffortRow {
   wkg: number | null;
   /** mean heart rate during the effort (power and pace) */
   hr: number | null;
+  /** form going into the day */
+  form: DayForm | null;
 }
 
 const FILTER: Record<EffortMetric, string> = {
@@ -134,6 +138,7 @@ export function topEfforts(metric: EffortMetric, duration: number, from: string,
   const d = Math.round(duration);
   const acts = q.all(`SELECT id, local_date, name, sport, trainer FROM activities WHERE detailed = 1 AND local_date BETWEEN ? AND ? AND ${FILTER[metric]}`, from, to);
   const weight = new Map<string, number>();
+  const formOf = formOn();
   const rows: Omit<EffortRow, 'rank'>[] = [];
   let considered = 0;
   for (const a of acts) {
@@ -157,7 +162,7 @@ export function topEfforts(metric: EffortMetric, duration: number, from: string,
       const kg = weight.get(date)!;
       wkg = kg > 0 ? value / kg : null;
     }
-    rows.push({ id: a.id as number, date, name: a.name as string, sport: a.sport as string, trainer: !!a.trainer, value, start: w.start, wkg, hr });
+    rows.push({ id: a.id as number, date, name: a.name as string, sport: a.sport as string, trainer: !!a.trainer, value, start: w.start, wkg, hr, form: formOf(date) });
   }
   rows.sort((x, y) => y.value - x.value || x.date.localeCompare(y.date));
   const items: EffortRow[] = rows.map((r, i) => ({ ...r, rank: i + 1, value: metric === 'pace' ? Math.round(r.value * 1000) / 1000 : Math.round(r.value * 10) / 10, wkg: r.wkg != null ? Math.round(r.wkg * 100) / 100 : null, hr: r.hr != null ? Math.round(r.hr) : null }));

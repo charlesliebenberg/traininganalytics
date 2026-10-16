@@ -3,20 +3,36 @@ import { Bike, Footprints, Mountain, Flame, Zap, Gauge } from 'lucide-react';
 import { useApi } from '../lib/api';
 import { Card, PageHeader, Spinner, Empty } from '../components/ui';
 import { BestEffortsCard } from '../components/efforts';
+import { FormLegend, FormTag } from '../components/charts';
 import { fmtDate, fmtDistance, fmtDurLabel, fmtDuration, fmtElevation, fmtNum, fmtPace } from '../lib/format';
+import type { DayForm } from '../../shared/analytics/pmc';
 
 interface Rec {
   id: number;
   name: string;
   local_date: string;
   value: number;
+  /** form going into the day */
+  form?: DayForm | null;
+}
+interface Peak {
+  value: number;
+  id: number;
+  date: string;
+  form?: DayForm | null;
+}
+interface RunRec {
+  id: number;
+  date: string;
+  name: string;
+  form?: DayForm | null;
 }
 interface RecordsData {
   years: string[];
   powerYears: string[];
   runYears: string[];
-  run: { key: string; label: string; meters: number; time: number; id: number; date: string; name: string; byYear: Record<string, number> }[];
-  peaks: ({ duration: number; all: { value: number; id: number; date: string } | null } & Record<string, { value: number; id: number; date: string } | null | number>)[];
+  run: (RunRec & { key: string; label: string; meters: number; time: number; byYear: Record<string, number>; byYearRun?: Record<string, RunRec> })[];
+  peaks: ({ duration: number; all: Peak | null } & Record<string, Peak | null | number>)[];
   highlights: Record<string, Rec | null>;
 }
 
@@ -37,7 +53,7 @@ export function Records() {
   const runYears = [...data.runYears].reverse();
   return (
     <div>
-      <PageHeader title="Records" subtitle="Your best efforts for any duration, all of them ranked, and personal bests by year" />
+      <PageHeader title="Records" subtitle="Your best efforts for any duration, all of them ranked, and personal bests by year — each with your form going into it" />
       <BestEffortsCard />
       <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         {HIGHLIGHTS.map(({ key, label, icon: Icon, fmt }) => {
@@ -51,20 +67,21 @@ export function Records() {
               <div className="mt-1.5 text-xl font-semibold">{r?.value ? fmt(r.value) : '–'}</div>
               {r && <div className="mt-0.5 truncate text-xs text-ink-2">{r.name}</div>}
               {r && <div className="text-[11px] text-muted">{fmtDate(r.local_date, 'd MMM yyyy')}</div>}
+              {r && <FormTag form={r.form} label className="mt-1 text-[11px] text-ink-2" />}
             </Link>
           );
         })}
       </div>
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
-        <Card title="Peak power" subtitle="Best mean-maximal power by year" pad={false}>
+        <Card title="Peak power" subtitle="Best mean-maximal power by year, with your form going into each ride beneath it" pad={false}>
           <div className="overflow-x-auto">
-          <table className="tnum w-full min-w-[480px] text-[13px]">
+          <table className="tnum w-full min-w-[480px] text-[13px] whitespace-nowrap">
             <thead>
               <tr className="border-b border-line text-left text-[11px] tracking-wide text-muted uppercase">
                 <th className="py-2 pl-5 font-medium">Duration</th>
                 <th className="px-3 text-right font-medium">All time</th>
                 {years.map((y) => (
-                  <th key={y} className="px-3 text-right font-medium last:pr-5">
+                  <th key={y} className="px-2 text-right font-medium last:pr-5">
                     {y}
                   </th>
                 ))}
@@ -74,23 +91,29 @@ export function Records() {
               {data.peaks.map((p) => (
                 <tr key={p.duration} className="border-b border-line/60 last:border-0">
                   <td className="py-1.5 pl-5 font-medium">{fmtDurLabel(p.duration)}</td>
-                  <td className="px-3 text-right">
+                  <td className="px-3 py-1.5 text-right">
                     {p.all ? (
-                      <Link to={`/activities/${p.all.id}`} className="font-semibold text-accent hover:underline" title={fmtDate(p.all.date)}>
-                        {p.all.value} W
-                      </Link>
+                      <>
+                        <Link to={`/activities/${p.all.id}`} className="font-semibold text-accent hover:underline" title={fmtDate(p.all.date)}>
+                          {p.all.value} W
+                        </Link>
+                        <FormLine form={p.all.form} />
+                      </>
                     ) : (
                       '–'
                     )}
                   </td>
                   {years.map((y) => {
-                    const v = p[y] as { value: number; id: number; date: string } | null;
+                    const v = p[y] as Peak | null;
                     return (
-                      <td key={y} className="px-3 text-right text-ink-2 last:pr-5">
+                      <td key={y} className="px-2 py-1.5 text-right text-ink-2 last:pr-5">
                         {v ? (
-                          <Link to={`/activities/${v.id}`} className="hover:text-ink" title={fmtDate(v.date)}>
-                            {v.value}
-                          </Link>
+                          <>
+                            <Link to={`/activities/${v.id}`} className="hover:text-ink" title={fmtDate(v.date)}>
+                              {v.value}
+                            </Link>
+                            <FormLine form={v.form} />
+                          </>
                         ) : (
                           '–'
                         )}
@@ -103,19 +126,19 @@ export function Records() {
           </table>
           </div>
         </Card>
-        <Card title="Running best efforts" subtitle="Fastest time over each distance within any run — GPS glitches (jumps between buildings, a watch starting before lock) are filtered out" pad={false}>
+        <Card title="Running best efforts" subtitle="Fastest time over each distance within any run, with your form going into it — GPS glitches (jumps between buildings, a watch starting before lock) are filtered out" pad={false}>
           {!data.run.length ? (
             <Empty title="No runs with distance data yet" />
           ) : (
             <div className="overflow-x-auto">
-            <table className="tnum w-full min-w-[480px] text-[13px]">
+            <table className="tnum w-full min-w-[480px] text-[13px] whitespace-nowrap">
               <thead>
                 <tr className="border-b border-line text-left text-[11px] tracking-wide text-muted uppercase">
                   <th className="py-2 pl-5 font-medium">Distance</th>
                   <th className="px-3 text-right font-medium">Best</th>
                   <th className="px-3 text-right font-medium">Pace</th>
                   {runYears.map((y) => (
-                    <th key={y} className="px-3 text-right font-medium last:pr-5">
+                    <th key={y} className="px-2 text-right font-medium last:pr-5">
                       {y}
                     </th>
                   ))}
@@ -125,17 +148,32 @@ export function Records() {
                 {data.run.map((r) => (
                   <tr key={r.key} className="border-b border-line/60 last:border-0">
                     <td className="py-1.5 pl-5 font-medium">{r.label}</td>
-                    <td className="px-3 text-right">
+                    <td className="px-3 py-1.5 text-right">
                       <Link to={`/activities/${r.id}`} className="font-semibold text-accent hover:underline" title={`${r.name} · ${fmtDate(r.date)}`}>
                         {fmtDuration(r.time)}
                       </Link>
+                      <FormLine form={r.form} />
                     </td>
-                    <td className="px-3 text-right text-ink-2">{fmtPace(r.meters / r.time, 'run')}</td>
-                    {runYears.map((y) => (
-                      <td key={y} className="px-3 text-right text-ink-2 last:pr-5">
-                        {r.byYear[y] ? fmtDuration(r.byYear[y]) : '–'}
-                      </td>
-                    ))}
+                    <td className="px-3 text-right whitespace-normal text-ink-2">{fmtPace(r.meters / r.time, 'run')}</td>
+                    {runYears.map((y) => {
+                      const run = r.byYearRun?.[y];
+                      return (
+                        <td key={y} className="px-2 py-1.5 text-right text-ink-2 last:pr-5">
+                          {!r.byYear[y] ? (
+                            '–'
+                          ) : run ? (
+                            <>
+                              <Link to={`/activities/${run.id}`} className="hover:text-ink" title={`${run.name} · ${fmtDate(run.date)}`}>
+                                {fmtDuration(r.byYear[y])}
+                              </Link>
+                              <FormLine form={run.form} />
+                            </>
+                          ) : (
+                            fmtDuration(r.byYear[y])
+                          )}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
@@ -144,6 +182,20 @@ export function Records() {
           )}
         </Card>
       </div>
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <span className="text-[11px] font-medium tracking-wide text-muted uppercase">Form going into the day</span>
+        <FormLegend />
+      </div>
+    </div>
+  );
+}
+
+/** A record's form, under it in the table. */
+function FormLine({ form }: { form: DayForm | null | undefined }) {
+  if (form === undefined) return null;
+  return (
+    <div className="text-[11px] leading-4 font-normal text-ink-2">
+      <FormTag form={form} />
     </div>
   );
 }

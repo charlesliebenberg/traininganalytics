@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import { parseISO } from 'date-fns';
+import clsx from 'clsx';
 import type { PmcPoint, RaceEvent, WorkoutStructure } from '../../shared/types';
-import { formZone, FORM_ZONES } from '../../shared/analytics/pmc';
+import { formZone, formZoneById, FORM_ZONES, type DayForm } from '../../shared/analytics/pmc';
 import { flatten } from '../../shared/analytics/workout';
 import { Chart, axisStyle, tipRow, tooltipStyle, valueAxis, legendStyle, type EChartsOption } from './Chart';
 import { alpha, useTokens, type Tokens } from '../lib/theme';
@@ -131,6 +132,48 @@ export function PmcChart({ points, events = [], height = 420, compact = false, s
     };
   }, [points, events, t, height, compact, showTss]);
   return <Chart option={option} height={height} />;
+}
+
+/** Signed TSB, as form reads: +12 fresh, −20 tired. */
+export function fmtForm(tsb: number): string {
+  const r = Math.round(tsb);
+  return r > 0 ? `+${r}` : r < 0 ? `−${-r}` : '0';
+}
+
+/**
+ * How fresh you were for a ride: its day's form (TSB) beside the zone's colour, the zone named
+ * on hover — or always, with `label`.
+ */
+export function FormTag({ form, label, className }: { form: DayForm | null | undefined; label?: boolean; className?: string }) {
+  const t = useTokens();
+  if (!form) {
+    return (
+      <span className={clsx('text-muted', className)} title="Too early in your history to know your form">
+        –
+      </span>
+    );
+  }
+  const z = formZoneById(form.zone);
+  const title = `Form going into the day: ${fmtForm(form.tsb)}, ${z.label.toLowerCase()} — ${z.hint.toLowerCase()}`;
+  const dot = <span className="h-2 w-2 shrink-0 rounded-sm" style={{ background: formColor(t, z.id) }} />;
+  if (label) {
+    // a line of its own, where a long zone name wraps rather than being cut off
+    return (
+      <span className={clsx('flex items-baseline gap-1.5 whitespace-normal', className)} title={title}>
+        <span className="flex h-[1em] shrink-0 items-center self-start pt-[0.15em]">{dot}</span>
+        <span>
+          Form <span className="tnum">{fmtForm(form.tsb)}</span>
+          <span className="text-muted"> · {z.label}</span>
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span className={clsx('inline-flex items-center gap-1.5 whitespace-nowrap', className)} title={title}>
+      {dot}
+      <span className="tnum">{fmtForm(form.tsb)}</span>
+    </span>
+  );
 }
 
 export function FormLegend() {

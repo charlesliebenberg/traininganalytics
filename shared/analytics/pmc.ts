@@ -43,10 +43,23 @@ export const FORM_ZONES: { id: FormZone; label: string; min: number; max: number
   { id: 'overload', label: 'High risk', min: -Infinity, max: -0.3, hint: 'Excessive fatigue — back off' },
 ];
 
+export const formZoneById = (id: FormZone) => FORM_ZONES.find((z) => z.id === id) ?? FORM_ZONES[2];
+
 /** Classify form using TSB relative to fitness (TSB / CTL), which scales with the athlete. */
 export function formZone(tsb: number, ctl: number): (typeof FORM_ZONES)[number] {
   const rel = ctl > 5 ? tsb / ctl : tsb / 30;
   return FORM_ZONES.find((z) => rel >= z.min && rel < z.max) ?? FORM_ZONES[2];
+}
+
+/** How fresh you were for a day's riding: its TSB, from before that day's own load, and the zone. */
+export interface DayForm {
+  tsb: number;
+  zone: FormZone;
+}
+
+/** A PMC day's form, as the PMC chart shows it. */
+export function dayForm(p: PmcPoint): DayForm {
+  return { tsb: Math.round(p.tsb * 10) / 10, zone: formZone(p.tsb, p.ctl).id };
 }
 
 /** Foster's training monotony & strain over rolling 7-day windows. */

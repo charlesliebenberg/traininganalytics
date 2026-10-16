@@ -1,6 +1,6 @@
 import { addDays, differenceInCalendarDays, format, parseISO, startOfMonth, startOfWeek } from 'date-fns';
 import type { ActivityCurves, DailyLoad, PmcPoint, Sport } from '../shared/types';
-import { computePmc } from '../shared/analytics/pmc';
+import { computePmc, dayForm, type DayForm } from '../shared/analytics/pmc';
 import { CURVE_DURATIONS } from '../shared/analytics/series';
 import { polarizationIndex } from '../shared/analytics/zones';
 import { BEST_EFFORT_DISTANCES } from '../shared/analytics/running';
@@ -174,6 +174,22 @@ export function pmc(from: string, to: string, sport?: string | null, extraPlanne
   return pts.filter((p) => p.date >= from);
 }
 
+/**
+ * Form going into each day, all sports, as the PMC shows it — how fresh you were for a ride.
+ * None until fitness has had its time constant to build: the PMC starts from nothing at the
+ * first activity, so a first ride would read as perfectly fresh and the weeks after as
+ * overreached, whatever your training before it.
+ */
+export function formOn(): (date: string | null | undefined) => DayForm | null {
+  const first = firstActivityDate();
+  const settled = first ? iso(addDays(parseISO(first), getPreferences().ctlDays)) : null;
+  const byDate = new Map(settled ? pmc(settled, today()).map((p) => [p.date, p]) : []);
+  return (date) => {
+    const p = date ? byDate.get(date) : undefined;
+    return p ? dayForm(p) : null;
+  };
+}
+
 // ---------- trends ----------
 export function trends(from: string, to: string, bucket: 'week' | 'month') {
   const first = firstActivityDate();
@@ -254,15 +270,21 @@ export function trends(from: string, to: string, bucket: 'week' | 'month') {
 
 // ---------- records ----------
 export function records() {
+  const formOf = formOn();
   const runs = q.all("SELECT id, local_date, name, best_efforts FROM activities WHERE best_efforts IS NOT NULL AND sport = 'run'");
-  const bestRun: Record<string, { time: number; id: number; date: string; name: string; byYear: Record<string, number> }> = {};
+  type Run = { id: number; date: string; name: string };
+  const bestRun: Record<string, Run & { time: number; byYear: Record<string, number>; byYearRun: Record<string, Run> }> = {};
   for (const r of runs) {
     const be = JSON.parse(r.best_efforts) as Record<string, number>;
     const year = r.local_date.slice(0, 4);
+    const run = { id: r.id, date: r.local_date, name: r.name };
     for (const [k, t] of Object.entries(be)) {
-      const cur = (bestRun[k] ??= { time: Infinity, id: r.id, date: r.local_date, name: r.name, byYear: {} });
-      if (t < cur.time) Object.assign(cur, { time: t, id: r.id, date: r.local_date, name: r.name });
-      if (!cur.byYear[year] || t < cur.byYear[year]) cur.byYear[year] = t;
+      const cur = (bestRun[k] ??= { time: Infinity, ...run, byYear: {}, byYearRun: {} });
+      if (t < cur.time) Object.assign(cur, { time: t, ...run });
+      if (!cur.byYear[year] || t < cur.byYear[year]) {
+        cur.byYear[year] = t;
+        cur.byYearRun[year] = run;
+      }
     }
   }
   const years = q.all("SELECT DISTINCT substr(local_date, 1, 4) AS y FROM activities ORDER BY y").map((r) => r.y as string);
@@ -275,13 +297,16 @@ export function records() {
     const row: Record<string, unknown> = { duration: dur };
     for (const y of years) {
       const c = aggregateCurve('power', `${y}-01-01`, `${y}-12-31`, 'ride');
-      row[y] = c.values[idx] != null ? { value: c.values[idx], id: c.activityIds[idx], date: c.dates[idx] } : null;
+      row[y] = c.values[idx] != null ? { value: c.values[idx], id: c.activityIds[idx], date: c.dates[idx], form: formOf(c.dates[idx]) } : null;
     }
     const all = aggregateCurve('power', '0000-01-01', '9999-12-31', 'ride');
-    row.all = all.values[idx] != null ? { value: all.values[idx], id: all.activityIds[idx], date: all.dates[idx] } : null;
+    row.all = all.values[idx] != null ? { value: all.values[idx], id: all.activityIds[idx], date: all.dates[idx], form: formOf(all.dates[idx]) } : null;
     return row;
   });
-  const top = (sql: string) => q.get(sql) ?? null;
+  const top = (sql: string) => {
+    const r = q.get(sql);
+    return r ? { ...r, form: formOf(r.local_date as string) } : null;
+  };
   const highlights = {
     longestRide: top("SELECT id, name, local_date, distance AS value FROM activities WHERE sport = 'ride' ORDER BY distance DESC LIMIT 1"),
     longestRun: top("SELECT id, name, local_date, distance AS value FROM activities WHERE sport = 'run' ORDER BY distance DESC LIMIT 1"),
@@ -294,7 +319,11 @@ export function records() {
     years,
     powerYears,
     runYears,
-    run: BEST_EFFORT_DISTANCES.filter((d) => bestRun[d.key]).map((d) => ({ ...d, ...bestRun[d.key] })),
+    run: BEST_EFFORT_DISTANCES.filter((d) => bestRun[d.key]).map((d) => {
+      const b = bestRun[d.key];
+      const byYearRun = Object.fromEntries(Object.entries(b.byYearRun).map(([y, r]) => [y, { ...r, form: formOf(r.date) }]));
+      return { ...d, ...b, form: formOf(b.date), byYearRun };
+    }),
     peaks,
     highlights,
   };

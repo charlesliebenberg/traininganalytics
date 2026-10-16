@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CURVE_DURATIONS, bestWindow, meanMax, resample1Hz } from './series';
 import { detectIntervals, fatigueCurves, normalizedPower, npCurve, wPrimeBalance, matchesBurned } from './power';
 import { fitCp2, fitPowerDuration, ompd } from './models';
-import { computePmc, dailyTssForCtl, formZone } from './pmc';
+import { computePmc, dailyTssForCtl, dayForm, formZone } from './pmc';
 import { bestEfforts, cleanRunSpeed, distanceFromSpeed, gradeCostFactor } from './running';
 import { decoupling, hrTss } from './heartrate';
 import { timeInZones, POWER_ZONES, polarizationIndex } from './zones';
@@ -120,6 +120,14 @@ describe('pmc', () => {
   it('classifies form', () => {
     expect(formZone(-12, 60).id).toBe('optimal');
     expect(formZone(10, 60).id).toBe('fresh');
+  });
+  it("a day's form is from before its own load", () => {
+    const days = Array.from({ length: 60 }, (_, i) => ({ date: String(i), tss: i % 7 === 6 ? 0 : 70 }));
+    const easy = computePmc(days);
+    const hard = computePmc(days.map((d, i) => (i === 59 ? { ...d, tss: 400 } : d)));
+    expect(dayForm(hard[59]).tsb).toBe(dayForm(easy[59]).tsb);
+    expect(dayForm(hard[59]).tsb).toBeCloseTo(easy[58].ctl - easy[58].atl, 1);
+    expect(dayForm(hard[59]).zone).toBe(formZone(hard[59].tsb, hard[59].ctl).id);
   });
 });
 

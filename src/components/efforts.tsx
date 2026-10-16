@@ -8,9 +8,11 @@ import { alpha, useTokens } from '../lib/theme';
 import { durWords, fmtDate, fmtDuration, fmtPace, parseDuration } from '../lib/format';
 import { breakNames, makeTimeline, type Gap } from '../lib/timeline';
 import { Chart, axisStyle, tipRow, tooltipStyle, valueAxis } from './Chart';
+import { FormLegend, FormTag, fmtForm, formColor } from './charts';
 import { RangePicker } from './RangePicker';
 import { Button, Card, Input, Segmented, Spinner, SportIcon, Stat, Toggle } from './ui';
 import type { Sport } from '../../shared/types';
+import { formZoneById, type DayForm } from '../../shared/analytics/pmc';
 
 // ---------- API shape (server/efforts.ts) ----------
 type Metric = 'power' | 'pace' | 'hr';
@@ -25,6 +27,8 @@ interface EffortRow {
   start: number;
   wkg: number | null;
   hr: number | null;
+  /** form going into the day */
+  form?: DayForm | null;
 }
 interface EffortsData {
   metric: Metric;
@@ -74,6 +78,12 @@ export function BestEffortsCard() {
   const recent = items.find((r) => Date.parse(r.date) >= Date.now() - 90 * 86400000);
   const show = (r: EffortRow) => (metric === 'power' ? (wkg && r.wkg != null ? `${r.wkg.toFixed(2)} W/kg` : `${Math.round(r.value)} W`) : metric === 'pace' ? fmtPace(r.value, 'run') : `${Math.round(r.value)} bpm`);
   const open = (r: EffortRow) => nav(`/activities/${r.id}?sel=${r.start},${r.start + duration}`);
+  const withForm = (line: string, r: EffortRow) => (
+    <>
+      <div className="truncate">{line}</div>
+      <FormTag form={r.form} label className="mt-0.5" />
+    </>
+  );
   return (
     <Card
       title="Best efforts"
@@ -130,17 +140,21 @@ export function BestEffortsCard() {
       ) : (
         <>
           <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-4 lg:grid-cols-4">
-            <Stat label={`Best ${durWords(duration)}`} value={show(best)} sub={`${fmtDate(best.date, 'd MMM yyyy')}${best.hr ? ` · ${best.hr} bpm` : ''}`} />
+            <Stat label={`Best ${durWords(duration)}`} value={show(best)} sub={withForm(`${fmtDate(best.date, 'd MMM yyyy')}${best.hr ? ` · ${best.hr} bpm` : ''}`, best)} />
             <Stat label="Ranked" value={data.total.toLocaleString()} sub={data.tooShort ? `${data.tooShort.toLocaleString()} under ${durWords(duration)}` : plural(metric, data.total)} />
             {range.preset === 'all' || range.preset === 'lastyear' ? (
-              <Stat label={`Best in ${year}`} value={thisYear ? show(thisYear) : '–'} sub={thisYear ? `#${thisYear.rank} of ${data.total} · ${fmtDate(thisYear.date, 'd MMM')}` : `no ${plural(metric, 2)} yet`} />
+              <Stat label={`Best in ${year}`} value={thisYear ? show(thisYear) : '–'} sub={thisYear ? withForm(`#${thisYear.rank} of ${data.total} · ${fmtDate(thisYear.date, 'd MMM')}`, thisYear) : `no ${plural(metric, 2)} yet`} />
             ) : (
               <Stat label="Median" value={show(items[Math.floor(items.length / 2)])} sub="half were better" />
             )}
-            <Stat label="Best in 90 days" value={recent ? show(recent) : '–'} sub={recent ? `#${recent.rank} of ${data.total} · ${fmtDate(recent.date, 'd MMM')}` : `no ${plural(metric, 2)} lately`} />
+            <Stat label="Best in 90 days" value={recent ? show(recent) : '–'} sub={recent ? withForm(`#${recent.rank} of ${data.total} · ${fmtDate(recent.date, 'd MMM')}`, recent) : `no ${plural(metric, 2)} lately`} />
           </div>
           <div className="mt-4">
             <EffortsChart items={items} metric={metric} wkg={wkg} onOpen={open} />
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <span className="text-[11px] font-medium tracking-wide text-muted uppercase">Form going into the day</span>
+            <FormLegend />
           </div>
           <div className="mt-2 overflow-x-auto">
             <table className="tnum w-full text-[13px] sm:min-w-[640px]">
@@ -148,12 +162,13 @@ export function BestEffortsCard() {
                 <tr className="border-b border-line text-left text-[11px] tracking-wide text-muted uppercase">
                   <th className="py-2 pr-3 font-medium">#</th>
                   <th className="px-3 text-right font-medium">{metric === 'power' ? (wkg ? 'W/kg' : 'Power') : metric === 'pace' ? 'Pace' : 'Heart rate'}</th>
-                  {metric === 'power' && <th className="px-3 text-right font-medium">{wkg ? 'Power' : 'W/kg'}</th>}
-                  <th className="hidden px-3 text-right font-medium sm:table-cell">Of best</th>
+                  {metric === 'power' && <th className="hidden px-3 text-right font-medium sm:table-cell">{wkg ? 'Power' : 'W/kg'}</th>}
+                  <th className="hidden px-3 text-right font-medium xl:table-cell">Of best</th>
                   {metric !== 'hr' && <th className="hidden px-3 text-right font-medium sm:table-cell">Avg HR</th>}
-                  <th className="px-3 font-medium">Date</th>
+                  <th className="px-3 text-right font-medium">Form</th>
+                  <th className="hidden px-3 font-medium sm:table-cell">Date</th>
                   <th className="px-3 font-medium">Activity</th>
-                  <th className="hidden py-2 pl-3 text-right font-medium sm:table-cell">From</th>
+                  <th className="hidden py-2 pl-3 text-right font-medium xl:table-cell">From</th>
                 </tr>
               </thead>
               <tbody>
@@ -161,14 +176,17 @@ export function BestEffortsCard() {
                   <tr key={r.id} onClick={() => open(r)} className={clsx('cursor-pointer border-b border-line/60 hover:bg-surface-2', r.rank === 1 && 'font-medium')}>
                     <td className="py-1.5 pr-3 text-ink-2">{r.rank}</td>
                     <td className="px-3 text-right font-medium text-ink">{show(r)}</td>
-                    {metric === 'power' && <td className="px-3 text-right text-ink-2">{wkg ? `${Math.round(r.value)} W` : r.wkg != null ? r.wkg.toFixed(2) : '–'}</td>}
-                    <td className="hidden px-3 text-right text-ink-2 sm:table-cell">{Math.round((r.value / best.value) * 1000) / 10}%</td>
+                    {metric === 'power' && <td className="hidden px-3 text-right text-ink-2 sm:table-cell">{wkg ? `${Math.round(r.value)} W` : r.wkg != null ? r.wkg.toFixed(2) : '–'}</td>}
+                    <td className="hidden px-3 text-right text-ink-2 xl:table-cell">{Math.round((r.value / best.value) * 1000) / 10}%</td>
                     {metric !== 'hr' && <td className="hidden px-3 text-right text-ink-2 sm:table-cell">{r.hr ?? '–'}</td>}
-                    <td className="px-3 whitespace-nowrap text-ink-2">
-                      <span className="sm:hidden">{fmtDate(r.date, "d MMM ''yy")}</span>
-                      <span className="hidden sm:inline">{fmtDate(r.date, 'EEE d MMM yyyy')}</span>
+                    <td className="px-3 text-right whitespace-nowrap text-ink-2">
+                      <FormTag form={r.form} />
                     </td>
-                    <td className="max-w-[130px] px-3 sm:max-w-[280px]">
+                    <td className="hidden px-3 whitespace-nowrap text-ink-2 sm:table-cell">
+                      <span className="xl:hidden">{fmtDate(r.date, 'd MMM yyyy')}</span>
+                      <span className="hidden xl:inline">{fmtDate(r.date, 'EEE d MMM yyyy')}</span>
+                    </td>
+                    <td className="max-w-[150px] py-1.5 pl-3 sm:max-w-[280px] sm:px-3 sm:py-0">
                       <div className="flex min-w-0 items-center gap-1.5">
                         {metric === 'hr' && <SportIcon sport={r.sport} className="h-3.5 w-3.5 shrink-0" />}
                         <Link to={`/activities/${r.id}?sel=${r.start},${r.start + duration}`} onClick={(e) => e.stopPropagation()} className="truncate text-ink hover:text-accent hover:underline">
@@ -176,8 +194,10 @@ export function BestEffortsCard() {
                         </Link>
                         {r.trainer && <span className="shrink-0 text-[10px] text-muted">indoor</span>}
                       </div>
+                      {/* phones: the date under the name, leaving room for the form */}
+                      <div className="text-[11px] text-muted sm:hidden">{fmtDate(r.date, 'd MMM yyyy')}</div>
                     </td>
-                    <td className="hidden py-1.5 pl-3 text-right text-ink-2 sm:table-cell">{fmtDuration(r.start)}</td>
+                    <td className="hidden py-1.5 pl-3 text-right text-ink-2 xl:table-cell">{fmtDuration(r.start)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -233,7 +253,7 @@ function EffortsChart({ items, metric, wkg, onOpen }: { items: EffortRow[]; metr
         ...tooltipStyle(t),
         formatter: (e: any) => {
           const r: EffortRow = e.data.r;
-          return `<b>#${r.rank} · ${fmtDate(r.date, 'EEE d MMM yyyy')}</b><div style="opacity:.75;margin-bottom:2px">${r.name}</div>${tipRow(t.accent, metric === 'power' ? 'Power' : metric === 'pace' ? 'Pace' : 'Heart rate', `${metric === 'pace' ? fmtPace(r.value, 'run') : fmt(y(r))} ${unit}`)}${r.hr != null && metric !== 'hr' ? tipRow(t.hr, 'Heart rate', `${r.hr} bpm`) : ''}<div style="opacity:.6;font-size:11px;margin-top:4px">Click to open the effort</div>`;
+          return `<b>#${r.rank} · ${fmtDate(r.date, 'EEE d MMM yyyy')}</b><div style="opacity:.75;margin-bottom:2px">${r.name}</div>${tipRow(t.accent, metric === 'power' ? 'Power' : metric === 'pace' ? 'Pace' : 'Heart rate', `${metric === 'pace' ? fmtPace(r.value, 'run') : fmt(y(r))} ${unit}`)}${r.hr != null && metric !== 'hr' ? tipRow(t.hr, 'Heart rate', `${r.hr} bpm`) : ''}${r.form ? tipRow(formColor(t, r.form.zone), `Form · ${formZoneById(r.form.zone).label}`, fmtForm(r.form.tsb)) : ''}<div style="opacity:.6;font-size:11px;margin-top:4px">Click to open the effort</div>`;
         },
       },
       xAxis: {
