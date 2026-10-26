@@ -363,6 +363,9 @@ export function estimateThreshold(
 
 // ---------- heart-rate thresholds ----------
 
+/** How fast heart rate at a given effort falls with age: the decline of max HR, bpm a year. */
+export const HR_DECLINE_PER_YEAR = 0.7;
+
 export interface HrThresholds {
   lthr: number | null;
   runLthr: number | null;
