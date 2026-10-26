@@ -11,7 +11,7 @@ import { Year } from './comeback/Year';
 import { BuildSection, RecipeTable } from './comeback/Build';
 import { WayBack } from './comeback/WayBack';
 import { PlanSection } from './comeback/Plan';
-import { peakName, type HrCompareResponse, type Months, type Overview } from './comeback/types';
+import { peakName, type Compare, type HrCompareResponse, type Months, type Overview, type Story as StoryData } from './comeback/types';
 
 function Section({ title, sub, children }: { title: string; sub: string; children: ReactNode }) {
   return (
@@ -37,6 +37,8 @@ export function Comeback() {
   const hr = useApi<HrCompareResponse>(peak ? `/comeback/hr-profile${qs({ date: peak.date })}` : null);
   const months = useApi<Months>(peak ? `/comeback/months${qs({ date: peak.date })}` : null);
   const build = useApi<BuildSummary>(peak ? `/comeback/build${qs({ date: peak.date, weeks })}` : null);
+  const cmp = useApi<Compare>(peak ? `/comeback/compare${qs({ date: peak.date })}` : null);
+  const story = useApi<StoryData>(peak ? '/comeback/story' : null);
   useEffect(() => {
     if (data && weeklyTss == null) setWeeklyTss(Math.max(200, Math.round(data.now.weeklyTss / 10) * 10));
   }, [data, weeklyTss]);
@@ -61,14 +63,14 @@ export function Comeback() {
       ) : (
         <>
           <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-            <div className="text-xs text-muted">Your peaks: the best sets of efforts at least 4 months apart, dated to when you rode them. Pick one to compare with.</div>
+            <div className="text-xs text-muted">Your peaks: the best of each season, at least 4 months apart, dated to the effort that set them. Pick one to compare with.</div>
             <PinForm />
           </div>
           <PeakCards peaks={peaks} selected={peak.date} onSelect={setSelected} />
-          <Verdict o={data} peak={peak} hr={hr.data} months={months.data} />
+          <Verdict o={data} peak={peak} hr={hr.data} months={months.data} story={story.data} cmp={cmp.data} />
           <Story peaks={peaks} selected={peak.date} onSelect={setSelected} />
 
-          <Section title="Where you are" sub={`Your power now against ${peakName(peak)}, duration by duration and heartbeat by heartbeat.`}>
+          <Section title="Where you are" sub={`Your power now against ${peakName(peak)}: duration by duration, deep into a ride, and heartbeat by heartbeat.`}>
             <Gap peak={peak} hr={hr.data} />
           </Section>
 
@@ -80,7 +82,7 @@ export function Comeback() {
 
           <Section title="The way back" sub="How long a steady load takes to rebuild your capacity, and a plan to do it.">
             <WayBack o={data} peak={peak} months={months.data} weeklyTss={load} setWeeklyTss={setWeeklyTss} />
-            <PlanSection peak={peak} weeklyTss={load} setWeeklyTss={setWeeklyTss} mix={build.data?.mix ?? null} buildTssPerHour={buildTph} recentTssPerHour={recentTph} />
+            <PlanSection o={data} peak={peak} weeklyTss={load} setWeeklyTss={setWeeklyTss} mix={build.data?.mix ?? null} buildTssPerHour={buildTph} recentTssPerHour={recentTph} />
           </Section>
         </>
       )}

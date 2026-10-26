@@ -46,7 +46,7 @@ function BuildChart({ b }: { b: BuildSummary }) {
         ...tooltipStyle(t),
         formatter: (ps: any) => {
           const w = b.weeks[ps[0].dataIndex];
-          return `<b>Week of ${fmtDate(w.weekStart, 'd MMM yyyy')}</b>${tipRow(t.accent, 'TSS', fmtNum(w.tss))}${tipRow('transparent', 'Hours', w.hours.toFixed(1))}${tipRow('transparent', 'Training days', String(w.days))}${used
+          return `<b>Week of ${fmtDate(w.weekStart, 'd MMM yyyy')}</b>${tipRow(t.accent, 'TSS', fmtNum(w.tss))}${tipRow('transparent', 'Hours', w.hours.toFixed(1))}${tipRow('transparent', 'Riding days', String(w.days))}${w.otherHours >= 0.1 ? tipRow('transparent', 'Other sports', `${w.otherHours.toFixed(1)} h`) : ''}${used
             .filter((s) => w.sessions[s])
             .map((s) => tipRow(sessionColor(t, s), SESSION_LABEL[s], String(w.sessions[s])))
             .join('')}${w.longRides ? tipRow('transparent', 'Long rides (3h+)', String(w.longRides)) : ''}${w.ctl != null ? tipRow(t.ctl, 'CTL', w.ctl.toFixed(0)) : ''}`;
@@ -88,11 +88,11 @@ export function BuildSection({ peak, weeks, setWeeks }: { peak: PeakCard; weeks:
     <Card
       className="mt-4"
       title={`The ${weeks} weeks before ${peak.label ?? fmtDate(peak.date, 'MMMM yyyy')}`}
-      subtitle={`${fmtDate(b.from, 'd MMM yyyy')} → ${fmtDate(b.to, 'd MMM yyyy')} · what you actually did to get there`}
+      subtitle={`${fmtDate(b.from, 'd MMM yyyy')} → ${fmtDate(b.to, 'd MMM yyyy')} · what you actually did on the bike to get there`}
       actions={<Segmented size="sm" value={weeks} onChange={setWeeks} options={[12, 16, 20].map((n) => ({ value: n, label: `${n} wks` }))} />}
     >
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 xl:grid-cols-8">
-        <Stat label="Hours / week" value={b.avgHours.toFixed(1)} />
+        <Stat label="Hours / week" value={b.avgHours.toFixed(1)} sub={b.otherHours >= 0.3 ? `riding · + ${b.otherHours.toFixed(1)} h other sports` : 'riding'} />
         <Stat label="TSS / week" value={fmtNum(b.avgTss)} sub={`best 4 wks: ${fmtNum(b.peakBlockTss)}`} />
         <Stat label="Fitness (CTL)" value={`${fmtNum(b.ctlStart)} → ${fmtNum(b.ctlPeak)}`} sub={b.avgRamp != null ? `${b.avgRamp >= 0 ? '+' : ''}${b.avgRamp.toFixed(1)}/wk avg · max ${(b.maxRamp ?? 0) >= 0 ? '+' : ''}${(b.maxRamp ?? 0).toFixed(1)}` : undefined} />
         <Stat label="Load rhythm" value={rhythm} sub={b.cycle ? 'load : recovery weeks' : 'no regular recovery weeks'} />

@@ -1,7 +1,8 @@
 import { fitAerobic, fitnessChange, kineticReadable, outputAt, type AerobicFit, type AerobicSport, type Est } from '../shared/analytics/aerobic';
 import { rideEffortFindings, runEffortFindings, verdict, type EffortFinding, type Verdict } from '../shared/analytics/insights';
 import type { ActivityCurves } from '../shared/types';
-import { getPreferences, q } from './db';
+import { HR_DECLINE_PER_YEAR } from '../shared/analytics/thresholds';
+import { getPreferences, q, thresholdsFor } from './db';
 import { pmc, today } from './aggregate';
 import { storedSeries } from './estimates';
 import { activityReadings, WINDOW_ACTIVITIES, warmWindows } from './windows';
@@ -236,17 +237,28 @@ export function activityInsights(id: number): ActivityInsights | null {
  * Aerobic fitness around a past date (the peak of a season) against now, on the same model:
  * the same curve, with heat, fatigue and indoor riding taken out of both. Eras are separate
  * stretches of training, so their uncertainties add.
+ *
+ * Heart rate at a given effort falls with age, as max HR does: the same heart rate years later
+ * is a slightly harder effort, which flatters now. The fall at the reference heart rate is the
+ * max-HR decline scaled by where that heart rate sits in the heart-rate reserve (Karvonen), and
+ * `ageRatio` is the comparison with it allowed for.
  */
 export function aerobicThenNow(sport: AerobicSport, date: string) {
   const fit = aerobicFit(sport);
   if (!fit || !fit.points.length) return null;
   const t = Date.parse(date);
-  // the reading nearest the date, within two months of it
-  let k = -1;
-  fit.points.forEach((p, i) => {
-    const d = Math.abs(Date.parse(p.date) - t);
-    if (d <= 60 * DAY && (k < 0 || d < Math.abs(Date.parse(fit.points[k].date) - t))) k = i;
-  });
+  // the reading nearest the date: within two months of it, else four (heart rate is often
+  // recorded on fewer rides than power)
+  const nearest = (days: number) => {
+    let k = -1;
+    fit.points.forEach((p, i) => {
+      const d = Math.abs(Date.parse(p.date) - t);
+      if (d <= days * DAY && (k < 0 || d < Math.abs(Date.parse(fit.points[k].date) - t))) k = i;
+    });
+    return k;
+  };
+  let k = nearest(60);
+  if (k < 0) k = nearest(120);
   if (k < 0) return null;
   const last = fit.points.length - 1;
   if (stretchStart(fit, last) <= k) return null; // same stretch: not a then-and-now
@@ -255,14 +267,23 @@ export function aerobicThenNow(sport: AerobicSport, date: string) {
   const v0 = outputAt(fit.model, a.mean);
   const v1 = outputAt(fit.model, b.mean);
   const perBpm = outputAt(fit.model, b.mean - 1) / v1 - 1;
+  const th = thresholdsFor(fit.points[last].date);
+  const reserve = th.maxHr > th.restHr ? Math.max(0, Math.min(1, (fit.model.refHr - th.restHr) / (th.maxHr - th.restHr))) : 0.7;
+  const years = (Date.parse(fit.points[last].date) - Date.parse(fit.points[k].date)) / (365.25 * DAY);
+  const ageBpm = HR_DECLINE_PER_YEAR * years * reserve;
   return {
     refHr: fit.model.refHr,
     then: band(fit, a),
     now: band(fit, b),
     thenDate: fit.points[k].date,
+    nowDate: fit.points[last].date,
     ratio: v1 / v0,
     /** ±1 sd of the ratio */
     sd: Math.hypot(a.sd, b.sd) * perBpm,
+    /** bpm the reference heart rate has fallen with age since then */
+    ageBpm,
+    /** the ratio with that allowed for: today's output at the heart rate that matches then's effort */
+    ageRatio: outputAt(fit.model, b.mean + ageBpm) / v0,
   };
 }
 

@@ -1,29 +1,31 @@
 import type { CapacityFit, CapacityValidation } from '../../../shared/analytics/capacity';
 import type { HrComparison, HrProfilePoint } from '../../../shared/analytics/hrprofile';
-import type { EffortPoint } from '../../../shared/analytics/thresholds';
 import type { SeasonWeek } from '../../../shared/types';
 import type { Gap } from '../../lib/timeline';
 import { fmtDate } from '../../lib/format';
 
 export interface PeakCard {
+  /** the day of the effort that set the peak's FTP */
   date: string;
   ftp: number | null;
   wkg: number | null;
   cp: number | null;
   ctl: number | null;
+  /** best power actually ridden in the peak's own period */
   p5: number | null;
   p20: number | null;
   p60: number | null;
-  durable20: number | null;
-  efforts: EffortPoint[];
-  windowFrom: string;
-  windowTo: string;
+  /** the day of the period's best 20 minutes */
+  p20Date: string | null;
+  /** the peak's own period: 8 weeks before it to 4 after */
+  periodFrom: string;
+  periodTo: string;
   /** modelled 20-min capacity at the peak */
   capacity: number | null;
+  /** each plausible model's own capacity at the peak, by time constant */
+  capacities: { tau: number; capacity: number }[] | null;
   /** how far the best efforts around the peak went above capacity (0.11 = +11 %) */
   margin: number | null;
-  /** best 20 min from 8 weeks before to 4 weeks after the peak */
-  best20: number | null;
   rank?: number;
   pinned?: boolean;
   label?: string;
@@ -37,6 +39,8 @@ export interface CapacityInfo {
   validation: CapacityValidation | null;
   ltlRange: [number, number];
   observations: number;
+  /** load moves capacity enough to project with */
+  informative: boolean;
   fits: (CapacityFit & { ltlNow: number })[];
 }
 
@@ -44,14 +48,20 @@ export interface Now {
   date: string;
   ftp: number | null;
   rawFtp: number | null;
+  /** the day of the effort the FTP estimate rests on */
+  ftpDate: string | null;
   wkg: number | null;
   ctl: number | null;
   atl: number | null;
-  /** best 20-min power in the last 90 days */
+  /** best 20-min power in the last 90 days, and when */
   best20: number | null;
-  /** average of the last 6 weeks */
+  best20Date: string | null;
+  /** average of the last 6 weeks (or of the comeback so far, if shorter) */
   weeklyTss: number;
   weeklyHours: number;
+  /** days that average covers */
+  loadDays: number;
+  lastRide: string | null;
   ltl: number | null;
   capacity: number | null;
 }
@@ -61,8 +71,10 @@ export interface Overview {
   pins: { date: string; label: string }[];
   now: Now;
   capacity: CapacityInfo | null;
-  comeback: { start: string; breakDays: number } | null;
+  comeback: { start: string; breakFrom: string; breakDays: number } | null;
   ridingMonths: number;
+  /** the best 12-week average of weekly riding load before the last six weeks */
+  sustained: { tss: number; hours: number; to: string } | null;
 }
 
 export interface StoryWeek {
@@ -77,6 +89,17 @@ export interface Story {
   weeks: StoryWeek[];
   gaps: Gap[];
   eras: { from: string; to: string; hoursPerWeek: number; best20: number | null }[];
+}
+
+/** Best power actually ridden around a peak and in the last 90 days, fresh and after each amount of work. */
+export interface Compare {
+  durations: number[];
+  then: (number | null)[];
+  now: (number | null)[];
+  from: string;
+  to: string;
+  nowFrom: string;
+  durability: { kj: number[]; then: { value: number | null; rides: number }[]; now: { value: number | null; rides: number }[] };
 }
 
 export interface MonthRow {
@@ -104,8 +127,18 @@ export interface HrCompareResponse {
   outdoorOnly: boolean;
   thenRides: number;
   nowRides: number;
-  /** then vs now on the aerobic model (heat-, fatigue- and indoor-adjusted) */
-  aerobic: { refHr: number; then: { value: number; lo: number; hi: number }; now: { value: number; lo: number; hi: number }; thenDate: string; ratio: number; sd: number } | null;
+  /** then vs now on the aerobic model (heat-, fatigue- and indoor-adjusted), and allowing for age */
+  aerobic: {
+    refHr: number;
+    then: { value: number; lo: number; hi: number };
+    now: { value: number; lo: number; hi: number };
+    thenDate: string;
+    nowDate: string;
+    ratio: number;
+    sd: number;
+    ageBpm: number;
+    ageRatio: number;
+  } | null;
 }
 
 export interface PreviewWeek extends SeasonWeek {

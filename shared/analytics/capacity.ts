@@ -42,6 +42,9 @@ export interface CapacityFit {
 export interface CapacityValidation {
   /** first day held out */
   from: string;
+  /** the model fitted on the days before `from` only (with the chosen τ): its prediction of what followed */
+  a: number;
+  b: number;
   /** mean absolute error of the monthly best vs the model, held-out months (W) */
   mae: number;
   /** same for the classic CTL time constant (42 d) */
@@ -252,10 +255,17 @@ function validate(days: CapacityDay[], obs: { i: number; best: number }[], ltl: 
   }
   const months = [...byMonth].map(([month, v]) => ({ month, ...v }));
   const mae = (k: 'predicted' | 'predictedCtl') => months.reduce((s, x) => s + Math.abs(x.observed - x[k]), 0) / months.length;
-  return { from, mae: mae('predicted'), maeCtl: mae('predictedCtl'), months };
+  return { from, a: m.a, b: m.b, mae: mae('predicted'), maeCtl: mae('predictedCtl'), months };
 }
 
 export const capacityAt = (m: Pick<CapacityModel, 'a' | 'b'>, ltl: number) => m.a + m.b * ltl;
+
+/**
+ * Whether load moves capacity enough to project with: across the loads of the athlete's
+ * history, at least 10 W. A flatter line says their 20-minute power hasn't followed their
+ * training in a way the model can use, and "when will I get back" has no answer from it.
+ */
+export const informative = (m: Pick<CapacityModel, 'b' | 'ltlRange'>) => m.b * (m.ltlRange[1] - m.ltlRange[0]) >= 10;
 
 /** LTL needed for a capacity. */
 export const ltlFor = (m: Pick<CapacityModel, 'a' | 'b'>, capacity: number) => (m.b > 0 ? (capacity - m.a) / m.b : Infinity);

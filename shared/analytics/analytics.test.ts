@@ -12,7 +12,7 @@ import { decodePolyline, encodePolyline } from '../polyline';
 import { computeMetrics, movingMask, normalizeStreams } from './metrics';
 import { BUILTIN_WORKOUTS } from '../library';
 import { cpForReps, estimateHrThresholds, estimateThreshold, ftpBasisText, hourPower, limitDeclines } from './thresholds';
-import { byEffortDate, classifySession, detectPeaks, effortDate } from './comeback';
+import { byEffortDate, classifySession, detectPeaks, effortDate, summarizeBuild } from './comeback';
 import { daysToTarget, fitCapacity, loadForTarget, ltlSeries, projectCapacity, quantileLine, type CapacityDay } from './capacity';
 import { compareHrProfiles, hrPowerWindows, hrProfile } from './hrprofile';
 import { curveHr, fitAerobic, fitnessChange, kineticBins, outputAt, steadyWindows, WINDOW_SPECS, type AerobicActivity, type SteadyWindow } from './aerobic';
@@ -328,6 +328,47 @@ describe('comeback analytics', () => {
     const stale = ['2020-03-23', '2020-05-04', '2020-08-17'].map((date) => ({ date, raw: 357, points: pts('2020-03-15') }));
     expect(effortDate(stale[2])).toBe('2020-03-15');
     expect(byEffortDate(stale)).toEqual([{ date: '2020-03-15', value: 357 }]);
+  });
+  it('dates an estimate by the effort that sets it, not its newest one', () => {
+    const p = (t: number, date: string) => ({ t, value: 400, activityId: 1, date, score: 1, band: 0 });
+    // two September efforts and a new short one in January: still September's estimate
+    const echo = { date: '2020-02-12', raw: 372, basis: 'cp' as const, points: [p(180, '2019-09-07'), p(330, '2020-01-11'), p(1020, '2019-09-11')] };
+    expect(effortDate(echo)).toBe('2019-09-11');
+    // FTP set by a floor: that effort's day
+    expect(effortDate({ ...echo, basis: '20min', effort: { date: '2020-02-21' } })).toBe('2020-02-21');
+    // CP raised to cover an effort (or an interval set): that day
+    expect(effortDate({ ...echo, cpRaised: { effort: { date: '2019-12-22' } } })).toBe('2019-12-22');
+    // the January effort alone set nothing, so it isn't a date of its own
+    const later = { ...echo, date: '2020-03-07', raw: 370, points: [p(210, '2019-12-22'), p(360, '2020-01-11'), p(1200, '2019-09-11')] };
+    expect(byEffortDate([echo, later])).toEqual([{ date: '2019-09-11', value: 372 }]);
+  });
+  it('takes each season at its top, not at a lesser day just far enough from it', () => {
+    const s = [
+      { date: '2019-05-14', value: 332 },
+      { date: '2019-06-12', value: 347 },
+      { date: '2019-09-11', value: 372 },
+      { date: '2020-02-21', value: 366 },
+      { date: '2020-03-11', value: 366 },
+    ];
+    // May is 120 days from September but sits under June's 347: one season, one peak
+    expect(detectPeaks(s, { minGapDays: 120 }).map((p) => p.date)).toEqual(['2019-09-11', '2020-02-21']);
+  });
+  it('summarises the full weeks before a peak, riding only, with cross-training apart', () => {
+    const days = Array.from({ length: 20 * 7 }, (_, i) => iso(addDays(parseISO('2019-05-01'), i)));
+    const to = '2019-09-11'; // a Wednesday: the last week is the 7 days before it, not a stub of one
+    const acts = days.filter((d) => d < to).flatMap((d, i) => [
+      act({ id: i * 2, localDate: d, tss: 60, movingTime: 5400 }),
+      ...(i % 7 === 0 ? [act({ id: i * 2 + 1, localDate: d, sport: 'run', tss: 40, movingTime: 3600 })] : []),
+    ]);
+    const pmc = days.map((date) => ({ date, tss: 60, ctl: 50, atl: 50, tsb: 0, ramp: 0, projected: false }));
+    const b = summarizeBuild(acts, pmc, to, 16);
+    expect(b.weeks).toHaveLength(16);
+    expect(b.weeks[15].weekStart).toBe('2019-09-04');
+    expect(b.avgTss).toBeCloseTo(7 * 60);
+    expect(b.avgHours).toBeCloseTo(7 * 1.5);
+    expect(b.otherHours).toBeCloseTo(1);
+    expect(b.missedWeeks).toBe(0);
+    expect(b.longestBreak).toBe(0);
   });
   it('builds a gentle comeback plan that reaches the target without a race taper', () => {
     const weeks = generateSeasonPlan({ startDate: '2026-01-05', raceDate: '2026-06-01', startCtl: 25, startAtl: 25, targetCtl: 75, maxRamp: 5, initialRamp: 3, initialWeeks: 4, pattern: '3:1', taperWeeks: 2, maxWeeklyHours: 16, sport: 'ride', goal: 'fitness' });

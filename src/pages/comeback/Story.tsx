@@ -31,9 +31,7 @@ export function Story({ peaks, selected, onSelect }: { peaks: PeakCard[]; select
       if (i && tl.breakBetween(weeks[i - 1].week, w.week)) capacity.push([null, null]);
       capacity.push([xs[i], w.capacity]);
     });
-    const peakPts = peaks
-      .filter((p) => (p.best20 ?? p.p20) != null)
-      .map((p) => ({ value: [X(p.date), p.best20 ?? p.p20], date: p.date, name: peakName(p) }));
+    const peakPts = peaks.filter((p) => p.p20 != null).map((p) => ({ value: [X(p.date), p.p20], date: p.date, name: peakName(p) }));
     const nearest = (x: number) => {
       let best = 0;
       for (let i = 1; i < xs.length; i++) if (Math.abs(xs[i] - x) < Math.abs(xs[best] - x)) best = i;
@@ -46,7 +44,8 @@ export function Story({ peaks, selected, onSelect }: { peaks: PeakCard[]; select
     // the axis follows capacity: a short ride's weekly "best" far below it isn't informative
     const caps = weeks.map((w) => w.capacity).filter((c): c is number => c != null);
     const bests = weeks.map((w) => w.best).filter((b): b is number => b != null);
-    const yMin = Math.floor((Math.min(...(caps.length ? caps : bests)) * 0.75) / 50) * 50;
+    const floor = caps.length || bests.length ? Math.min(...(caps.length ? caps : bests)) : null;
+    const yMin = floor != null ? Math.floor((floor * 0.75) / 50) * 50 : undefined;
     const x0 = xs[0] - 10 * DAY;
     const x1 = xs[xs.length - 1] + 10 * DAY;
     const breakArea = (labels: boolean) => ({

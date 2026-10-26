@@ -2,7 +2,7 @@
  * "Comeback" analytics: find past performance peaks and describe the training that led to
  * them. How load turns into performance lives in capacity.ts.
  */
-import { addDays, differenceInCalendarDays, format, parseISO, startOfWeek } from 'date-fns';
+import { addDays, differenceInCalendarDays, format, parseISO } from 'date-fns';
 import type { Activity, PmcPoint } from '../types';
 import { polarizationIndex } from './zones';
 
@@ -95,18 +95,21 @@ export interface Peak {
 }
 
 /**
- * Pick the highest points of a weekly series that are at least `minGapDays` apart, so a
- * long block of good form counts once and separate seasons each get their own peak.
+ * The highest points of a series, each the best of its season: nothing higher (or as high and
+ * earlier) within `minGapDays` of it, so a long block of good form counts once — at its top,
+ * not at a lesser day just far enough from it — and separate seasons each get their own peak.
  */
 export function detectPeaks(series: { date: string; value: number }[], opts: { minGapDays?: number; max?: number; minRatio?: number } = {}): Peak[] {
   const { minGapDays = 180, max = 6, minRatio = 0.85 } = opts;
   if (!series.length) return [];
   const best = Math.max(...series.map((s) => s.value));
-  const sorted = [...series].sort((a, b) => b.value - a.value);
+  const sorted = [...series].sort((a, b) => b.value - a.value || a.date.localeCompare(b.date));
+  const near = (a: string, b: string) => Math.abs(differenceInCalendarDays(parseISO(a), parseISO(b))) < minGapDays;
   const picks: { date: string; value: number }[] = [];
-  for (const s of sorted) {
+  for (let k = 0; k < sorted.length; k++) {
+    const s = sorted[k];
     if (s.value < best * minRatio || picks.length >= max) break;
-    if (picks.some((p) => Math.abs(differenceInCalendarDays(parseISO(p.date), parseISO(s.date))) < minGapDays)) continue;
+    if (sorted.slice(0, k).some((p) => near(p.date, s.date))) continue;
     picks.push(s);
   }
   return picks.map((p, i) => ({ ...p, rank: i + 1 })).sort((a, b) => a.date.localeCompare(b.date));
@@ -116,10 +119,14 @@ export function detectPeaks(series: { date: string; value: number }[], opts: { m
 
 export interface BuildWeek {
   weekStart: string;
+  /** load and hours of the sport (riding): CTL here is the sport's too */
   tss: number;
   hours: number;
   rides: number;
+  /** days with the sport */
   days: number;
+  /** hours of other sports (cross-training) */
+  otherHours: number;
   sessions: Record<SessionType, number>;
   longRides: number;
   ctl: number | null;
@@ -142,6 +149,8 @@ export interface BuildSummary {
   weeks: BuildWeek[];
   avgHours: number;
   avgTss: number;
+  /** hours of other sports per week */
+  otherHours: number;
   /** mechanical work per week (kJ): unlike TSS, independent of the FTP at the time */
   avgKj: number;
   /** consecutive months (up to the date) with at least ~15 h of riding; filled in by the server */
@@ -171,33 +180,35 @@ const emptySessions = () => Object.fromEntries(SESSION_TYPES.map((t) => [t, 0]))
 const iso = (d: Date) => format(d, 'yyyy-MM-dd');
 
 /**
- * Summarise the training in [to − weeks, to): load, ramp, rhythm, session mix, intensity
- * distribution, long rides and consistency. `pmc` must cover the window (daily points).
+ * Summarise the training in the `weeks` full weeks before `to` (7-day blocks counted back
+ * from it, so the last is the week leading into the day): load, ramp, rhythm, session mix,
+ * intensity distribution, long rides and consistency — of the sport, as CTL is; other sports
+ * show as cross-training hours. `pmc` must cover the window (daily points).
  */
 export function summarizeBuild(acts: Activity[], pmc: PmcPoint[], to: string, weeks: number, sport = 'ride'): BuildSummary {
   const end = parseISO(to);
-  const start = startOfWeek(addDays(end, -weeks * 7), { weekStartsOn: 1 });
+  const start = addDays(end, -weeks * 7);
   const from = iso(start);
-  const inWin = acts.filter((a) => a.localDate >= from && a.localDate < to);
+  const all = acts.filter((a) => a.localDate >= from && a.localDate < to);
+  const inWin = all.filter((a) => a.sport === sport);
   const pmcByDate = new Map(pmc.map((p) => [p.date, p]));
   const rows: BuildWeek[] = [];
   for (let w = start; w < end; w = addDays(w, 7)) {
     const ws = iso(w);
     const we = iso(addDays(w, 7));
     const wa = inWin.filter((a) => a.localDate >= ws && a.localDate < we);
-    const sport_ = wa.filter((a) => a.sport === sport);
     const sessions = emptySessions();
-    sport_.forEach((a) => sessions[classifySession(a)]++);
-    const lastDay = iso(addDays(w, 6)) < to ? iso(addDays(w, 6)) : iso(addDays(end, -1));
+    wa.forEach((a) => sessions[classifySession(a)]++);
     rows.push({
       weekStart: ws,
       tss: wa.reduce((s, a) => s + (a.tss ?? 0), 0),
       hours: wa.reduce((s, a) => s + a.movingTime, 0) / 3600,
-      rides: sport_.length,
+      rides: wa.length,
       days: new Set(wa.map((a) => a.localDate)).size,
+      otherHours: all.filter((a) => a.sport !== sport && a.localDate >= ws && a.localDate < we).reduce((s, a) => s + a.movingTime, 0) / 3600,
       sessions,
-      longRides: sport_.filter((a) => a.movingTime >= LONG_RIDE_S).length,
-      ctl: pmcByDate.get(lastDay)?.ctl ?? null,
+      longRides: wa.filter((a) => a.movingTime >= LONG_RIDE_S).length,
+      ctl: pmcByDate.get(iso(addDays(w, 6)))?.ctl ?? null,
     });
   }
   const n = rows.length || 1;
@@ -227,8 +238,8 @@ export function summarizeBuild(acts: Activity[], pmc: PmcPoint[], to: string, we
     if (med >= 2 && med <= 6) cycle = med;
   }
 
-  // consistency
-  const days = [...new Set(inWin.map((a) => a.localDate))].sort();
+  // consistency: the longest stretch without the sport, the window's edges included
+  const days = [iso(addDays(start, -1)), ...new Set(inWin.map((a) => a.localDate).sort()), to];
   let longestBreak = 0;
   for (let i = 1; i < days.length; i++) longestBreak = Math.max(longestBreak, differenceInCalendarDays(parseISO(days[i]), parseISO(days[i - 1])) - 1);
 
@@ -238,11 +249,10 @@ export function summarizeBuild(acts: Activity[], pmc: PmcPoint[], to: string, we
   const hard = sessionsPerWeek.vo2 + sessionsPerWeek.anaerobic;
 
   const seiler = [0, 0, 0];
-  inWin.filter((a) => a.sport === sport).forEach((a) => a.zones?.seiler?.forEach((s, i) => (seiler[i] += s)));
+  inWin.forEach((a) => a.zones?.seiler?.forEach((s, i) => (seiler[i] += s)));
 
-  const long = inWin.filter((a) => a.sport === sport && a.movingTime >= LONG_RIDE_S);
+  const long = inWin.filter((a) => a.movingTime >= LONG_RIDE_S);
   const keySessions = inWin
-    .filter((a) => a.sport === sport)
     .map((a) => ({ a, type: classifySession(a) }))
     .filter((x) => QUALITY.includes(x.type) || x.a.movingTime >= LONG_RIDE_S)
     .sort((x, y) => (y.a.tss ?? 0) - (x.a.tss ?? 0))
@@ -255,7 +265,8 @@ export function summarizeBuild(acts: Activity[], pmc: PmcPoint[], to: string, we
     weeks: rows,
     avgHours: sum((r) => r.hours) / n,
     avgTss: sum((r) => r.tss) / n,
-    avgKj: inWin.filter((a) => a.sport === sport).reduce((s, a) => s + (a.work ?? 0), 0) / n,
+    otherHours: sum((r) => r.otherHours) / n,
+    avgKj: inWin.reduce((s, a) => s + (a.work ?? 0), 0) / n,
     peakBlockTss,
     ctlStart,
     ctlPeak: peakPt?.ctl ?? null,
@@ -281,17 +292,34 @@ export function summarizeBuild(acts: Activity[], pmc: PmcPoint[], to: string, we
 
 // ---------- dating estimates by their efforts ----------
 
+type Dated = { date: string | null };
+/** What an estimate says about the efforts behind it (thresholds.ts). */
+export type EstimateEfforts = {
+  date: string;
+  points?: (Dated & { t: number })[];
+  basis?: 'cp' | '20min' | 'long' | '60min';
+  effort?: Dated;
+  cpRaised?: { effort: Dated };
+};
+
 /**
- * When an estimate was actually earned: the day of its most recent effort (daily estimates
- * include their own day). A 6-month rolling estimate keeps reporting old efforts long after
- * training stops, so its own date says little about when the athlete was that fit.
+ * When an estimate was actually earned: the day of the effort that sets it. A 6-month
+ * rolling estimate keeps reporting old efforts long after training stops, and one that adds a
+ * new short effort to old long ones still rests on the old ones, so neither its own date nor
+ * its newest effort says when the athlete was that fit. The effort that sets FTP is the one it
+ * can't sit below (a 20–60 minute floor), else the one that raised CP, else the longest effort
+ * of the fit: it pins CP, the shorter ones mostly shape W′.
  */
-export function effortDate(e: { date: string; points?: { date: string | null }[] }): string {
-  return (e.points ?? []).map((p) => p.date).filter((d): d is string => !!d).sort().pop() ?? e.date;
+export function effortDate(e: EstimateEfforts): string {
+  if (e.basis && e.basis !== 'cp' && e.effort?.date) return e.effort.date;
+  if (e.cpRaised?.effort.date) return e.cpRaised.effort.date;
+  let longest: (Dated & { t: number }) | null = null;
+  for (const p of e.points ?? []) if (p.date && (!longest || p.t > longest.t || (p.t === longest.t && p.date > longest.date!))) longest = p;
+  return longest?.date ?? e.date;
 }
 
 /** One value per distinct effort date (the best estimate that relied on it), dated by effortDate. */
-export function byEffortDate<T extends { date: string; raw: number; points?: { date: string | null }[] }>(estimates: T[]): { date: string; value: number }[] {
+export function byEffortDate<T extends EstimateEfforts & { raw: number }>(estimates: T[]): { date: string; value: number }[] {
   const best = new Map<string, number>();
   for (const e of estimates) {
     const d = effortDate(e);

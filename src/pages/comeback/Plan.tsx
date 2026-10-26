@@ -9,13 +9,14 @@ import { http, useAction } from '../../lib/api';
 import { alpha, useTokens } from '../../lib/theme';
 import { fmtDate, fmtNum } from '../../lib/format';
 import { PlanChart } from '../Season';
-import { peakName, type PeakCard, type Preview } from './types';
+import { beyondSustained } from './findings';
+import { peakName, type Overview, type PeakCard, type Preview } from './types';
 
 /**
  * A plan that ramps to the chosen steady load and holds it until the capacity model says the
  * peak's level is back — then creates it and fills the next four weeks of the calendar.
  */
-export function PlanSection({ peak, weeklyTss, setWeeklyTss, mix, buildTssPerHour, recentTssPerHour }: { peak: PeakCard; weeklyTss: number; setWeeklyTss: (n: number) => void; mix: BuildSummary['mix'] | null; buildTssPerHour: number | null; recentTssPerHour: number }) {
+export function PlanSection({ o, peak, weeklyTss, setWeeklyTss, mix, buildTssPerHour, recentTssPerHour }: { o: Overview; peak: PeakCard; weeklyTss: number; setWeeklyTss: (n: number) => void; mix: BuildSummary['mix'] | null; buildTssPerHour: number | null; recentTssPerHour: number }) {
   const t = useTokens();
   const nav = useNavigate();
   const name = peakName(peak);
@@ -24,20 +25,25 @@ export function PlanSection({ peak, weeklyTss, setWeeklyTss, mix, buildTssPerHou
   const [pattern, setPattern] = useState<'2:1' | '3:1' | '4:1'>('3:1');
   const [copyMix, setCopyMix] = useState(true);
   const [preview, setPreview] = useState<Preview | null>(null);
-  const target = peak.capacity ?? 0;
+  const [error, setError] = useState<string | null>(null);
+  // a model that load doesn't move can't say when the peak is back
+  const target = o.capacity?.informative ? (peak.capacity ?? 0) : 0;
   useEffect(() => {
     const h = setTimeout(
       () =>
         http<Preview>('/comeback/plan-preview', {
           method: 'POST',
-          json: { weeklyTss, targetCapacity: target, initialRamp, maxRamp: ramp, pattern, mix: copyMix && mix ? mix : undefined, tssPerHour: copyMix && buildTssPerHour ? buildTssPerHour : recentTssPerHour },
+          json: { weeklyTss, peak: target ? peak.date : undefined, targetCapacity: target || undefined, initialRamp, maxRamp: ramp, pattern, mix: copyMix && mix ? mix : undefined, tssPerHour: copyMix && buildTssPerHour ? buildTssPerHour : recentTssPerHour },
         })
-          .then(setPreview)
-          .catch(() => setPreview(null)),
+          .then((p) => {
+            setPreview(p);
+            setError(null);
+          })
+          .catch((e: Error) => setError(e.message)),
       250,
     );
     return () => clearTimeout(h);
-  }, [weeklyTss, target, initialRamp, ramp, pattern, copyMix, mix, buildTssPerHour, recentTssPerHour]);
+  }, [weeklyTss, target, peak.date, initialRamp, ramp, pattern, copyMix, mix, buildTssPerHour, recentTssPerHour]);
   const create = useAction(
     async () => {
       const plan = await http<{ id: number }>('/plans', { method: 'POST', json: { name: `Comeback → ${name} capacity`, config: preview!.config } });
@@ -117,10 +123,20 @@ export function PlanSection({ peak, weeklyTss, setWeeklyTss, mix, buildTssPerHou
           <p className="col-span-2 text-[11px] text-muted">Saved as your active season plan; fill later weeks from the Season Planner as you go.</p>
         </div>
         <div className="min-w-0">
-          {!preview ? (
+          {error && !preview ? (
+            <p className="py-10 text-center text-xs text-muted">Couldn't work out a plan: {error}</p>
+          ) : !preview ? (
             <Spinner />
           ) : (
             <>
+              {beyondSustained(o, weeklyTss) && o.sustained && (
+                <div className="mb-3 flex items-start gap-2 rounded-lg bg-surface-2 p-3 text-xs">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-label="warning" />
+                  <span>
+                    {fmtNum(weeklyTss)} TSS a week is more than you've ever sustained: your best 12 weeks averaged {fmtNum(Math.round(o.sustained.tss / 10) * 10)} TSS ({o.sustained.hours.toFixed(1)} h), to {fmtDate(o.sustained.to, 'MMM yyyy')}. A load you can keep up for months beats one you can't.
+                  </span>
+                </div>
+              )}
               {!preview.reached && target > 0 && (
                 <div className="mb-3 flex items-start gap-2 rounded-lg bg-surface-2 p-3 text-xs">
                   <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-label="warning" />

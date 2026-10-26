@@ -37,17 +37,19 @@ export function PeakCards({ peaks, selected, onSelect }: { peaks: PeakCard[]; se
               <Badge>#{p.rank}</Badge>
             )}
           </div>
-          <div className="mt-0.5 text-[11px] text-muted">{p.label ? fmtDate(p.date, 'd MMM yyyy') : `week of ${fmtDate(p.date, 'd MMM')}`}</div>
+          <div className="mt-0.5 text-[11px] text-muted" title={p.pinned ? undefined : 'The day of the effort that set this FTP'}>
+            {fmtDate(p.date, 'd MMM yyyy')}
+          </div>
           <div className="mt-3 flex items-baseline gap-1.5">
             <span className="text-2xl font-semibold">{p.ftp ?? '–'}</span>
             <span className="text-xs text-muted">W FTP{p.wkg ? ` · ${p.wkg.toFixed(2)} W/kg` : ''}</span>
           </div>
-          <div className="mt-2 grid grid-cols-4 gap-2 text-[11px]">
+          <div className="mt-2 grid grid-cols-4 gap-2 text-[11px]" title={`Best power from ${fmtDate(p.periodFrom, 'd MMM')} to ${fmtDate(p.periodTo, 'd MMM yyyy')}`}>
             <div>
               <div className="text-muted">5 min</div>
               <div className="font-medium">{p.p5 ?? '–'}</div>
             </div>
-            <div>
+            <div title={p.p20Date ? `Ridden on ${fmtDate(p.p20Date, 'd MMM yyyy')}` : undefined}>
               <div className="text-muted">20 min</div>
               <div className="font-medium">{p.p20 ?? '–'}</div>
             </div>

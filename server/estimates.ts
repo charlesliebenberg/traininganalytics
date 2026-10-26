@@ -5,7 +5,7 @@
  * time — a ride that sets a new best gets the threshold it earned, from that day on.
  */
 import { addDays, format, parseISO, subDays } from 'date-fns';
-import { cpForReps, estimateHrThresholds, estimateThreshold, limitDeclines, MIN_ACTIVITIES, WINDOW_DAYS, type FtpEstimate, type HrThresholds, type ThresholdEstimate, type ThresholdSport } from '../shared/analytics/thresholds';
+import { cpForReps, estimateHrThresholds, estimateThreshold, HR_DECLINE_PER_YEAR, limitDeclines, MIN_ACTIVITIES, WINDOW_DAYS, type FtpEstimate, type HrThresholds, type ThresholdEstimate, type ThresholdSport } from '../shared/analytics/thresholds';
 import { fitPowerDuration, type PdModel } from '../shared/analytics/models';
 import { CURVE_DURATIONS, resample1Hz } from '../shared/analytics/series';
 import { aggregateCurve, curvesInRange, today, type AggregatedCurve } from './aggregate';
@@ -271,7 +271,7 @@ export function computeHrSeries(): HrEstimate[] {
     }
     const carried = (k: 'lthr' | 'runLthr' | 'maxHr') => {
       const b = best[k];
-      return b ? b.v - (0.7 * (Date.parse(date) - Date.parse(b.d))) / (365.25 * 86400000) : null;
+      return b ? b.v - (HR_DECLINE_PER_YEAR * (Date.parse(date) - Date.parse(b.d))) / (365.25 * 86400000) : null;
     };
     const merged: HrThresholds = { lthr: null, runLthr: null, maxHr: null };
     for (const k of ['lthr', 'runLthr', 'maxHr'] as const) {

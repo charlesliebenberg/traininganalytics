@@ -1,16 +1,26 @@
+import clsx from 'clsx';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { Card } from '../../components/ui';
 import { findings } from './findings';
-import { peakName, type HrCompareResponse, type Months, type Overview, type PeakCard } from './types';
+import { peakName, type Compare, type HrCompareResponse, type Months, type Overview, type PeakCard, type Story } from './types';
 
-/** The page's lead: four findings with the evidence behind each, and what to change. */
-export function Verdict({ o, peak, hr, months }: { o: Overview; peak: PeakCard; hr: HrCompareResponse | undefined; months: Months | undefined }) {
-  const { items, advice } = findings(o, peak, hr, months);
+/** Columns (of six) each finding spans on wide screens: a row of three, then the rest wider. */
+const SPANS: Record<number, string[]> = {
+  1: ['lg:col-span-6'],
+  2: ['lg:col-span-3', 'lg:col-span-3'],
+  3: ['lg:col-span-2', 'lg:col-span-2', 'lg:col-span-2'],
+  4: ['lg:col-span-3', 'lg:col-span-3', 'lg:col-span-3', 'lg:col-span-3'],
+  5: ['lg:col-span-2', 'lg:col-span-2', 'lg:col-span-2', 'lg:col-span-3', 'lg:col-span-3'],
+};
+
+/** The page's lead: the findings with the evidence behind each, and what to change. */
+export function Verdict({ o, peak, hr, months, story, cmp }: { o: Overview; peak: PeakCard; hr: HrCompareResponse | undefined; months: Months | undefined; story: Story | undefined; cmp: Compare | undefined }) {
+  const { items, advice } = findings(o, peak, hr, months, story, cmp);
   return (
     <Card className="mt-4" title="What your data says" subtitle={`Compared with ${peakName(peak)}. Pick another peak above to compare with it instead.`}>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {items.map((f) => (
-          <div key={f.key} className="flex flex-col rounded-xl bg-surface-2 p-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+        {items.map((f, i) => (
+          <div key={f.key} className={clsx('flex flex-col rounded-xl bg-surface-2 p-4', SPANS[items.length]?.[i], items.length % 2 === 1 && i === items.length - 1 && 'sm:col-span-2')}>
             <div className="flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-muted uppercase">
               {f.tone === 'good' && <CheckCircle2 className="h-3.5 w-3.5 text-good" aria-label="good" />}
               {f.tone === 'warning' && <AlertTriangle className="h-3.5 w-3.5 text-warning" aria-label="warning" />}
