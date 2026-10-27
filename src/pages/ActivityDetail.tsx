@@ -8,11 +8,13 @@ import { Badge, Button, Card, Input, Segmented, Spinner, SportIcon, Stat, Empty,
 import { RouteMap, type RouteMapHandle } from '../components/RouteMap';
 import { MiniProfile } from '../components/charts';
 import { InsightPanel, type ActivityInsights } from '../components/insights';
+import { NightBefore } from '../components/sleep';
+import type { SleepRead } from '../../shared/analytics/sleep';
 import { StreamsChart, buildChannels, isPaceSport, type ChannelKey } from './activity/StreamsChart';
 import { ActivityCurveCard, BestEffortsCard, DecouplingCard, DistributionCard, QuadrantCard, SegmentsCard, SelectionStats, ZonesCard, findBest } from './activity/panels';
 import { fmtDate, fmtDistance, fmtDuration, fmtElevation, fmtNum, fmtPace, fmtSpeed, fmtTemp, SPORT_LABEL, TSS_METHOD_LABEL } from '../lib/format';
 
-type DetailResponse = Detail & { nav: { prev: number | null; next: number | null }; planned: PlannedWorkout | null };
+type DetailResponse = Detail & { nav: { prev: number | null; next: number | null }; planned: PlannedWorkout | null; sleep: SleepRead | null };
 
 const SMOOTH = [
   { value: 1, label: '1s' },
@@ -210,6 +212,7 @@ export function ActivityDetail() {
           <Stat key={m.label} {...m} />
         ))}
       </div>
+      {a.sleep && <NightBefore read={a.sleep} />}
 
       {/* what it says about fitness: heart-rate evidence and efforts in context */}
       {insights.data && (insights.data.aerobic || insights.data.efforts.length > 0 || insights.data.session) && (

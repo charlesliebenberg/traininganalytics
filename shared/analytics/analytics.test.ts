@@ -19,9 +19,10 @@ import { curveHr, fitAerobic, fitnessChange, kineticBins, outputAt, steadyWindow
 import { rideEffortFindings, runEffortFindings, verdict } from './insights';
 import { analyzeSession, comparableSets, progression, setLabel, type SetSummary } from './session';
 import { reviewPeriod, type ReviewActivity, type ReviewInput } from './review';
+import { dayBefore, lnHrv, morningAfter, readings, readNight, sleepAdvice } from './sleep';
 import { addDays, differenceInCalendarDays, format, parseISO } from 'date-fns';
 const iso = (d: Date) => format(d, 'yyyy-MM-dd');
-import type { Thresholds } from '../types';
+import type { SleepNight, Thresholds } from '../types';
 
 const TH: Thresholds = {
   date: '2020-01-01',
@@ -954,5 +955,88 @@ describe('best window of any length', () => {
     expect(w.start).toBe(1500);
     expect(bestWindow(p, 4001)).toBeNull();
     expect(bestWindow(p, 0)).toBeNull();
+  });
+});
+
+describe('sleep against your normal', () => {
+  // ninety nights: HRV around 60 ms and heart rate around 48 bpm, with a little night-to-night noise
+  const night = (date: string, hrv: number, hr: number, asleep = 7.5 * 3600): SleepNight => ({
+    date,
+    source: 'eightsleep',
+    bedStart: null,
+    bedEnd: null,
+    asleep,
+    inBed: asleep + 1800,
+    light: null,
+    deep: null,
+    rem: null,
+    score: 80,
+    quality: null,
+    routine: null,
+    hrv,
+    hr,
+    rr: 14,
+    bedTemp: null,
+    roomTemp: null,
+    tnt: null,
+    processing: false,
+  });
+  const start = parseISO('2026-01-01');
+  const steady = Array.from({ length: 90 }, (_, i) => night(iso(addDays(start, i)), 60 * (1 + 0.06 * Math.sin(i * 2.3)), 48 + 1.5 * Math.cos(i * 1.7)));
+
+  it('draws a normal range from the 60 days before each night, once there are enough of them', () => {
+    const r = readings(steady, lnHrv);
+    expect(r[5].normal).toBeNull();
+    expect(r[89].normal!.n).toBe(60);
+    expect(Math.exp(r[89].normal!.mean)).toBeGreaterThan(58);
+    expect(Math.exp(r[89].normal!.mean)).toBeLessThan(62);
+    // the rolling average covers the 7 nights to it
+    const week = steady.slice(83, 90).map((n) => Math.log(n.hrv!));
+    expect(r[89].rolling).toBeCloseTo(week.reduce((s, x) => s + x, 0) / 7, 10);
+  });
+
+  it('says to train as planned when the week is normal, and to keep it easy when HRV sinks or heart rate rises', () => {
+    expect(readNight(steady)!.call).toBe('train');
+    // a week with HRV down 20 %
+    const tired = [...steady.slice(0, 83), ...steady.slice(83).map((n) => ({ ...n, hrv: n.hrv! * 0.8 }))];
+    const r = readNight(tired)!;
+    expect(r.call).toBe('easy');
+    expect(r.hrv!.status).toBe('low');
+    expect(r.hrv!.rollingVsNormal!).toBeLessThan(-0.15);
+    // a week with heart rate up 5 bpm, HRV untouched
+    const hot = [...steady.slice(0, 83), ...steady.slice(83).map((n) => ({ ...n, hr: n.hr! + 5 }))];
+    expect(readNight(hot)!.hr!.status).toBe('high');
+    expect(readNight(hot)!.call).toBe('easy');
+    // too little history yet
+    expect(readNight(steady.slice(0, 10))!.call).toBeNull();
+    expect(readNight(steady, '2027-01-01')).toBeNull();
+  });
+
+  it('reads the night with the training behind it', () => {
+    const tired = [...steady.slice(0, 83), ...steady.slice(83).map((n) => ({ ...n, hrv: n.hrv! * 0.8 }))];
+    expect(sleepAdvice(readNight(tired)!, -28).title).toBe('Recovery is behind the training');
+    expect(sleepAdvice(readNight(tired)!, 2).detail).toMatch(/something besides training/);
+    expect(sleepAdvice(readNight(steady)!, 4).title).toBe('Ready to go');
+    expect(sleepAdvice(readNight(steady)!, -25).title).toBe('Absorbing the load');
+    // a short night says so
+    const short = [...steady.slice(0, 89), { ...steady[89], asleep: 5 * 3600 }];
+    expect(sleepAdvice(readNight(short)!, 0).detail).toMatch(/You slept 5 h 00, 2 h 30 less than usual/);
+  });
+
+  it('shows how each kind of training day lands in the night after it', () => {
+    // hard days (150 TSS) every third day knock the next night's HRV down 15 % and heart rate up 3 bpm
+    const loadOn = (d: string) => (differenceInCalendarDays(parseISO(d), start) % 3 === 0 ? 150 : 40);
+    const nights = steady.map((n) => (loadOn(dayBefore(n.date)) === 150 ? { ...n, hrv: n.hrv! * 0.85, hr: n.hr! + 3 } : n));
+    const rows = morningAfter(nights, loadOn);
+    const hard = rows.find((r) => r.key === 'hard')!;
+    const easy = rows.find((r) => r.key === 'easy')!;
+    expect(hard.nights).toBe(30);
+    expect(easy.nights).toBe(60);
+    expect(hard.hrv!).toBeLessThan(easy.hrv! - 0.1);
+    expect(hard.hr!).toBeGreaterThan(easy.hr! + 2);
+    // no rest days: nothing to say about them
+    expect(rows.find((r) => r.key === 'rest')!.hrv).toBeNull();
+    // nights before the training history began don't count
+    expect(morningAfter(nights, () => null).every((r) => r.nights === 0)).toBe(true);
   });
 });

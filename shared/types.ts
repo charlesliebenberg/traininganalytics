@@ -226,6 +226,38 @@ export interface RaceEvent {
   targetCtl: number | null;
 }
 
+/** One night from a sleep tracker (Eight Sleep), keyed by the day you woke up. */
+export interface SleepNight {
+  /** the day you woke up, in your time zone */
+  date: string;
+  source: 'eightsleep';
+  /** in bed: from getting in to getting out (ISO) */
+  bedStart: string | null;
+  bedEnd: string | null;
+  /** seconds asleep, and in bed */
+  asleep: number | null;
+  inBed: number | null;
+  /** seconds in each sleep stage */
+  light: number | null;
+  deep: number | null;
+  rem: number | null;
+  /** the tracker's sleep score and its quality and routine parts, 0–100 */
+  score: number | null;
+  quality: number | null;
+  routine: number | null;
+  /** asleep: heart-rate variability (ms), average heart rate (bpm), breathing rate (per minute) */
+  hrv: number | null;
+  hr: number | null;
+  rr: number | null;
+  /** average bed and room temperature, °C */
+  bedTemp: number | null;
+  roomTemp: number | null;
+  /** toss and turns */
+  tnt: number | null;
+  /** still being processed by the tracker: its values may change */
+  processing: boolean;
+}
+
 export interface Connection {
   provider: 'strava';
   connected: boolean;

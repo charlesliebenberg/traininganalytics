@@ -10,6 +10,7 @@ import type {
   Preferences,
   RaceEvent,
   SeasonPlan,
+  SleepNight,
   Streams,
   Thresholds,
   WorkoutTemplate,
@@ -93,6 +94,14 @@ CREATE TABLE IF NOT EXISTS sync_log (
 -- steady stretches (output and the heart rate it settled at) per activity, from streams on first use (see windows.ts)
 DROP TABLE IF EXISTS hr_power;
 CREATE TABLE IF NOT EXISTS steady_windows (activity_id INTEGER PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE, data TEXT NOT NULL);
+-- nights from a sleep tracker, one per day woken up (see providers/eightsleep.ts); data: the night as the tracker sent it
+CREATE TABLE IF NOT EXISTS sleep (
+  date TEXT PRIMARY KEY, source TEXT NOT NULL, bed_start TEXT, bed_end TEXT,
+  asleep INTEGER, in_bed INTEGER, light INTEGER, deep INTEGER, rem INTEGER,
+  score REAL, quality REAL, routine REAL, hrv REAL, hr REAL, rr REAL, bed_temp REAL, room_temp REAL, tnt INTEGER,
+  processing INTEGER NOT NULL DEFAULT 0, data TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 // columns added since the table was first created
@@ -481,6 +490,64 @@ export function rowToPlan(r: Row): SeasonPlan {
     weeks: JSON.parse(r.weeks),
     createdAt: r.created_at,
   };
+}
+
+// ---------- sleep ----------
+export function rowToNight(r: Row): SleepNight {
+  return {
+    date: r.date,
+    source: r.source,
+    bedStart: r.bed_start,
+    bedEnd: r.bed_end,
+    asleep: r.asleep,
+    inBed: r.in_bed,
+    light: r.light,
+    deep: r.deep,
+    rem: r.rem,
+    score: r.score,
+    quality: r.quality,
+    routine: r.routine,
+    hrv: r.hrv,
+    hr: r.hr,
+    rr: r.rr,
+    bedTemp: r.bed_temp,
+    roomTemp: r.room_temp,
+    tnt: r.tnt,
+    processing: !!r.processing,
+  };
+}
+
+const NIGHT_COLUMNS = 'date, source, bed_start, bed_end, asleep, in_bed, light, deep, rem, score, quality, routine, hrv, hr, rr, bed_temp, room_temp, tnt, processing';
+
+/** Nights between two wake-up dates, inclusive, oldest first. */
+export const listNights = (from = '0000-01-01', to = '9999-12-31'): SleepNight[] => q.all(`SELECT ${NIGHT_COLUMNS} FROM sleep WHERE date BETWEEN ? AND ? ORDER BY date`, from, to).map(rowToNight);
+
+/** Store a night (replacing one already stored for that day), with the tracker's own record of it. */
+export function saveNight(n: SleepNight, data: unknown) {
+  q.run(
+    `INSERT INTO sleep(${NIGHT_COLUMNS}, data, updated_at) VALUES(${NIGHT_COLUMNS.split(',').map(() => '?').join(', ')}, ?, datetime('now'))
+     ON CONFLICT(date) DO UPDATE SET ${NIGHT_COLUMNS.split(', ').filter((c) => c !== 'date').map((c) => `${c} = excluded.${c}`).join(', ')}, data = excluded.data, updated_at = excluded.updated_at`,
+    n.date,
+    n.source,
+    n.bedStart,
+    n.bedEnd,
+    n.asleep,
+    n.inBed,
+    n.light,
+    n.deep,
+    n.rem,
+    n.score,
+    n.quality,
+    n.routine,
+    n.hrv,
+    n.hr,
+    n.rr,
+    n.bedTemp,
+    n.roomTemp,
+    n.tnt,
+    n.processing ? 1 : 0,
+    JSON.stringify(data),
+  );
 }
 
 export function log(provider: string | null, level: 'info' | 'warn' | 'error', message: string) {

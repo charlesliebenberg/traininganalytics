@@ -8,6 +8,7 @@ import { useTokens, alpha } from '../lib/theme';
 import { fmtDate, fmtNum, iso, SPORT_LABEL } from '../lib/format';
 import { Card, Empty, Field, Input, PageHeader, Segmented, Select, Spinner, Stat, Toggle } from '../components/ui';
 import { AerobicChart, outText, type AerobicSport, type AerobicTrendData } from '../components/insights';
+import { RecoveryCard } from '../components/sleep';
 import { RangePicker } from '../components/RangePicker';
 import { FormLegend, PmcChart, formColor } from '../components/charts';
 import { Chart, axisStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
@@ -258,6 +259,7 @@ export function Fitness() {
         {isLoading || !points ? <Spinner /> : <PmcChart points={points} events={visibleEvents} height={520} />}
       </Card>
       <AerobicFitnessCard />
+      <RecoveryCard from={localRange.from} to={localRange.to < todayStr ? localRange.to : todayStr} />
       <div className="mt-4 grid gap-4 xl:grid-cols-3">
         <Card title="Weekly ramp rate" subtitle="CTL gained per week — keep most weeks under 5–8">
           {points && <RampChart points={points.filter((p) => !p.projected).slice(-7 * 26)} />}

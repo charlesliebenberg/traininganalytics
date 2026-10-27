@@ -110,6 +110,94 @@ function StravaCard() {
   );
 }
 
+interface SleepStatus {
+  configured: boolean;
+  connected: boolean;
+  syncing: boolean;
+  lastSyncAt: string | null;
+  lastError: string | null;
+  nights: number;
+  first: string | null;
+  last: string | null;
+  historyDone: boolean;
+  everyHours: number;
+  account: string | null;
+}
+
+function EightSleepCard() {
+  const { data: s } = useApi<SleepStatus>('/sleep/status', { refetchInterval: (q) => (q.state.data?.syncing ? 3000 : 30000) });
+  const sync = useAction((full: boolean) => http('/sleep/sync', { method: 'POST', json: { full } }));
+  if (!s) return null;
+  const code = (x: string) => <code className="rounded bg-surface-3 px-1">{x}</code>;
+  const badge = s.syncing ? <Badge>Syncing…</Badge> : !s.configured ? <Badge color="var(--warning)">Not configured</Badge> : s.lastError ? <Badge color="var(--warning)">Sync failed</Badge> : s.connected ? <Badge color="var(--good)">Connected</Badge> : <Badge>Not synced yet</Badge>;
+  return (
+    <Card
+      title={
+        <span className="flex items-center gap-2">
+          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-ink text-[11px] font-bold text-surface">8</span>
+          Eight Sleep
+        </span>
+      }
+      actions={badge}
+    >
+      {s.configured ? (
+        <>
+          <div className="grid grid-cols-2 gap-3 text-[13px]">
+            <div>
+              <div className="text-[11px] text-muted uppercase">Nights</div>
+              {s.nights && s.first && s.last ? `${s.nights} · ${fmtDate(s.first, 'MMM yyyy')} – ${fmtDate(s.last, 'd MMM')}` : 'none yet'}
+            </div>
+            <div>
+              <div className="text-[11px] text-muted uppercase">Last sync</div>
+              {s.lastSyncAt ? fmtDate(s.lastSyncAt, 'd MMM HH:mm') : 'pending'}
+            </div>
+            <div>
+              <div className="text-[11px] text-muted uppercase">Schedule</div>
+              every {s.everyHours} h
+            </div>
+            <div>
+              <div className="text-[11px] text-muted uppercase">History</div>
+              {s.historyDone ? 'all read' : s.syncing ? 'reading…' : 'not finished yet'}
+            </div>
+          </div>
+          {s.lastError && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg bg-surface-2 p-2.5 text-xs">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+              {s.lastError}
+            </div>
+          )}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button size="sm" icon={<RefreshCw className="h-3.5 w-3.5" />} loading={sync.isPending || s.syncing} onClick={() => sync.mutate(false)}>
+              Sync now
+            </Button>
+            <Button size="sm" variant="ghost" disabled={s.syncing} onClick={() => confirm('Read your whole Eight Sleep history again?') && sync.mutate(true)}>
+              Read history again
+            </Button>
+          </div>
+          {sync.error && <p className="mt-2 text-xs text-critical">{(sync.error as Error).message}</p>}
+          <p className="mt-3 text-[11px] text-muted">
+            Sleep score, time asleep and its stages, HRV, heart rate and breathing asleep, from {s.account ? `the Eight Sleep account ${s.account}` : 'your Eight Sleep account'} through the API its app uses. It isn’t an official API, so a change on Eight Sleep’s side can break it until this is updated.
+          </p>
+        </>
+      ) : (
+        <ol className="list-decimal space-y-1 pl-4 text-xs text-ink-2">
+          <li>
+            Set {code('EIGHT_SLEEP_EMAIL')} and {code('EIGHT_SLEEP_PASSWORD')} (your Eight Sleep login) in the server’s environment: on Render, your service → Environment; locally, {code('.env')}.
+          </li>
+          <li>
+            Set {code('EIGHT_SLEEP_CLIENT_ID')} and {code('EIGHT_SLEEP_CLIENT_SECRET')}: the Eight Sleep app’s own client ID and secret, which its sign-in needs. The open-source clients carry them, e.g. {code('KNOWN_CLIENT_ID')} and {code('KNOWN_CLIENT_SECRET')} in the Home Assistant integration’s{' '}
+            <a className="text-accent hover:underline" href="https://github.com/lukas-clarke/eight_sleep/blob/main/custom_components/eight_sleep/pyEight/constants.py" target="_blank" rel="noreferrer">
+              pyEight/constants.py
+            </a>
+            .
+          </li>
+          <li>Redeploy. Your nights then sync every 2 hours, your history first. Your password stays in the server’s environment, never in the database or its snapshots.</li>
+        </ol>
+      )}
+    </Card>
+  );
+}
+
 function SyncLog() {
   const { data } = useApi<{ id: number; at: string; provider: string | null; level: string; message: string }[]>('/sync/log', { refetchInterval: 10000 });
   return (
@@ -366,6 +454,7 @@ export function Settings() {
       {tab === 'connections' && (
         <div className="grid gap-4 xl:grid-cols-2">
           <StravaCard />
+          <EightSleepCard />
           <SyncLog />
         </div>
       )}

@@ -41,6 +41,20 @@ export const config = {
     clientSecret: env.STRAVA_CLIENT_SECRET ?? '',
     verifyToken: env.STRAVA_WEBHOOK_VERIFY_TOKEN ?? 'training-analytics',
   },
+  /**
+   * Eight Sleep has no public API: sign-in is the account's email and password with the Eight
+   * Sleep app's own client ID and secret (as the open-source clients use). The password stays
+   * in the environment — never in the database, which snapshots copy.
+   */
+  eightSleep: {
+    email: (env.EIGHT_SLEEP_EMAIL ?? '').trim(),
+    password: env.EIGHT_SLEEP_PASSWORD ?? '',
+    clientId: (env.EIGHT_SLEEP_CLIENT_ID ?? '').trim(),
+    clientSecret: (env.EIGHT_SLEEP_CLIENT_SECRET ?? '').trim(),
+    /** hours between syncs */
+    syncHours: Math.max(1, Number(env.EIGHT_SLEEP_SYNC_HOURS ?? 2) || 2),
+  },
 };
 
 export const stravaConfigured = () => !!(config.strava.clientId && config.strava.clientSecret);
+export const eightSleepConfigured = () => !!(config.eightSleep.email && config.eightSleep.password && config.eightSleep.clientId && config.eightSleep.clientSecret);
