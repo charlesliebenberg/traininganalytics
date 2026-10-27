@@ -61,7 +61,7 @@ What happens next:
 
 ### Eight Sleep (automatic sync)
 
-The server reads your nights from your Eight Sleep account: sleep score, time asleep and in each stage, HRV, heart rate and breathing rate asleep, and bed and room temperature. It uses the API the Eight Sleep app uses.
+The server reads your nights from your Eight Sleep account: sleep score, time asleep and in each stage, and HRV, heart rate and breathing rate asleep. It uses the API the Eight Sleep app uses.
 
 1. Set `EIGHT_SLEEP_EMAIL` and `EIGHT_SLEEP_PASSWORD` to your Eight Sleep login.
 2. Set `EIGHT_SLEEP_CLIENT_ID` and `EIGHT_SLEEP_CLIENT_SECRET` to the Eight Sleep app's own client ID and secret, which its password sign-in needs. They're the same for everyone and ship inside the app; open-source clients carry them, e.g. `KNOWN_CLIENT_ID` and `KNOWN_CLIENT_SECRET` in [`pyEight/constants.py`](https://github.com/lukas-clarke/eight_sleep/blob/main/custom_components/eight_sleep/pyEight/constants.py) of the Home Assistant integration.
