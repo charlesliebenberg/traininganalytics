@@ -12,7 +12,7 @@
 import { addDays, format, parseISO, subDays } from 'date-fns';
 import type { SleepNight } from '../../shared/types';
 import { config, eightSleepConfigured } from '../config';
-import { athleteTimezone, getSetting, log, q, saveNight, setSetting } from '../db';
+import { athleteTimezone, getSetting, log, q, saveNight, setSetting, transaction } from '../db';
 
 const AUTH_URL = 'https://auth-api.8slp.net/v1/tokens';
 const API = 'https://client-api.8slp.net/v1';
@@ -42,11 +42,12 @@ export interface TrendDay {
   presenceEnd?: string;
   tnt?: number;
   processing?: boolean;
+  /** each measure: the night's own value (`current`) and the rolling ~30-night baseline (`average`) */
   sleepQualityScore?: {
     total?: number;
-    hrv?: { current?: number };
-    heartRate?: { average?: number; current?: number };
-    respiratoryRate?: { average?: number; current?: number };
+    hrv?: { current?: number; average?: number };
+    heartRate?: { current?: number; average?: number };
+    respiratoryRate?: { current?: number; average?: number };
     tempBedC?: { average?: number };
     tempRoomC?: { average?: number };
   };
@@ -59,8 +60,9 @@ const value = (v: unknown, digits = 0) => (typeof v === 'number' && Number.isFin
 /**
  * A night from a day of trends, dated by the day you woke up — the end of your time in bed, in
  * the athlete's time zone (the server runs in it) — else the day Eight Sleep files it under.
- * The night's own HRV is `hrv.current`, its heart rate and breathing the `average`s (as the
- * Home Assistant integration reads them). Null when nothing was recorded.
+ * HRV, heart rate and breathing are the night's own (`current`): the `average`s beside them are
+ * Eight Sleep's rolling baseline, which barely moves from night to night. Null when nothing was
+ * recorded.
  */
 export function nightFromTrend(d: TrendDay): SleepNight | null {
   const date = d.presenceEnd ? iso(new Date(d.presenceEnd)) : d.day;
@@ -83,8 +85,8 @@ export function nightFromTrend(d: TrendDay): SleepNight | null {
     quality: value(s.total),
     routine: value(d.sleepRoutineScore?.total),
     hrv: value(s.hrv?.current, 1),
-    hr: value(s.heartRate?.average, 1) ?? value(s.heartRate?.current, 1),
-    rr: value(s.respiratoryRate?.average, 1) ?? value(s.respiratoryRate?.current, 1),
+    hr: value(s.heartRate?.current, 1),
+    rr: value(s.respiratoryRate?.current, 1),
     bedTemp: value(s.tempBedC?.average, 1),
     roomTemp: value(s.tempRoomC?.average, 1),
     tnt: value(d.tnt),
@@ -224,8 +226,24 @@ export async function syncSleep(opts: { full?: boolean } = {}): Promise<number> 
   return saved;
 }
 
+/**
+ * Read every stored night again from the tracker's own record of it, so a change in how nights
+ * are read reaches the whole history without asking Eight Sleep for it again.
+ */
+export function rereadStoredNights() {
+  const rows = q.all('SELECT date, data FROM sleep WHERE data IS NOT NULL');
+  transaction(() => {
+    for (const r of rows) {
+      const d = JSON.parse(r.data) as TrendDay;
+      const night = nightFromTrend(d);
+      if (night && night.date === r.date) saveNight(night, d);
+    }
+  });
+}
+
 /** Sync shortly after start, then every few hours (EIGHT_SLEEP_SYNC_HOURS) — when configured. */
 export function startSleepSync() {
+  rereadStoredNights();
   if (!eightSleepConfigured()) return;
   setTimeout(() => void syncSleep(), 20_000).unref();
   setInterval(() => void syncSleep(), config.eightSleep.syncHours * 3600_000).unref();

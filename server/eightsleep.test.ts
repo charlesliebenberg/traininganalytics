@@ -37,7 +37,8 @@ function night(evening: string, over: Record<string, unknown> = {}) {
     presenceEnd: new Date(`${next}T06:25:00`).toISOString(),
     tnt: 21,
     processing: false,
-    sleepQualityScore: { total: 78, hrv: { current: 61.4, average: 55 }, heartRate: { average: 47.2 }, respiratoryRate: { average: 14.1, current: 15 }, tempBedC: { average: 28.4 }, tempRoomC: { average: 19.6 } },
+    // each measure as the night's own value and the rolling baseline beside it
+    sleepQualityScore: { total: 78, hrv: { current: 61.4, average: 55 }, heartRate: { current: 47, average: 49.3 }, respiratoryRate: { current: 14.1, average: 15 }, tempBedC: { average: 28.4 }, tempRoomC: { average: 19.6 } },
     sleepRoutineScore: { total: 88 },
     sessions: [{ timeseries: { heartRate: [['2026-01-01T00:00:00.000Z', 50]] } }],
     ...over,
@@ -106,17 +107,27 @@ describe('Eight Sleep sync', () => {
   it('dates each night by the morning you woke up, with the night’s own values', () => {
     const evening = iso(subDays(today, 10));
     const n = db.listNights().find((x) => x.date === iso(addDays(new Date(`${evening}T12:00:00`), 1)))!;
-    expect(n).toMatchObject({ source: 'eightsleep', asleep: 26100, inBed: 27900, deep: 5400, score: 82, quality: 78, routine: 88, hrv: 61.4, hr: 47.2, rr: 14.1, bedTemp: 28.4, roomTemp: 19.6, tnt: 21, processing: false });
+    expect(n).toMatchObject({ source: 'eightsleep', asleep: 26100, inBed: 27900, deep: 5400, score: 82, quality: 78, routine: 88, hrv: 61.4, hr: 47, rr: 14.1, bedTemp: 28.4, roomTemp: 19.6, tnt: 21, processing: false });
     // the tracker's record is kept, without the heavy per-minute series
     const raw = JSON.parse(db.q.get<{ data: string }>('SELECT data FROM sleep WHERE date = ?', n.date)!.data);
     expect(raw.day).toBe(evening);
     expect(raw.sessions).toBe(1);
   });
 
+  it('reads the stored nights again from those records, without asking Eight Sleep', () => {
+    const date = iso(subDays(today, 20));
+    // as an earlier version read it: heart rate and breathing from the rolling baseline
+    db.q.run('UPDATE sleep SET hr = 49.3, rr = 15 WHERE date = ?', date);
+    const calls = api.calls.length;
+    es.rereadStoredNights();
+    expect(db.listNights(date, date)[0]).toMatchObject({ hr: 47, rr: 14.1, hrv: 61.4 });
+    expect(api.calls.length).toBe(calls);
+  });
+
   it('then re-reads only the last few nights, catching nights finished processing since', async () => {
     api.calls = [];
     const lastEvening = iso(subDays(today, 1));
-    night(lastEvening, { processing: false, score: 64, sleepQualityScore: { hrv: { current: 41 }, heartRate: { average: 52 } } });
+    night(lastEvening, { processing: false, score: 64, sleepQualityScore: { hrv: { current: 41 }, heartRate: { current: 52, average: 48 } } });
     night(iso(today), { processing: true, score: 70 });
     await run();
     // from three nights before the newest stored (this morning's) through tomorrow
