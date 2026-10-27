@@ -42,6 +42,17 @@ Then set `PUBLIC_URL` on Render to the final Vercel/Netlify URL (or your custom 
 2. Open the app, sign in, go to **Settings → Connections → Connect Strava**.
 3. Click **Enable webhook** so new activities arrive within seconds. Polling every 15 minutes is the fallback.
 
+## 4. Connect Eight Sleep (optional)
+
+On Render, open your service → **Environment** and add:
+
+| Variable | Value |
+|---|---|
+| `EIGHT_SLEEP_EMAIL` / `EIGHT_SLEEP_PASSWORD` | Your Eight Sleep login. |
+| `EIGHT_SLEEP_CLIENT_ID` / `EIGHT_SLEEP_CLIENT_SECRET` | The Eight Sleep app's client ID and secret. The [README](README.md#eight-sleep-automatic-sync) says where to find them. |
+
+Save and let Render redeploy. The first sync starts about 20 seconds after the service is up and reads your whole history. After that, new nights are read every 2 hours. **Settings → Eight Sleep** shows how it's going.
+
 ## Notes
 
 - **Big imports.** Vercel and Netlify proxies limit request size and duration. Small batches of FIT/GPX files are fine. For a large TrainingPeaks or Strava export ZIP, open the app at its `onrender.com` URL and import there, since that goes straight to the backend.

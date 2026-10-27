@@ -9,6 +9,7 @@ import { config } from './config';
 import { api } from './api';
 import { authEnabled, requireAuth, session } from './auth';
 import { startScheduler } from './sync';
+import { startSleepSync } from './providers/eightsleep';
 import { ingestEvents } from './ingest';
 import { refreshOnNewDay, scheduleEstimateRefresh, upgradeMetrics } from './estimates';
 import { warmAerobic } from './aerobic';
@@ -42,6 +43,7 @@ serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(`Open ${config.publicUrl}`);
   if (config.production && !authEnabled()) console.warn('WARNING: APP_PASSWORD is not set — anyone who can reach this server can read and change your data.');
   startScheduler();
+  startSleepSync();
   ingestEvents.onSaved.push(() => {
     scheduleEstimateRefresh();
     scheduleWarm();

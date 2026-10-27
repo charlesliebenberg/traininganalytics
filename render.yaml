@@ -32,3 +32,12 @@ services:
         generateValue: true
       - key: SYNC_INTERVAL_MINUTES
         value: "15"
+      # Eight Sleep (optional): your login, and the Eight Sleep app's client ID and secret (see README)
+      - key: EIGHT_SLEEP_EMAIL
+        sync: false
+      - key: EIGHT_SLEEP_PASSWORD
+        sync: false
+      - key: EIGHT_SLEEP_CLIENT_ID
+        sync: false
+      - key: EIGHT_SLEEP_CLIENT_SECRET
+        sync: false

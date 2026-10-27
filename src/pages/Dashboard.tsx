@@ -15,6 +15,8 @@ import { useStatus } from '../components/Layout';
 import { Onboarding } from './Onboarding';
 import { WeekCard } from '../components/review';
 import { InsightPanel, type ActivityInsights } from '../components/insights';
+import { LastNightCard } from '../components/sleep';
+import type { SleepRead } from '../../shared/analytics/sleep';
 
 interface DashboardData {
   today: PmcPoint;
@@ -32,6 +34,8 @@ interface DashboardData {
   weekly: { start: string; sports: Record<string, { time: number; tss: number }> }[];
   /** the most recent ride or run, and what it says about fitness */
   latest: (ActivityInsights & { id: number }) | null;
+  /** last night (Eight Sleep) against the athlete's normal */
+  sleep: SleepRead | null;
 }
 
 /** The latest ride or run: what it says about fitness, in a few lines. */
@@ -177,6 +181,7 @@ export function Dashboard() {
           </div>
         </Card>
         <div className="flex flex-col gap-4">
+          {data.sleep && <LastNightCard read={data.sleep} tsb={today?.tsb ?? null} />}
           {data.latest && (data.latest.aerobic || data.latest.efforts.length > 0 || data.latest.fitness || data.latest.session) && (
             <LatestCard latest={data.latest} activity={data.recent.find((a) => a.id === data.latest!.id)} />
           )}

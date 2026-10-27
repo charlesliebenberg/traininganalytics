@@ -1,13 +1,14 @@
 import { Hono } from 'hono';
 import { randomBytes } from 'node:crypto';
 import { addDays, differenceInCalendarDays, parseISO, subDays } from 'date-fns';
-import { config, stravaConfigured } from './config';
+import { config, eightSleepConfigured, stravaConfigured } from './config';
 import {
   ACTIVITY_LIST_COLUMNS,
   deleteThresholds,
   getActivity,
   getCurves,
   getPreferences,
+  listNights,
   listThresholds,
   manualThresholds,
   loadStreams,
@@ -37,6 +38,9 @@ import { SPORTS, curveOn, estimateModel, estimateOn, estimateState, ftpEstimates
 import type { ThresholdEstimate, ThresholdSport } from '../shared/analytics/thresholds';
 import { CURVE_DURATIONS } from '../shared/analytics/series';
 import { stravaAuthUrl, stravaDisconnect, stravaExchangeCode, stravaHandleWebhook, stravaWebhookSubscribe } from './providers/strava';
+import { sleepStatus, syncSleep } from './providers/eightsleep';
+import { nightBefore, sleepTrend } from './sleep';
+import { readNight } from '../shared/analytics/sleep';
 import { BUILTIN_WORKOUTS } from '../shared/library';
 import { workoutMetrics } from '../shared/analytics/workout';
 import { generateSeasonPlan, generateWeekWorkouts, planReach } from '../shared/analytics/plan';
@@ -290,6 +294,7 @@ api.get('/activities/:id', (c) => {
     thresholds: thresholdsFor(a.localDate),
     nav,
     planned: planned ? rowToPlanned(planned) : null,
+    sleep: nightBefore(a.localDate),
   });
 });
 
@@ -414,6 +419,8 @@ api.get('/dashboard', (c) => {
     ftpBasis: storedSeries('ride').filter((e) => e.date <= t).pop()?.basis ?? null,
     ftp: ftpEstimates(t),
     weekly: trends(iso(subDays(new Date(), 7 * 16)), t, 'week').map((b) => ({ start: b.start, sports: b.sports })),
+    // last night against the athlete's normal (the 60 days before it and the week to it)
+    sleep: readNight(listNights(iso(subDays(new Date(), 75)), t)),
   });
 });
 
@@ -679,6 +686,16 @@ api.delete('/demo', (c) => {
   clearDemo();
   return c.json({ ok: true });
 });
+
+// ---------- sleep: Eight Sleep nights, against your normal and your training ----------
+api.get('/sleep/status', (c) => c.json(sleepStatus()));
+api.post('/sleep/sync', async (c) => {
+  if (!eightSleepConfigured()) return c.json({ error: 'Eight Sleep is not set up: set EIGHT_SLEEP_EMAIL, EIGHT_SLEEP_PASSWORD, EIGHT_SLEEP_CLIENT_ID and EIGHT_SLEEP_CLIENT_SECRET' }, 400);
+  const body = (await c.req.json().catch(() => ({}))) as { full?: boolean };
+  void syncSleep({ full: body.full === true });
+  return c.json(sleepStatus());
+});
+api.get('/sleep', (c) => c.json(sleepTrend(c.req.query('from') ?? '0000-01-01', c.req.query('to') ?? today())));
 
 // ---------- sync & auth ----------
 api.post('/sync', (c) => {
