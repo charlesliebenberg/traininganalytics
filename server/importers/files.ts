@@ -188,16 +188,16 @@ async function parseOne(name: string, data: Uint8Array): Promise<ActivityInput |
 
 /** Import one uploaded file (FIT/TCX/GPX, optionally gzipped, or a ZIP of those). */
 export async function importFile(name: string, data: Uint8Array): Promise<ImportResult[]> {
-  if (name.toLowerCase().endsWith('.zip')) {
-    const entries = unzipSync(data);
-    const out: ImportResult[] = [];
-    for (const [entry, bytes] of Object.entries(entries)) {
-      if (entry.endsWith('/')) continue;
-      out.push(...(await importFile(entry.split('/').pop()!, bytes)));
-    }
-    return out;
-  }
   try {
+    if (name.toLowerCase().endsWith('.zip')) {
+      const entries = unzipSync(data);
+      const out: ImportResult[] = [];
+      for (const [entry, bytes] of Object.entries(entries)) {
+        if (entry.endsWith('/')) continue;
+        out.push(...(await importFile(entry.split('/').pop()!, bytes)));
+      }
+      return out;
+    }
     const input = await parseOne(name, data);
     if (!input) return [{ file: name, status: 'skipped', message: 'Unsupported file type' }];
     const id = saveActivity(input);

@@ -327,7 +327,7 @@ export function TrainerRoad() {
   const header = <PageHeader title="TrainerRoad" subtitle="TrainerRoad’s view of you beside this app’s: FTP and AI FTP Detection against this app’s model, progression levels, your plan, and how your rides felt" />;
   if (isLoading || !d) return <>{header}<Spinner /></>;
   const s = d.status;
-  if (!s.mode || s.mode === 'calendar' || !d.read)
+  if (!d.read)
     return (
       <>
         {header}
@@ -351,6 +351,11 @@ export function TrainerRoad() {
   return (
     <>
       {header}
+      {s.mode !== 'account' && (
+        <p className="mb-4 rounded-lg bg-surface-2 p-2.5 text-xs text-ink-2">
+          Showing saved TrainerRoad data. <Link to="/settings" className="text-accent hover:underline">Connect your account in Settings</Link> to resume updates.
+        </p>
+      )}
       {s.lastError && (
         <div className="mb-4 flex items-start gap-2 rounded-lg bg-surface-2 p-2.5 text-xs">
           <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />

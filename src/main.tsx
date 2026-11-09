@@ -1,6 +1,6 @@
 import { StrictMode, lazy, useEffect, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Link, Route, Routes } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import './index.css';
 import { http, queryClient, setUnauthorizedHandler, useApi } from './lib/api';
@@ -9,6 +9,7 @@ import { ThemeContext, useThemeState } from './lib/theme';
 import { RangeProvider } from './lib/range';
 import { setUnits } from './lib/format';
 import { Layout } from './components/Layout';
+import { Button, Empty, Spinner } from './components/ui';
 import type { Preferences } from '../shared/types';
 
 const page = <K extends string>(name: K, loader: () => Promise<Record<K, React.ComponentType>>) => lazy(() => loader().then((m) => ({ default: m[name] })));
@@ -40,7 +41,7 @@ function AuthGate({ children }: { children: ReactNode }) {
 }
 
 function Prefs({ children }: { children: ReactNode }) {
-  const { data } = useApi<Preferences>('/preferences');
+  const { data, error, refetch } = useApi<Preferences>('/preferences');
   useEffect(() => {
     if (data) {
       setUnits(data.units);
@@ -55,7 +56,15 @@ function Prefs({ children }: { children: ReactNode }) {
         .then(() => queryClient.invalidateQueries())
         .catch(() => {});
   }, [!!data, data?.timezone]);
-  if (!data) return null;
+  if (!data) {
+    if (error) return (
+      <div role="alert" className="p-10 text-center text-sm text-muted">
+        <p>Can't load preferences: {error.message}</p>
+        <Button className="mt-3" onClick={() => void refetch()}>Retry</Button>
+      </div>
+    );
+    return <Spinner />;
+  }
   setUnits(data.units);
   return <>{children}</>;
 }
@@ -86,6 +95,7 @@ function Root() {
                   <Route path="workouts" element={<Workouts />} />
                   <Route path="season" element={<Season />} />
                   <Route path="settings" element={<Settings />} />
+                  <Route path="*" element={<Empty title="Page not found"><Link className="text-accent underline" to="/">Return to dashboard</Link></Empty>} />
                 </Route>
               </Routes>
             </Prefs>

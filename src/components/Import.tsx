@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { UploadCloud, CheckCircle2, AlertCircle, MinusCircle } from 'lucide-react';
 import clsx from 'clsx';
 import { useQueryClient } from '@tanstack/react-query';
-import { apiUrl } from '../lib/api';
+import { http } from '../lib/api';
 
 interface Result {
   file: string;
@@ -15,11 +15,13 @@ export function ImportDropzone({ compact = false }: { compact?: boolean }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [results, setResults] = useState<Result[]>([]);
   const input = useRef<HTMLInputElement>(null);
+  const uploading = useRef(false);
   const qc = useQueryClient();
 
   async function upload(files: FileList | File[]) {
     const list = [...files];
-    if (!list.length) return;
+    if (!list.length || uploading.current) return;
+    uploading.current = true;
     const out: Result[] = [];
     // upload in small batches so large exports show progress
     for (let i = 0; i < list.length; i += 5) {
@@ -28,14 +30,15 @@ export function ImportDropzone({ compact = false }: { compact?: boolean }) {
       const fd = new FormData();
       batch.forEach((f) => fd.append('files', f, f.name));
       try {
-        const res = await fetch(apiUrl('/import'), { method: 'POST', body: fd, credentials: 'include' });
-        out.push(...((await res.json()) as Result[]));
+        out.push(...await http<Result[]>('/import', { method: 'POST', body: fd }));
       } catch (e) {
         batch.forEach((f) => out.push({ file: f.name, status: 'error', message: (e as Error).message }));
       }
       setResults([...out]);
     }
     setBusy(null);
+    uploading.current = false;
+    if (input.current) input.current.value = '';
     qc.invalidateQueries();
   }
 

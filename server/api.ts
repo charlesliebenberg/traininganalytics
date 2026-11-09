@@ -25,7 +25,7 @@ import {
   DEFAULT_THRESHOLDS,
 } from './db';
 import { aggregateCurve, dailyLoads, iso, pmc, records, today, trends, type CurveType } from './aggregate';
-import { linkPlanned, recalculate, recalculateAsync } from './ingest';
+import { deleteActivity, ingestEvents, linkPlanned, recalculate, recalculateAsync } from './ingest';
 import { importFile } from './importers/files';
 import { clearDemo, isDemo, loadDemo } from './demo';
 import { syncNow, syncStatus } from './sync';
@@ -303,19 +303,23 @@ api.get('/activities/:id', (c) => {
 
 api.patch('/activities/:id', async (c) => {
   const id = Number(c.req.param('id'));
+  if (!getActivity(id)) return c.json({ error: 'Not found' }, 404);
   const b = await c.req.json();
   const fields: Record<string, string> = { name: 'name', description: 'description', rpe: 'rpe', feel: 'feel', tssOverride: 'tss_override', trainer: 'trainer', commute: 'commute', sport: 'sport' };
   for (const [k, col] of Object.entries(fields)) {
     if (k in b) q.run(`UPDATE activities SET ${col} = ?, updated_at = datetime('now') WHERE id = ?`, typeof b[k] === 'boolean' ? Number(b[k]) : b[k], id);
   }
-  if ('sport' in b) recalculate({ ids: [id] });
+  if ('sport' in b) {
+    recalculate({ ids: [id] });
+    linkPlanned(id);
+  }
+  ingestEvents.onSaved.forEach((fn) => fn());
   return c.json(getActivity(id));
 });
 
 api.delete('/activities/:id', (c) => {
   const id = Number(c.req.param('id'));
-  q.run('UPDATE planned_workouts SET activity_id = NULL WHERE activity_id = ?', id);
-  q.run('DELETE FROM activities WHERE id = ?', id);
+  deleteActivity(id);
   return c.json({ ok: true });
 });
 
@@ -484,7 +488,8 @@ api.patch('/planned/:id', async (c) => {
   if (cur.source === 'trainerroad') return c.json(FOLLOWED, 409);
   const next = { ...rowToPlanned(cur), ...b };
   const m = 'structure' in b || 'plannedTss' in b || 'plannedDuration' in b ? plannedMetrics(next.structure, { duration: next.plannedDuration, tss: next.plannedTss, if: next.plannedIf }) : { duration: next.plannedDuration, tss: next.plannedTss, if: next.plannedIf };
-  if ('date' in b && b.date !== cur.date && cur.activity_id) {
+  const moved = next.date !== cur.date || next.sport !== cur.sport;
+  if (moved && cur.activity_id) {
     q.run('UPDATE activities SET planned_id = NULL WHERE id = ?', cur.activity_id);
     next.activityId = null;
   }
@@ -504,7 +509,7 @@ api.patch('/planned/:id', async (c) => {
     next.activityId,
     id,
   );
-  if ('date' in b) {
+  if (moved) {
     const act = q.get('SELECT id FROM activities WHERE local_date = ? AND sport = ? AND planned_id IS NULL LIMIT 1', next.date, next.sport);
     if (act) linkPlanned(act.id);
   }
@@ -650,12 +655,17 @@ api.post('/plans/:id/apply', async (c) => {
   const plan = rowToPlan(row);
   const from = b.from ?? today();
   const weeks = plan.weeks.filter((w) => iso(addDays(parseISO(w.weekStart), 6)) >= from).slice(0, b.weeks ?? 4);
+  if (!weeks.length) return c.json({ created: 0 });
+  const to = iso(addDays(parseISO(weeks[weeks.length - 1].weekStart), 6));
   let created = 0;
   transaction(() => {
-    q.run('DELETE FROM planned_workouts WHERE plan_id = ? AND date >= ? AND activity_id IS NULL', id, from);
+    q.run('DELETE FROM planned_workouts WHERE plan_id = ? AND date BETWEEN ? AND ? AND activity_id IS NULL', id, from, to);
     for (const w of weeks) {
       for (const g of generateWeekWorkouts(w, plan.config.mix)) {
         if (g.date < from) continue;
+        // Completed sessions remain the record of what was planned. Refilling must
+        // neither erase that record nor add a second copy beside it.
+        if (q.get('SELECT id FROM planned_workouts WHERE plan_id = ? AND date = ? AND sport = ? AND activity_id IS NOT NULL', id, g.date, g.sport)) continue;
         q.run(
           `INSERT INTO planned_workouts(date, sport, title, description, structure, planned_duration, planned_tss, planned_if, plan_id, sort_order)
            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 10)`,

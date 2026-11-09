@@ -61,15 +61,19 @@ export function paceSeconds(ms: number, sport?: Sport): number {
   return (units === 'metric' ? 1000 : MI) / ms;
 }
 export function fmtPace(ms: number | null | undefined, sport?: Sport, withUnit = true): string {
-  if (ms == null || ms <= 0.3) return '–';
+  if (ms == null || !Number.isFinite(ms) || ms <= 0.3) return '–';
   const s = paceSeconds(ms, sport);
   if (s > 3600) return '–';
-  const txt = `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`.replace(/:60$/, ':59');
+  const txt = fmtPaceSec(s);
   if (!withUnit) return txt;
   return `${txt} ${sport === 'swim' ? '/100m' : units === 'metric' ? '/km' : '/mi'}`;
 }
 export const paceUnit = (sport?: Sport) => (sport === 'swim' ? '/100m' : units === 'metric' ? '/km' : '/mi');
-export const fmtPaceSec = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+export const fmtPaceSec = (s: number) => {
+  if (!Number.isFinite(s) || s < 0) return '–';
+  const rounded = Math.round(s);
+  return `${Math.floor(rounded / 60)}:${String(rounded % 60).padStart(2, '0')}`;
+};
 
 export function fmtNum(v: number | null | undefined, digits = 0, suffix = ''): string {
   if (v == null || !Number.isFinite(v)) return '–';

@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { durWords, parseDuration } from './format';
+import { durWords, fmtPace, fmtPaceSec, parseDuration, setUnits } from './format';
+
+describe('pace rounding', () => {
+  it('carries rounded seconds into minutes', () => {
+    setUnits('metric');
+    expect(fmtPace(1000 / 299.6, 'run')).toBe('5:00 /km');
+    expect(fmtPaceSec(299.6)).toBe('5:00');
+    expect(fmtPace(100 / 119.8, 'swim')).toBe('2:00 /100m');
+    expect(fmtPaceSec(299.4)).toBe('4:59');
+  });
+  it('formats imperial pace and missing or nonfinite values', () => {
+    setUnits('imperial');
+    expect(fmtPace(1609.344 / 479.9, 'run')).toBe('8:00 /mi');
+    setUnits('metric');
+    expect(fmtPace(NaN)).toBe('–');
+    expect(fmtPace(Infinity)).toBe('–');
+    expect(fmtPaceSec(NaN)).toBe('–');
+  });
+});
 
 describe('durations typed by hand', () => {
   it('reads clock times, units and bare minutes', () => {

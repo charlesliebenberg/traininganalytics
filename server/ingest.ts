@@ -4,7 +4,7 @@ import { rollingMean, toFloat } from '../shared/analytics/series';
 import { rangeStats } from '../shared/analytics/range';
 import { getActivity, loadStreams, log, q, saveStreams, thresholdsFor, transaction } from './db';
 
-/** Listeners notified after an activity is stored (e.g. to refresh threshold estimates). */
+/** Listeners notified after activities change (e.g. to refresh threshold estimates). */
 export const ingestEvents = { onSaved: [] as (() => void)[] };
 
 export interface LapInput {
@@ -186,7 +186,7 @@ function findDuplicate(input: ActivityInput, elapsed: number): { id: number; det
 export function saveActivity(input: ActivityInput): number | null {
   const row = buildRow(input);
   const saved = transaction(() => {
-    const existing = input.externalId
+    let existing = input.externalId
       ? q.get('SELECT id, rpe, description, name, sport FROM activities WHERE source = ? AND external_id = ?', input.source, input.externalId)
       : undefined;
     if (!existing) {
@@ -194,7 +194,9 @@ export function saveActivity(input: ActivityInput): number | null {
       if (dup) {
         // keep the richer copy
         if (dup.detailed || !row.detailed) return null;
-        q.run('DELETE FROM activities WHERE id = ?', dup.id);
+        // Upgrade the existing activity in place: calendar links, manual TSS and other
+        // user edits belong to the workout, even when a richer copy comes from a file.
+        existing = q.get('SELECT id, rpe, description, name, sport FROM activities WHERE id = ?', dup.id);
       }
     }
     let id: number;
@@ -223,7 +225,13 @@ export function saveActivity(input: ActivityInput): number | null {
 /** Link a completed activity to a same-day, same-sport planned workout. */
 export function linkPlanned(activityId: number) {
   const a = getActivity(activityId);
-  if (!a || a.plannedId) return;
+  if (!a) return;
+  if (a.plannedId) {
+    const linked = q.get('SELECT date, sport, activity_id FROM planned_workouts WHERE id = ?', a.plannedId);
+    if (linked?.activity_id === activityId && linked.date === a.localDate && linked.sport === a.sport) return;
+    q.run('UPDATE planned_workouts SET activity_id = NULL WHERE id = ? AND activity_id = ?', a.plannedId, activityId);
+    q.run('UPDATE activities SET planned_id = NULL WHERE id = ?', activityId);
+  }
   const p = q.get(
     'SELECT id FROM planned_workouts WHERE date = ? AND sport = ? AND activity_id IS NULL ORDER BY sort_order LIMIT 1',
     a.localDate,
@@ -232,6 +240,15 @@ export function linkPlanned(activityId: number) {
   if (!p) return;
   q.run('UPDATE planned_workouts SET activity_id = ? WHERE id = ?', activityId, p.id);
   q.run('UPDATE activities SET planned_id = ? WHERE id = ?', p.id, activityId);
+}
+
+/** Remove a workout and its calendar link, then refresh the analyses based on it. */
+export function deleteActivity(id: number) {
+  transaction(() => {
+    q.run('UPDATE planned_workouts SET activity_id = NULL WHERE activity_id = ?', id);
+    q.run('DELETE FROM activities WHERE id = ?', id);
+  });
+  ingestEvents.onSaved.forEach((fn) => fn());
 }
 
 /** Recompute metrics for activities (e.g. after thresholds changed). */

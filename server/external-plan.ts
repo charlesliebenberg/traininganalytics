@@ -79,7 +79,7 @@ export function applyExternalPlan(source: Source, plan: ExternalPlan): PlanChang
       const next = [w.date, w.sport, w.title, w.description, structure, w.duration, w.tss, w.if, w.id];
       const prev = [r.date, r.sport, r.title, r.description, r.structure, r.planned_duration, r.planned_tss, r.planned_if, r.external_id];
       if (next.every((v, i) => v === prev[i])) continue;
-      const moved = r.activity_id != null && r.date !== w.date;
+      const moved = r.activity_id != null && (r.date !== w.date || r.sport !== w.sport);
       if (moved) q.run('UPDATE activities SET planned_id = NULL WHERE id = ?', r.activity_id);
       q.run(
         `UPDATE planned_workouts SET date = ?, sport = ?, title = ?, description = ?, structure = ?, planned_duration = ?, planned_tss = ?, planned_if = ?,

@@ -10,7 +10,7 @@ import { config } from './config';
  * signs everyone out. Webhooks and health checks stay public.
  */
 const COOKIE = 'ta_session';
-const PUBLIC_PATHS = [/^\/api\/health$/, /^\/api\/session(\/|$)/, /^\/api\/webhooks\//];
+const PUBLIC_PATHS = [/^\/api\/health$/, /^\/api\/session(\/|$)/, /^\/api\/webhooks\/strava\/?$/];
 
 const token = () => createHmac('sha256', config.appPassword).update('training-analytics-session-v1').digest('hex');
 
@@ -23,9 +23,9 @@ function safeEqual(a: string, b: string): boolean {
 export const authEnabled = () => !!config.appPassword;
 const isAuthed = (c: Context) => !authEnabled() || safeEqual(getCookie(c, COOKIE) ?? '', token());
 
-/** READ_TOKEN (at least 24 chars) as a Bearer token grants read-only access: GET requests only. */
+/** READ_TOKEN grants data reads, never OAuth actions (which also use GET). */
 const hasReadToken = (c: Context) => {
-  if (c.req.method !== 'GET' || config.readToken.length < 24) return false;
+  if (c.req.method !== 'GET' || c.req.path.startsWith('/api/auth/') || config.readToken.length < 24) return false;
   const h = c.req.header('authorization') ?? '';
   return h.startsWith('Bearer ') && safeEqual(h.slice(7).trim(), config.readToken);
 };

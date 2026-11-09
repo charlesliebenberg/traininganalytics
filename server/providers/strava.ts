@@ -1,6 +1,6 @@
 import { config, stravaConfigured } from '../config';
 import { log, q, upsertThresholds, listThresholds, DEFAULT_THRESHOLDS, getSetting, setSetting, applyTimezone, athleteTimezone } from '../db';
-import { saveActivity, type LapInput } from '../ingest';
+import { deleteActivity, saveActivity, type LapInput } from '../ingest';
 import { normalizeStreams } from '../../shared/analytics/metrics';
 import type { Sport } from '../../shared/types';
 import { RateLimitError, enqueue } from '../queue';
@@ -361,7 +361,8 @@ export function stravaHandleWebhook(ev: StravaWebhookEvent) {
   if (ev.object_type !== 'activity') return;
   const id = String(ev.object_id);
   if (ev.aspect_type === 'delete') {
-    q.run("DELETE FROM activities WHERE source = 'strava' AND external_id = ?", id);
+    const activity = q.get("SELECT id FROM activities WHERE source = 'strava' AND external_id = ?", id);
+    if (activity) deleteActivity(activity.id);
     log('strava', 'info', `Activity ${id} deleted via webhook`);
   } else if (ev.aspect_type === 'update' && ev.updates && !('type' in ev.updates) && !('sport_type' in ev.updates)) {
     if (ev.updates.title) q.run("UPDATE activities SET name = ? WHERE source = 'strava' AND external_id = ?", ev.updates.title, id);
