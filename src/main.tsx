@@ -26,6 +26,7 @@ const Season = page('Season', () => import('./pages/Season'));
 const Settings = page('Settings', () => import('./pages/Settings'));
 const Thresholds = page('Thresholds', () => import('./pages/Thresholds'));
 const Comeback = page('Comeback', () => import('./pages/Comeback'));
+const TrainerRoad = page('TrainerRoad', () => import('./pages/TrainerRoad'));
 
 setUnauthorizedHandler(() => queryClient.invalidateQueries({ queryKey: ['/session'] }));
 
@@ -79,6 +80,7 @@ function Root() {
                   <Route path="records" element={<Records />} />
                   <Route path="thresholds" element={<Thresholds />} />
                   <Route path="comeback" element={<Comeback />} />
+                  <Route path="trainerroad" element={<TrainerRoad />} />
                   <Route path="map" element={<Heatmap />} />
                   <Route path="calendar" element={<Calendar />} />
                   <Route path="workouts" element={<Workouts />} />

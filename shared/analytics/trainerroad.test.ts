@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { structureFromProfile, type ProfilePoint } from './trainerroad';
+import { compareFtp, progressionLevels, structureFromProfile, valueOn, type ProfilePoint, type TrFtpRecord } from './trainerroad';
 import { describe as describeWorkout, flatten, workoutMetrics } from './workout';
 import type { WorkoutRepeat, WorkoutStep } from '../types';
 
@@ -79,5 +79,59 @@ describe('TrainerRoad workout profiles', () => {
     expect(structureFromProfile([{ seconds: 0, ftpPercent: 50 }])).toBeNull();
     expect(structureFromProfile(sampled([[30, 50]]))).toBeNull();
     expect(structureFromProfile([{ seconds: Number.NaN, ftpPercent: 50 }, { seconds: 10, ftpPercent: Number.NaN }])).toBeNull();
+  });
+});
+
+describe('TrainerRoad’s FTP beside this app’s', () => {
+  const app = [
+    { date: '2026-09-01', value: 305 },
+    { date: '2026-10-06', value: 308 },
+  ];
+
+  it('reads the FTP in effect on a day', () => {
+    expect(valueOn(app, '2026-08-31')).toBeNull();
+    expect(valueOn(app, '2026-09-01')).toBe(305);
+    expect(valueOn(app, '2026-10-05')).toBe(305);
+    expect(valueOn(app, '2027-01-01')).toBe(308);
+  });
+
+  it('sets each of TrainerRoad’s records against this app’s FTP that day, and the two day by day', () => {
+    const applied = [
+      { date: '2026-10-01', value: 300 },
+      { date: '2026-10-11', value: 310 },
+    ];
+    const others: TrFtpRecord[] = [
+      // AI FTP Detection's own record of the change applied on the 11th
+      { date: '2026-10-11', value: 310, kind: 'applied', source: 3, lowConfidence: null },
+      { date: '2026-10-15', value: 312, kind: 'detected', source: 3, lowConfidence: true },
+      { date: '2026-11-30', value: 320, kind: 'predicted', source: 5, lowConfidence: null },
+    ];
+    const { events, agreement } = compareFtp(applied, others, app, '2026-10-20');
+    expect(events.map((e) => [e.date, e.kind, e.value, e.app, e.diff])).toEqual([
+      ['2026-10-01', 'applied', 300, 305, -5],
+      ['2026-10-11', 'applied', 310, 308, 2],
+      ['2026-10-15', 'detected', 312, 308, 4],
+      ['2026-11-30', 'predicted', 320, null, null],
+    ]);
+    expect(events[2].lowConfidence).toBe(true);
+    // 1–5 Oct 300 against 305, 6–10 Oct 300 against 308, 11–20 Oct 310 against 308
+    expect(agreement!.days).toBe(20);
+    expect(agreement!.mean).toBeCloseTo((5 * -5 + 5 * -8 + 10 * 2) / 20, 10);
+    expect(agreement!.meanAbs).toBeCloseTo((5 * 5 + 5 * 8 + 10 * 2) / 20, 10);
+    expect(agreement!.meanPct).toBeCloseTo((5 * (-5 / 305) + 5 * (-8 / 308) + 10 * (2 / 308)) / 20, 10);
+    // nothing to set side by side without both
+    expect(compareFtp([], [], app, '2026-10-20').agreement).toBeNull();
+    expect(compareFtp(applied, [], [], '2026-10-20').agreement).toBeNull();
+  });
+
+  it('lists the progression levels in TrainerRoad’s order of zones, with what AI FTP Detection would do to them', () => {
+    const levels = progressionLevels(
+      { levels: { 99: { recent: 1 }, 85: { recent: 3.1, predicted: 5.4, changeEvent: { date: '2026-11-06T10:00:00', reason: 'workout', level: { from: 2.8, to: 3.1 } } }, 33: { recent: 6.2 } } },
+      { currentProgressionLevels: [{ progressionId: 85, previousDisplayLevel: 3.1 }], projectedProgressionLevels: [{ progressionId: 85, displayFinalLevel: 2.7 }] },
+    );
+    expect(levels.map((l) => l.zone)).toEqual(['Endurance', 'VO2 Max', 'Progression 99']);
+    expect(levels[1]).toEqual({ id: 85, zone: 'VO2 Max', level: 3.1, predicted: 5.4, changed: { date: '2026-11-06', from: 2.8, to: 3.1, reason: 'workout' }, ai: { from: 3.1, to: 2.7 } });
+    expect(levels[0]).toMatchObject({ predicted: null, changed: null, ai: null });
+    expect(progressionLevels(null, null)).toEqual([]);
   });
 });

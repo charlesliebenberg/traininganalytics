@@ -1,7 +1,7 @@
 import { addDays, differenceInCalendarDays, format, parseISO, startOfMonth, subDays, subMonths } from 'date-fns';
 import type { PmcPoint, SeasonPlanConfig } from '../shared/types';
 import { byEffortDate, classifySession, detectPeaks, effortDate, summarizeBuild } from '../shared/analytics/comeback';
-import { capacityAt, daysToTarget, fitCapacity, informative, ltlSeries, type CapacityDay, type CapacityModel } from '../shared/analytics/capacity';
+import { capacityAt, daysToTarget, fitCapacity, informative, ltlSeries, projectCapacity, type CapacityDay, type CapacityModel } from '../shared/analytics/capacity';
 import { compareHrProfiles, hrProfile, type HrBins } from '../shared/analytics/hrprofile';
 import { activityHrBins } from './windows';
 import { aerobicThenNow } from './aerobic';
@@ -136,6 +136,27 @@ function history(): History {
   };
   histCache = { at: Date.now(), days, hours, gaps, comebackStart, model, ltl };
   return histCache;
+}
+
+/**
+ * What the capacity model expects of 20-minute power by a date, riding the load planned until
+ * then: as a share of today's, by the best model and the range of the plausible ones. Null
+ * without a model, or with one that load barely moves.
+ */
+export function capacityChange(to: string, plannedLoad: (date: string) => number): { ratio: number; range: [number, number]; tau: number } | null {
+  const h = history();
+  const m = h.model;
+  if (!m || !h.days.length || !informative(m)) return null;
+  const last = h.days[h.days.length - 1].date;
+  const n = differenceInCalendarDays(parseISO(to), parseISO(last));
+  if (n <= 0) return null;
+  const loads = Array.from({ length: n }, (_, k) => plannedLoad(iso(addDays(parseISO(last), k + 1))));
+  const ratio = (f: { a: number; b: number; tau: number }) => {
+    const ltl0 = h.ltl(f.tau)[h.days.length - 1];
+    return projectCapacity(f, f.tau, ltl0, loads)[n - 1] / capacityAt(f, ltl0);
+  };
+  const all = m.fits.filter((f) => f.plausible).map(ratio);
+  return { ratio: ratio(m), range: [Math.min(...all), Math.max(...all)], tau: m.tau };
 }
 
 /** Index of a date in the history (clamped), and the LTL carried into it. */

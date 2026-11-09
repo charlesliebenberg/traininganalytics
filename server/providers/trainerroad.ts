@@ -143,8 +143,8 @@ async function signIn() {
   throw new Error(`sign-in failed (${res.status})${text ? `: ${text.slice(0, 160)}` : ''}`);
 }
 
-/** A JSON call, signed in; signs in again once if the session has run out. */
-async function api(path: string, init: { method?: string; headers?: Record<string, string>; body?: unknown } = {}): Promise<Json> {
+/** A JSON call, signed in; signs in again once if the session has run out. `orNull`: a 404 means there's none. */
+async function api(path: string, init: { method?: string; headers?: Record<string, string>; body?: unknown; orNull?: boolean } = {}): Promise<Json> {
   for (let attempt = 0; ; attempt++) {
     if (!jar.has(AUTH_COOKIE)) await signIn();
     const res = await request(path, {
@@ -158,6 +158,7 @@ async function api(path: string, init: { method?: string; headers?: Record<strin
       continue;
     }
     if (res.status === 429) throw new Error('TrainerRoad is limiting requests — trying again at the next sync');
+    if (res.status === 404 && init.orNull) return null;
     if (!res.ok) throw new Error(`${path}: ${res.status} ${(await res.text()).slice(0, 160)}`);
     const text = await res.text();
     return text ? JSON.parse(text) : null;
@@ -285,8 +286,113 @@ async function readAccount(from: string, to: string): Promise<ExternalPlan> {
     if (tss && !workouts.some((w) => w.date === date && w.title === e.name))
       workouts.push({ id: `event-${e.id}`, date, sport, title: String(e.name), description: null, duration: num(e.durationInSeconds) ?? num(e.duration), tss, if: null, structure: null });
   }
+  await readDetails(String(memberId), String(username), m, timeline);
   saveJar();
   return { from, to, workouts, races };
+}
+
+const keep = (key: string, data: unknown) =>
+  q.run("INSERT INTO trainerroad_data(key, data, fetched_at) VALUES(?, ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at", key, JSON.stringify(data ?? null));
+
+/**
+ * Everything else TrainerRoad keeps about the athlete, kept as it gives it (read by
+ * trainerroad-insights.ts): its FTP history, AI FTP Detection (what it detected, its predictions,
+ * and what accepting it would do to the progression levels), the progression levels, the plan
+ * and its phases, power records, weight, and the rides it recorded, with the post-ride survey.
+ * What can't be read is said once, and left as it was.
+ */
+async function readDetails(memberId: string, username: string, member: Json, timeline: Json) {
+  keep('member', member);
+  keep('fitness-thresholds', { fitnessThresholds: timeline.fitnessThresholds ?? null, pendingAiFtpChange: timeline.pendingAiFtpChange ?? null });
+  const career = { referer: `${BASE}/app/career/${encodeURIComponent(username)}` };
+  const get = (path: string, headers: Record<string, string> = {}) => () => api(path, { headers: { ...career, ...headers }, orNull: true });
+  const records = (path: string) => api(path, { method: 'POST', headers: career, body: [{ Slot: 1, StartDate: '2013-05-10', EndDate: iso(new Date()) }], orNull: true });
+  const reads: [string, () => Promise<Json>][] = [
+    ['ftp-history', get(`/app/api/tss/${encodeURIComponent(username)}`)],
+    ['ai-ftp', get(`/app/api/ai-ftp-detection/can-use-ai-ftp/${memberId}`)],
+    ['ai-ftp-status', get(`/app/api/calendar/aiftp/${memberId}/ai-failure-status`, { 'tr-cache-control': 'no-cache' })],
+    ['levels', get(`/app/api/career/${memberId}/levels`)],
+    ['plan', get(`/app/api/plan-builder/current-custom-plan/${memberId}`)],
+    ['plan-phases', get(`/app/api/plan-builder/${memberId}/plan-phases`)],
+    ['power-records', async () => (await records(`/app/api/personal-records/${memberId}?rowType=101&indoorOnly=false`)) ?? records(`/app/api/personal-records/for-date-range/${memberId}?rowType=101&indoorOnly=false`)],
+    ['weight', get(`/app/api/weight-history/${memberId}/all`)],
+  ];
+  const missed: string[] = [];
+  for (const [key, read] of reads) {
+    try {
+      keep(key, await read());
+    } catch (e) {
+      missed.push(`${key} (${(e as Error).message.slice(0, 100)})`);
+    }
+    await pause(200);
+  }
+  try {
+    await readRides(memberId, username, timeline);
+  } catch (e) {
+    missed.push(`rides (${(e as Error).message.slice(0, 100)})`);
+  }
+  if (missed.length) log('trainerroad', 'warn', `Not read this time: ${missed.join('; ')}`);
+}
+
+export interface SurveyAnswer {
+  /** the answer as TrainerRoad words it: Easy, Moderate, Hard, Very Hard, All Out */
+  rating: string | null;
+  /** 1 (easy) to 5 (all out) */
+  level: number | null;
+  /** why: what made it hard, or what went well */
+  reasons: string[];
+  /** RPE, 1 to 5 in quarter steps, when given */
+  rpe: number | null;
+  text: string | null;
+}
+
+/** The athlete's answer to TrainerRoad's post-ride survey, in words; null when not answered. */
+export function surveyAnswer(options: unknown, response: unknown): SurveyAnswer | null {
+  const r = response as Json;
+  if (!r || typeof r !== 'object') return null;
+  const byElement = new Map<unknown, Json>((Array.isArray(options) ? options : []).map((o: Json) => [o?.elementId, o]));
+  const root = byElement.get(r.rpeSurveyElementId);
+  const ids: unknown[] = Array.isArray(r.struggleReasonSurveyElementIds) && r.struggleReasonSurveyElementIds.length ? r.struggleReasonSurveyElementIds : r.struggleReasonSurveyElementId != null ? [r.struggleReasonSurveyElementId] : [];
+  const rating = root?.text ?? r.translatedDisplayName ?? null;
+  const level = num(root?.kind);
+  const rpe = num(r.rpe);
+  if (!rating && level == null && rpe == null) return null;
+  return {
+    rating: rating ? String(rating) : null,
+    level: level != null && level >= 1 && level <= 5 ? level : null,
+    reasons: ids.map((id) => byElement.get(id)?.text).filter((t): t is string => typeof t === 'string' && t.trim() !== ''),
+    rpe,
+    text: typeof r.text === 'string' && r.text.trim() ? r.text.trim() : null,
+  };
+}
+
+/** The rides TrainerRoad recorded in the last four weeks, in full, and the post-ride survey's answer. */
+async function readRides(memberId: string, username: string, timeline: Json) {
+  const from = iso(subDays(new Date(), BACK_DAYS));
+  const recent: Json[] = (Array.isArray(timeline?.activities) ? timeline.activities : []).filter((a: Json) => a?.id != null && typeof a.started === 'string' && a.started.slice(0, 10) >= from);
+  const kept = new Map(q.all('SELECT id, survey FROM trainerroad_rides').map((r) => [r.id as string, r.survey as string | null]));
+  const referer = { referer: `${BASE}/app/career/${encodeURIComponent(username)}` };
+  const added = new Set<string>();
+  const fresh = recent.filter((a) => !kept.has(String(a.id)));
+  for (let i = 0; i < fresh.length; i += 100) {
+    const got = await api(`/app/api/react-calendar/${memberId}/activities`, { headers: { ids: fresh.slice(i, i + 100).map((a) => a.id).join(','), ...referer } });
+    for (const d of Array.isArray(got) ? got : []) {
+      if (d?.id == null) continue;
+      q.run('INSERT INTO trainerroad_rides(id, started, data) VALUES(?, ?, ?) ON CONFLICT(id) DO UPDATE SET started = excluded.started, data = excluded.data', String(d.id), d.started ?? null, JSON.stringify(d));
+      added.add(String(d.id));
+    }
+  }
+  // asked when the ride first comes in, then for a week, as it's often answered later
+  const week = iso(subDays(new Date(), 7));
+  for (const a of recent) {
+    const id = String(a.id);
+    if (kept.get(id) || (!added.has(id) && (!kept.has(id) || a.started.slice(0, 10) < week))) continue;
+    const response = await api(`/app/api/survey/response?id=${encodeURIComponent(id)}`, { headers: referer, orNull: true });
+    const options = response ? await api(`/app/api/survey/${encodeURIComponent(id)}`, { headers: referer, orNull: true }) : null;
+    const answer = surveyAnswer(options, response);
+    if (answer) q.run('UPDATE trainerroad_rides SET survey = ? WHERE id = ?', JSON.stringify({ ...answer, raw: { response, options } }), id);
+    await pause(250);
+  }
 }
 
 // ---------- the calendar export ----------

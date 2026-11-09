@@ -59,9 +59,51 @@ const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
   }
   if (!headers.get('cookie')?.includes(`SharedTrainerRoadAuth=tok-${tr.token}`) || tr.token === 0) return new Response('', { status: 401 });
   const w = (id: number) => library[id];
-  if (url.pathname === '/app/api/member-info') return Response.json({ memberId: 4242, username: 'rider' });
+  if (url.pathname === '/app/api/member-info') return Response.json({ memberId: 4242, username: 'rider', ftp: 300 });
   if (url.pathname === '/app/api/react-calendar/4242/timeline')
-    return Response.json({ plannedActivities: tr.planned.map((p) => ({ id: p.id, date: ymd(p.date), workoutId: p.workoutId, name: p.name ?? null, canMove: true })), events: tr.events, annotations: [] });
+    return Response.json({
+      plannedActivities: tr.planned.map((p) => ({ id: p.id, date: ymd(p.date), workoutId: p.workoutId, name: p.name ?? null, canMove: true })),
+      events: tr.events,
+      annotations: [],
+      // AI FTP Detection: one applied, one found two days ago and waiting, one predicted three weeks out
+      fitnessThresholds: [
+        { id: 'd1', date: `${day(-20)}T00:00:00`, value: 300, isApplied: true, source: 3 },
+        { id: 'd2', date: `${day(-2)}T00:00:00`, value: 306, isApplied: false, source: 3 },
+        { id: 'p1', date: `${day(21)}T00:00:00`, value: 315, isApplied: false, source: 5 },
+      ],
+      pendingAiFtpChange: { id: 'd2', value: 306, source: 3, date: `${day(-2)}T00:00:00`, isApplied: false, isLowConfidence: false },
+      // the ride three days ago, as TrainerRoad recorded it (its start without a zone)
+      activities: [{ id: 5001, started: `${day(-3)}T08:02:00` }],
+    });
+  if (url.pathname === '/app/api/tss/rider') return Response.json({ ftpRecordsDate: [{ date: `${day(-60)}T00:00:00`, value: 290 }, { date: `${day(-20)}T00:00:00`, value: 300 }], tssByDay: [] });
+  if (url.pathname === '/app/api/ai-ftp-detection/can-use-ai-ftp/4242')
+    return Response.json({ can: true, reason: null, modelVersion: '3.1', additionalData: { nextAiFtpAvailability: `${day(21)}T00:00:00`, lastViewed: null, detection: { ftp: 306, currentProgressionLevels: [{ progressionId: 83, previousDisplayLevel: 4.2 }], projectedProgressionLevels: [{ progressionId: 83, displayFinalLevel: 3.6 }] } } });
+  if (url.pathname === '/app/api/calendar/aiftp/4242/ai-failure-status') return Response.json({ status: 0 });
+  if (url.pathname === '/app/api/career/4242/levels')
+    return Response.json({ timestamp: `${day(0)}T01:00:00`, levels: { 79: { recent: 2.1 }, 83: { recent: 4.2, predicted: 6.1, changeEvent: { date: `${day(-3)}T10:00:00`, reason: 1, level: { from: 3.9, to: 4.2 }, delta: 0.3 } }, 33: { recent: 5.5, predicted: 6 } } });
+  if (url.pathname === '/app/api/plan-builder/current-custom-plan/4242')
+    return Response.json({
+      name: 'Gran Fondo plan',
+      volume: 'Mid',
+      start: `${day(-10)}T00:00:00`,
+      end: `${day(60)}T00:00:00`,
+      currentPhaseName: 'Base',
+      currentPhaseStart: `${day(-10)}T00:00:00`,
+      currentPhaseEnd: `${day(32)}T00:00:00`,
+      phases: [
+        { type: 'Build', planName: 'Sustained Power Build', volume: 'Mid', start: `${day(33)}T00:00:00`, end: `${day(60)}T00:00:00` },
+        { type: 'Base', planName: 'Sweet Spot Base I', volume: 'Mid', start: `${day(-10)}T00:00:00`, end: `${day(32)}T00:00:00` },
+      ],
+    });
+  if (url.pathname === '/app/api/react-calendar/4242/activities' && headers.get('ids') === '5001')
+    return Response.json([{ id: 5001, started: `${day(-3)}T08:02:00`, name: 'Pettit', durationInSeconds: 3600, tss: 41, intensityFactor: 0.63, kj: 650 }]);
+  if (url.pathname === '/app/api/survey/response' && url.searchParams.get('id') === '5001') return Response.json({ id: 5001, type: 1, rpeSurveyElementId: 103, struggleReasonSurveyElementIds: [201], rpe: 3.25, text: null });
+  if (url.pathname === '/app/api/survey/5001')
+    return Response.json([
+      { id: 1, parentId: null, elementId: 101, kind: 1, type: 1, text: 'Easy' },
+      { id: 3, parentId: null, elementId: 103, kind: 3, type: 1, text: 'Hard' },
+      { id: 9, parentId: 3, elementId: 201, kind: 7, type: 1, text: 'My legs were heavy' },
+    ]);
   if (url.pathname === '/app/api/react-calendar/4242/planned-activities') {
     const ids = (headers.get('ids') ?? '').split(',').map(Number);
     return Response.json(
@@ -110,6 +152,8 @@ describe('TrainerRoad', () => {
     tr.events = [{ id: 7001, name: 'Grafton to Inverell', date: ymd(day(60)), racePriority: 3, tss: 250, duration: 4 * 3600, isTriathlonType: false, notes: '<p>The big one</p>' }];
     // the ride already done three days ago
     rideId = Number(db.q.run("INSERT INTO activities(source, external_id, name, sport, start_time, local_date, detailed) VALUES('file', 'r1', 'Morning Ride', 'ride', ?, ?, 1)", `${day(-3)}T08:00:00.000Z`, day(-3)).lastInsertRowid);
+    // this app's own FTP: 295 W, then 305 W for the last eleven days
+    for (let n = -90; n <= 0; n++) db.q.run("INSERT INTO threshold_estimates(sport, date, data) VALUES('ride', ?, ?)", day(n), JSON.stringify({ sport: 'ride', date: day(n), threshold: n < -10 ? 295 : 305, raw: 0, cp: 0 }));
   });
   afterAll(() => {
     vi.useRealTimers();
@@ -147,6 +191,57 @@ describe('TrainerRoad', () => {
     expect(trp.trainerRoadStatus()).toMatchObject({ mode: 'account', readBy: 'account', account: 'rider', lastError: null, upcoming: 4, races: 1, next: { date: day(0), title: 'Mary Austin' } });
     // the session's cookies are kept with the connection
     expect(JSON.parse(db.q.get("SELECT access_token FROM connections WHERE provider = 'trainerroad'")!.access_token)).toMatchObject({ SharedTrainerRoadAuth: 'tok-1' });
+  });
+
+  it('reads what else TrainerRoad keeps, and sets its FTP beside this app’s', async () => {
+    const { trainerRoadInsights } = await import('./trainerroad-insights');
+    const r = trainerRoadInsights();
+    // its FTP now, and this app's
+    expect(r.ftp).toMatchObject({ trainerRoad: 300, app: 305 });
+    expect(r.ftp!.events.map((e) => [e.date, e.kind, e.value, e.app, e.diff])).toEqual([
+      [day(-60), 'applied', 290, 295, -5],
+      [day(-20), 'applied', 300, 295, 5],
+      // found by AI FTP Detection, waiting to be accepted
+      [day(-2), 'pending', 306, 305, 1],
+      // predicted for three weeks out: no estimate of this app's for a day to come
+      [day(21), 'predicted', 315, null, null],
+    ]);
+    // day by day since its first: 40 days 5 W under, 10 over, 11 under
+    expect(r.ftp!.agreement!.days).toBe(61);
+    expect(r.ftp!.agreement!.mean).toBeCloseTo((40 * -5 + 10 * 5 + 11 * -5) / 61, 6);
+    expect(r.ftp!.agreement!.meanAbs).toBe(5);
+    // the prediction, beside this app's forecast for the day (no capacity model from one ride)
+    expect(r.ftp!.forecasts).toEqual([{ date: day(21), trainerRoad: 315, app: null, range: null, days: 21 }]);
+    expect(r.ai).toMatchObject({ can: true, status: 'CanPredict', modelVersion: '3.1', detected: 306, next: day(21) });
+    // progression levels by zone, in TrainerRoad's order, with what accepting the detection would do
+    expect(r.levels.map((l) => [l.zone, l.level, l.predicted])).toEqual([
+      ['Endurance', 5.5, 6],
+      ['Threshold', 4.2, 6.1],
+      ['Anaerobic', 2.1, null],
+    ]);
+    expect(r.levels[1]).toMatchObject({ changed: { date: day(-3), from: 3.9, to: 4.2, reason: 1 }, ai: { from: 4.2, to: 3.6 } });
+    expect(r.plan).toMatchObject({ name: 'Gran Fondo plan', current: { name: 'Base', start: day(-10), end: day(32) } });
+    expect(r.plan!.phases.map((p: { name: string }) => p.name)).toEqual(['Base', 'Build']);
+    // the ride as TrainerRoad recorded it, how it was rated, and the same ride here
+    expect(r.rides).toEqual([
+      {
+        id: '5001',
+        started: `${day(-3)}T08:02:00`,
+        name: 'Pettit',
+        duration: 3600,
+        tss: 41,
+        if: 0.63,
+        kj: 650,
+        survey: { rating: 'Hard', level: 3, reasons: ['My legs were heavy'], rpe: 3.25, text: null },
+        activity: { id: rideId, name: 'Morning Ride', tss: null },
+      },
+    ]);
+    // and on the activity
+    const { api } = await import('./api');
+    const detail = await (await api.request(`/activities/${rideId}`)).json();
+    expect(detail.trainerRoad).toMatchObject({ name: 'Pettit', survey: { rating: 'Hard', rpe: 3.25 } });
+    // all kept as TrainerRoad gave it
+    expect(db.q.all('SELECT key FROM trainerroad_data ORDER BY key').map((x) => x.key)).toEqual(['ai-ftp', 'ai-ftp-status', 'fitness-thresholds', 'ftp-history', 'levels', 'member', 'plan', 'plan-phases', 'power-records', 'weight']);
   });
 
   it('follows TrainerRoad as it adapts the plan: moved, swapped and dropped workouts, a ride’s workout kept', async () => {
@@ -325,5 +420,20 @@ describe('TrainerRoad’s calendar export, read', () => {
     expect(local).toMatchObject({ uid: '2026-11-12|Club', date: '2026-11-12', minutes: 60, description: 'Line one\nline two' });
     expect(entryText('TSS 61, IF 71, kJ(Cal) 593')).toEqual({ tss: 61, if: 0.71, words: null });
     expect(entryText('Intensity Factor: 0.8\nA steady ride.')).toMatchObject({ tss: null, if: 0.8, words: 'Intensity Factor: 0.8\nA steady ride.' });
+  });
+});
+
+describe('TrainerRoad’s post-ride survey, read', () => {
+  it('reads an answer by its words and reasons, its wording alone, or just an RPE', async () => {
+    const { surveyAnswer } = await import('./providers/trainerroad');
+    const options = [
+      { id: 3, parentId: null, elementId: 103, kind: 3, type: 1, text: 'Hard' },
+      { id: 9, parentId: 3, elementId: 201, kind: 7, type: 1, text: 'My legs were heavy' },
+    ];
+    expect(surveyAnswer(options, null)).toBeNull();
+    expect(surveyAnswer(options, { rpeSurveyElementId: 999 })).toBeNull();
+    expect(surveyAnswer(options, { rpeSurveyElementId: 103, struggleReasonSurveyElementId: 201, text: '  ' })).toEqual({ rating: 'Hard', level: 3, reasons: ['My legs were heavy'], rpe: null, text: null });
+    expect(surveyAnswer(options, { rpeSurveyElementId: 999, translatedDisplayName: 'Very Hard' })).toMatchObject({ rating: 'Very Hard', level: null });
+    expect(surveyAnswer([], { rpe: 2.5, text: 'Windy' })).toEqual({ rating: null, level: null, reasons: [], rpe: 2.5, text: 'Windy' });
   });
 });
