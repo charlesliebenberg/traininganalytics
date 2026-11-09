@@ -41,3 +41,10 @@ services:
         sync: false
       - key: EIGHT_SLEEP_CLIENT_SECRET
         sync: false
+      # TrainerRoad (optional): your login, for the plan with its intervals — or its calendar export URL instead (see README)
+      - key: TRAINERROAD_USERNAME
+        sync: false
+      - key: TRAINERROAD_PASSWORD
+        sync: false
+      - key: TRAINERROAD_CALENDAR_URL
+        sync: false

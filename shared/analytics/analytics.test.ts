@@ -1023,6 +1023,18 @@ describe('sleep against your normal', () => {
     expect(sleepAdvice(readNight(short)!, 0).detail).toMatch(/You slept 5 h 00, 2 h 30 less than usual/);
   });
 
+  it('weighs the workout planned for today', () => {
+    const tired = [...steady.slice(0, 83), ...steady.slice(83).map((n) => ({ ...n, hrv: n.hrv! * 0.8 }))];
+    const hardDay = [
+      { title: 'Pettit', plannedIf: 0.62 },
+      { title: 'Mary Austin', plannedIf: 0.87 },
+    ];
+    expect(sleepAdvice(readNight(tired)!, 2, hardDay).detail).toMatch(/Today’s Mary Austin \(IF 0\.87\) is a hard one: swap it for an easier alternate, or ride endurance\.$/);
+    expect(sleepAdvice(readNight(tired)!, 2, [{ title: 'Pettit', plannedIf: 0.62 }]).detail).toMatch(/Today’s Pettit is easy enough as planned\.$/);
+    expect(sleepAdvice(readNight(steady)!, 4, hardDay).detail).toMatch(/On the plan: Mary Austin \(IF 0\.87\)\.$/);
+    expect(sleepAdvice(readNight(steady)!, 4).detail).not.toMatch(/plan:/);
+  });
+
   it('shows how each kind of training day lands in the night after it', () => {
     // hard days (150 TSS) every third day knock the next night's HRV down 15 % and heart rate up 3 bpm
     const loadOn = (d: string) => (differenceInCalendarDays(parseISO(d), start) % 3 === 0 ? 150 : 40);

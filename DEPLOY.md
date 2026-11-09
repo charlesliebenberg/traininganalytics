@@ -53,6 +53,17 @@ On Render, open your service → **Environment** and add:
 
 Save and let Render redeploy. The first sync starts about 20 seconds after the service is up and reads your whole history. After that, new nights are read every 2 hours. **Settings → Eight Sleep** shows how it's going.
 
+## 5. Connect TrainerRoad (optional)
+
+On Render, open your service → **Environment** and add either:
+
+| Variable | Value |
+|---|---|
+| `TRAINERROAD_USERNAME` / `TRAINERROAD_PASSWORD` | Your TrainerRoad login: the plan with each workout's intervals. |
+| `TRAINERROAD_CALENDAR_URL` | Or, without the password: the calendar URL from TrainerRoad's [Calendar Sync](https://www.trainerroad.com/profile/calendar-sync) page. The plan comes without intervals. |
+
+Save and let Render redeploy. The plan is read about 30 seconds after the service is up, then every hour. **Settings → TrainerRoad** shows how it's going. The [README](README.md#trainerroad-your-plan-followed) has the details.
+
 ## Notes
 
 - **Big imports.** Vercel and Netlify proxies limit request size and duration. Small batches of FIT/GPX files are fine. For a large TrainingPeaks or Strava export ZIP, open the app at its `onrender.com` URL and import there, since that goes straight to the backend.

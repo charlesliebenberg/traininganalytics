@@ -54,7 +54,22 @@ export const config = {
     /** hours between syncs */
     syncHours: Math.max(1, Number(env.EIGHT_SLEEP_SYNC_HOURS ?? 2) || 2),
   },
+  /**
+   * TrainerRoad, one of two ways: the account's login (the plan with each workout's intervals,
+   * through the private API TrainerRoad's web app uses), or the calendar export's private URL
+   * (the plan without intervals). The login wins when both are set.
+   */
+  trainerRoad: {
+    username: (env.TRAINERROAD_USERNAME ?? '').trim(),
+    password: env.TRAINERROAD_PASSWORD ?? '',
+    calendarUrl: (env.TRAINERROAD_CALENDAR_URL ?? '').trim().replace(/^webcals?:\/\//i, 'https://'),
+    /** minutes between syncs */
+    syncMinutes: Math.max(15, Number(env.TRAINERROAD_SYNC_MINUTES ?? 60) || 60),
+  },
 };
 
 export const stravaConfigured = () => !!(config.strava.clientId && config.strava.clientSecret);
 export const eightSleepConfigured = () => !!(config.eightSleep.email && config.eightSleep.password && config.eightSleep.clientId && config.eightSleep.clientSecret);
+/** How TrainerRoad is read: with the account's login, from the calendar export, or not at all. */
+export const trainerRoadMode = (): 'account' | 'calendar' | null =>
+  config.trainerRoad.username && config.trainerRoad.password ? 'account' : config.trainerRoad.calendarUrl ? 'calendar' : null;

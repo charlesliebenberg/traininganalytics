@@ -159,8 +159,20 @@ export const signedPct = (x: number) => {
 const pct = signedPct;
 const hours = (s: number) => `${Math.floor(s / 3600)} h ${String(Math.round((s % 3600) / 60)).padStart(2, '0')}`;
 
-/** What last night means for today's training, with the form (TSB) the training has left you in. */
-export function sleepAdvice(read: SleepRead, tsb: number | null): { title: string; detail: string; tone: 'good' | 'neutral' | 'warning' } {
+/** a planned workout this hard (IF) is a hard session */
+export const HARD_IF = 0.8;
+
+/** A workout planned for today, as far as the advice needs it. */
+export interface PlannedToday {
+  title: string;
+  plannedIf: number | null;
+}
+
+/**
+ * What last night means for today's training, with the form (TSB) the training has left you in,
+ * and what's planned for today: a hard session on a day to keep easy is worth swapping.
+ */
+export function sleepAdvice(read: SleepRead, tsb: number | null, planned: PlannedToday[] = []): { title: string; detail: string; tone: 'good' | 'neutral' | 'warning' } {
   const { hrv, hr, asleep } = read;
   const short = asleep?.typical != null && asleep.value < asleep.typical - 3600 ? ` You slept ${hours(asleep.value)}, ${hours(asleep.typical - asleep.value)} less than usual.` : '';
   const form = tsb != null ? Math.round(tsb) : null;
@@ -171,7 +183,11 @@ export function sleepAdvice(read: SleepRead, tsb: number | null): { title: strin
       tone: 'neutral',
     };
   }
+  const hardest = [...planned].sort((a, b) => (b.plannedIf ?? 0) - (a.plannedIf ?? 0))[0];
+  const named = hardest ? `${hardest.title}${hardest.plannedIf != null ? ` (IF ${hardest.plannedIf.toFixed(2)})` : ''}` : '';
+  const hard = hardest?.plannedIf != null && hardest.plannedIf >= HARD_IF;
   if (read.call === 'easy') {
+    const plan = !hardest ? '' : hard ? ` Today’s ${named} is a hard one: swap it for an easier alternate, or ride endurance.` : ` Today’s ${hardest.title} is easy enough as planned.`;
     const why = [
       hrv?.status === 'low' && hrv.rollingVsNormal != null ? `your HRV over the last week is below your normal range (${pct(hrv.rollingVsNormal)})` : null,
       hr?.status === 'high' && hr.rollingVsNormal != null ? `your heart rate asleep over the last week is up ${Math.round(hr.rollingVsNormal * 10) / 10} bpm on your normal` : null,
@@ -180,18 +196,19 @@ export function sleepAdvice(read: SleepRead, tsb: number | null): { title: strin
       .join(' and ');
     const because = why.charAt(0).toUpperCase() + why.slice(1);
     return form != null && form <= -20
-      ? { title: 'Recovery is behind the training', detail: `${because}, with form at ${form}: the load is catching up with you. Keep today easy, or rest.${short}`, tone: 'warning' }
+      ? { title: 'Recovery is behind the training', detail: `${because}, with form at ${form}: the load is catching up with you. Keep today easy, or rest.${plan}${short}`, tone: 'warning' }
       : {
           title: 'Keep it easy today',
-          detail: `${because}${form != null ? `, though training hasn't been heavy (form ${form})` : ''}: something besides training — short sleep, illness, stress, alcohol, heat, travel — may be costing you recovery.${short}`,
+          detail: `${because}${form != null ? `, though training hasn't been heavy (form ${form})` : ''}: something besides training — short sleep, illness, stress, alcohol, heat, travel — may be costing you recovery.${plan}${short}`,
           tone: 'warning',
         };
   }
+  const plan = hardest ? ` On the plan: ${named}.` : '';
   if (form != null && form <= -20)
-    return { title: 'Absorbing the load', detail: `Form is ${form}, but your HRV is holding in its normal range: you're absorbing the training. Train as planned.${short}`, tone: 'good' };
+    return { title: 'Absorbing the load', detail: `Form is ${form}, but your HRV is holding in its normal range: you're absorbing the training. Train as planned.${plan}${short}`, tone: 'good' };
   if (form != null && form >= -10)
-    return { title: 'Ready to go', detail: `Your HRV is in its normal range${hrv?.status === 'high' ? ' or above' : ''} and you're fresh (form ${form}): a good day for a hard session.${short}`, tone: 'good' };
-  return { title: 'Train as planned', detail: `Your HRV and heart rate asleep are within your normal range.${short}`, tone: 'good' };
+    return { title: 'Ready to go', detail: `Your HRV is in its normal range${hrv?.status === 'high' ? ' or above' : ''} and you're fresh (form ${form}): a good day for a hard session.${plan}${short}`, tone: 'good' };
+  return { title: 'Train as planned', detail: `Your HRV and heart rate asleep are within your normal range.${plan}${short}`, tone: 'good' };
 }
 
 export const LOAD_BUCKETS = [
