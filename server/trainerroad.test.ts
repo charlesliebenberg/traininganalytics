@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { addDays, format } from 'date-fns';
 import type { WorkoutRepeat } from '../shared/types';
+import { flatten } from '../shared/analytics/workout';
 
 // a throwaway database, a TrainerRoad login, and the athlete's time zone, before the server modules load
 const dir = mkdtempSync(join(tmpdir(), 'ta-trainerroad-'));
@@ -38,7 +39,7 @@ const tr = {
   password: 'pw',
   token: 0,
   signIns: 0,
-  planned: [] as { id: number; date: string; workoutId: number | null; name?: string }[],
+  planned: [] as { id: number; date: string; workoutId: number | null; name?: string; activityType?: number; tss?: number }[],
   events: [] as Record<string, unknown>[],
   calls: [] as string[],
   ics: '',
@@ -62,43 +63,52 @@ const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
   if (url.pathname === '/app/api/member-info') return Response.json({ memberId: 4242, username: 'rider', ftp: 300 });
   if (url.pathname === '/app/api/react-calendar/4242/timeline')
     return Response.json({
-      plannedActivities: tr.planned.map((p) => ({ id: p.id, date: ymd(p.date), workoutId: p.workoutId, name: p.name ?? null, canMove: true })),
+      plannedActivities: tr.planned.map((p) => ({ id: p.id, date: ymd(p.date), workoutId: p.workoutId, name: p.name ?? null, canMove: true, ...(p.activityType ? { activityType: p.activityType } : {}), ...(p.tss ? { tss: p.tss } : {}) })),
       events: tr.events,
       annotations: [],
-      // AI FTP Detection: one applied, one found two days ago and waiting, one predicted three weeks out
+      // FTP records as TrainerRoad gives them: in no order, and marked applied only when AI FTP's and
+      // taken. Two set years ago and left; one set by hand at sign-up and AI FTP's taken the same
+      // morning (neither in the history); a ramp test; a prediction for a day gone by, never taken;
+      // one found two days ago and waiting; one predicted three weeks out
       fitnessThresholds: [
-        { id: 'd1', date: `${day(-20)}T00:00:00`, value: 300, isApplied: true, source: 3 },
-        { id: 'd2', date: `${day(-2)}T00:00:00`, value: 306, isApplied: false, source: 3 },
-        { id: 'p1', date: `${day(21)}T00:00:00`, value: 315, isApplied: false, source: 5 },
+        { id: 'd0', date: `${day(-40)}T08:36:09.47`, value: 295, isApplied: true, source: 22 },
+        { id: 'h1', date: `${day(-1000)}T08:09:00`, value: 250, isApplied: false, source: 0 },
+        { id: 'm0', date: `${day(-40)}T08:02:05.37`, value: 292, isApplied: false, source: 6 },
+        { id: 'h2', date: `${day(-900)}T04:44:32`, value: 260, isApplied: false, source: 0 },
+        { id: 'd1', date: `${day(-20)}T00:00:00`, value: 300, isApplied: false, source: 3 },
+        { id: 'x1', date: `${day(-30)}T13:00:00`, value: 299, isApplied: false, source: 22 },
+        { id: 'd2', date: `${day(-2)}T00:00:00`, value: 306, isApplied: false, source: 24 },
+        { id: 'p1', date: `${day(21)}T13:00:00`, value: 315, isApplied: false, source: 22 },
       ],
-      pendingAiFtpChange: { id: 'd2', value: 306, source: 3, date: `${day(-2)}T00:00:00`, isApplied: false, isLowConfidence: false },
-      // the ride three days ago, as TrainerRoad recorded it (its start without a zone)
-      activities: [{ id: 5001, started: `${day(-3)}T08:02:00` }],
+      pendingAiFtpChange: { id: 'd2', value: 306, source: 24, date: `${day(-2)}T00:00:00`, isApplied: false, isLowConfidence: false },
+      // the ride three days ago and yesterday's run, as TrainerRoad recorded them (their starts without a zone)
+      activities: [
+        { id: 'g-5001', started: `${day(-3)}T08:02:00` },
+        { id: 'g-5002', started: `${day(-1)}T01:00:00` },
+      ],
     });
   if (url.pathname === '/app/api/tss/rider') return Response.json({ ftpRecordsDate: [{ date: `${day(-60)}T00:00:00`, value: 290 }, { date: `${day(-20)}T00:00:00`, value: 300 }], tssByDay: [] });
   if (url.pathname === '/app/api/ai-ftp-detection/can-use-ai-ftp/4242')
-    return Response.json({ can: true, reason: null, modelVersion: '3.1', additionalData: { nextAiFtpAvailability: `${day(21)}T00:00:00`, lastViewed: null, detection: { ftp: 306, currentProgressionLevels: [{ progressionId: 83, previousDisplayLevel: 4.2 }], projectedProgressionLevels: [{ progressionId: 83, displayFinalLevel: 3.6 }] } } });
+    return Response.json({ can: false, reason: 3, modelVersion: 0, additionalData: { lastChanged: `${day(-1)}T04:38:05.19`, nextAiFtpAvailability: `${day(21)}T00:00:00`, lastViewed: null, detection: { ftp: 306, currentProgressionLevels: [{ progressionId: 83, previousDisplayLevel: 4.2 }], projectedProgressionLevels: [{ progressionId: 83, displayFinalLevel: 3.6 }] } } });
   if (url.pathname === '/app/api/calendar/aiftp/4242/ai-failure-status') return Response.json({ status: 0 });
   if (url.pathname === '/app/api/career/4242/levels')
-    return Response.json({ timestamp: `${day(0)}T01:00:00`, levels: { 79: { recent: 2.1 }, 83: { recent: 4.2, predicted: 6.1, changeEvent: { date: `${day(-3)}T10:00:00`, reason: 1, level: { from: 3.9, to: 4.2 }, delta: 0.3 } }, 33: { recent: 5.5, predicted: 6 } } });
-  if (url.pathname === '/app/api/plan-builder/current-custom-plan/4242')
-    return Response.json({
-      name: 'Gran Fondo plan',
-      volume: 'Mid',
-      start: `${day(-10)}T00:00:00`,
-      end: `${day(60)}T00:00:00`,
-      currentPhaseName: 'Base',
-      currentPhaseStart: `${day(-10)}T00:00:00`,
-      currentPhaseEnd: `${day(32)}T00:00:00`,
-      phases: [
-        { type: 'Build', planName: 'Sustained Power Build', volume: 'Mid', start: `${day(33)}T00:00:00`, end: `${day(60)}T00:00:00` },
-        { type: 'Base', planName: 'Sweet Spot Base I', volume: 'Mid', start: `${day(-10)}T00:00:00`, end: `${day(32)}T00:00:00` },
-      ],
-    });
-  if (url.pathname === '/app/api/react-calendar/4242/activities' && headers.get('ids') === '5001')
-    return Response.json([{ id: 5001, started: `${day(-3)}T08:02:00`, name: 'Pettit', durationInSeconds: 3600, tss: 41, intensityFactor: 0.63, kj: 650 }]);
-  if (url.pathname === '/app/api/survey/response' && url.searchParams.get('id') === '5001') return Response.json({ id: 5001, type: 1, rpeSurveyElementId: 103, struggleReasonSurveyElementIds: [201], rpe: 3.25, text: null });
-  if (url.pathname === '/app/api/survey/5001')
+    // as TrainerRoad gives them: 0 for no prediction, and a reset that left a level where it was
+    return Response.json({ timestamp: `${day(0)}T01:00:00`, levels: { 79: { recent: 2.1, predicted: 0, changeEvent: { date: `${day(-1)}T04:38:05Z`, reason: 7, level: { from: 2.1, to: 2.1 } } }, 83: { recent: 4.2, predicted: 6.1, changeEvent: { date: `${day(-3)}T10:00:00`, reason: 1, level: { from: 3.9, to: 4.2 }, delta: 0.3 } }, 33: { recent: 5.5, predicted: 0 } } });
+  // no current plan of its own; phases by TrainerRoad's codes (type 0 Base, 2 Build; volume 1 Mid), one long over
+  if (url.pathname === '/app/api/plan-builder/4242/plan-phases')
+    return Response.json([
+      { type: 2, volume: 1, planName: 'Sustained Power Build', start: `${day(33)}T00:00:00`, end: `${day(60)}T23:59:59.999` },
+      { type: 0, volume: 1, planName: 'Sweet Spot Base I', start: `${day(-10)}T00:00:00`, end: `${day(32)}T23:59:59.999` },
+      { type: 3, volume: 0, planName: 'An old plan', start: `${day(-200)}T00:00:00`, end: `${day(-150)}T23:59:59.999` },
+    ]);
+  if (url.pathname === '/app/api/react-calendar/4242/activities') {
+    const ride = { id: 'g-5001', activityId: 900001, activityType: 1, started: `${day(-3)}T08:02:00`, name: 'Pettit', workout: { id: 101, name: 'Pettit' }, durationInSeconds: 3600, tss: 41, intensityFactor: 0.63, kj: 650, surveyResponse: { rpeSurveyElementId: 103, struggleReasonSurveyElementIds: [201], rpe: 3.25, text: null } };
+    const run = { $type: 'ReactCalendarRunningActivityModel', id: 'g-5002', activityId: 900002, activityType: 2, started: `${day(-1)}T01:00:00`, name: 'Lunch Run', durationInSeconds: 1700, tss: 17, surveyResponse: null };
+    const ids = (headers.get('ids') ?? '').split(',');
+    return Response.json([ride, run].filter((a) => ids.includes(a.id)));
+  }
+  // the survey's words go by the ride's number
+  if (url.pathname === '/app/api/survey/900001')
     return Response.json([
       { id: 1, parentId: null, elementId: 101, kind: 1, type: 1, text: 'Easy' },
       { id: 3, parentId: null, elementId: 103, kind: 3, type: 1, text: 'Hard' },
@@ -106,6 +116,8 @@ const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
     ]);
   if (url.pathname === '/app/api/react-calendar/4242/planned-activities') {
     const ids = (headers.get('ids') ?? '').split(',').map(Number);
+    // TrainerRoad refuses the lot when it's asked for something it doesn't keep this way
+    if (tr.planned.some((p) => ids.includes(p.id) && !p.workoutId)) return Response.json({ type: 'general/100', status: 400 }, { status: 400 });
     return Response.json(
       tr.planned
         .filter((p) => ids.includes(p.id))
@@ -117,7 +129,22 @@ const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
     return Response.json(ids.map((id) => ({ id, workoutName: w(id).name, duration: w(id).minutes, tss: w(id).tss, intensityFactor: w(id).if * 100, kj: 600, workoutDescription: `<p>${w(id).name} is a workout&nbsp;for you.</p>`, goalDescription: '<p>Get faster.</p>' })));
   }
   const chart = url.pathname.match(/^\/app\/api\/workouts\/(\d+)\/chart-data$/);
+  // Pettit's in PascalCase; Gibbs's profile only in its workout details, as intervals
+  if (chart && chart[1] === '101') return Response.json({ CourseData: profile(w(101).pieces).map((p) => ({ Seconds: p.seconds, FtpPercent: p.ftpPercent })) });
+  if (chart && chart[1] === '103') return Response.json({ courseData: [] });
   if (chart) return Response.json({ courseData: profile(w(+chart[1]).pieces) });
+  if (url.pathname === '/app/api/workoutdetails/103')
+    return Response.json({
+      Workout: {
+        Details: { Id: 103, WorkoutName: 'Gibbs' },
+        IntervalData: [
+          { Name: 'Workout', Start: 0, End: 7200, StartTargetPowerPercent: 65 },
+          { Name: 'Fake', Start: 0, End: 300, StartTargetPowerPercent: 55 },
+          { Name: 'Fake', Start: 300, End: 6900, StartTargetPowerPercent: 65 },
+          { Name: 'Fake', Start: 6900, End: 7200, StartTargetPowerPercent: 50 },
+        ],
+      },
+    });
   return new Response('not found', { status: 404 });
 };
 
@@ -135,6 +162,7 @@ describe('TrainerRoad', () => {
   const planned = () => db.q.all("SELECT * FROM planned_workouts WHERE source = 'trainerroad' ORDER BY date, sort_order");
   const charts = () => tr.calls.filter((c) => c.endsWith('/chart-data')).length;
   let rideId = 0;
+  let runId = 0;
 
   beforeAll(async () => {
     vi.stubGlobal('fetch', fakeFetch);
@@ -152,6 +180,7 @@ describe('TrainerRoad', () => {
     tr.events = [{ id: 7001, name: 'Grafton to Inverell', date: ymd(day(60)), racePriority: 3, tss: 250, duration: 4 * 3600, isTriathlonType: false, notes: '<p>The big one</p>' }];
     // the ride already done three days ago
     rideId = Number(db.q.run("INSERT INTO activities(source, external_id, name, sport, start_time, local_date, detailed) VALUES('file', 'r1', 'Morning Ride', 'ride', ?, ?, 1)", `${day(-3)}T08:00:00.000Z`, day(-3)).lastInsertRowid);
+    runId = Number(db.q.run("INSERT INTO activities(source, external_id, name, sport, start_time, local_date, detailed) VALUES('file', 'r2', 'Lunch Run', 'run', ?, ?, 1)", `${day(-1)}T01:00:30.000Z`, day(-1)).lastInsertRowid);
     // this app's own FTP: 295 W, then 305 W for the last eleven days
     for (let n = -90; n <= 0; n++) db.q.run("INSERT INTO threshold_estimates(sport, date, data) VALUES('ride', ?, ?)", day(n), JSON.stringify({ sport: 'ride', date: day(n), threshold: n < -10 ? 295 : 305, raw: 0, cp: 0 }));
   });
@@ -186,6 +215,9 @@ describe('TrainerRoad', () => {
     // the ride three days ago matched to the workout planned for it
     expect(rows[0].activity_id).toBe(rideId);
     expect(db.q.get('SELECT planned_id FROM activities WHERE id = ?', rideId)!.planned_id).toBe(rows[0].id);
+    // intervals from TrainerRoad's PascalCase answer (Pettit), and from a workout's details when its chart has none (Gibbs)
+    expect(flatten(JSON.parse(rows[0].structure)).map((x) => [x.duration, x.ramp])).toEqual([[600, true], [2400, false], [600, false]]);
+    expect(flatten(JSON.parse(rows[2].structure)).map((x) => [x.duration, x.low])).toEqual([[300, 0.55], [6600, 0.65], [300, 0.5]]);
     // each library workout's intervals read once, though Pettit is planned twice
     expect(charts()).toBe(3);
     expect(trp.trainerRoadStatus()).toMatchObject({ mode: 'account', readBy: 'account', account: 'rider', lastError: null, upcoming: 4, races: 1, next: { date: day(0), title: 'Mary Austin' } });
@@ -198,36 +230,51 @@ describe('TrainerRoad', () => {
     const r = trainerRoadInsights();
     // its FTP now, and this app's
     expect(r.ftp).toMatchObject({ trainerRoad: 300, app: 305 });
-    expect(r.ftp!.events.map((e) => [e.date, e.kind, e.value, e.app, e.diff])).toEqual([
-      [day(-60), 'applied', 290, 295, -5],
-      [day(-20), 'applied', 300, 295, 5],
+    expect(r.ftp!.events.map((e) => [e.date, e.kind, e.value, e.app, e.diff, e.source])).toEqual([
+      // set years ago, before TrainerRoad kept sources: in use, though not marked so
+      [day(-1000), 'applied', 250, null, null, 0],
+      [day(-900), 'applied', 260, null, null, 0],
+      [day(-60), 'applied', 290, 295, -5, null],
+      // set by hand, then AI FTP's taken the same morning: only TrainerRoad's own records have them
+      [day(-40), 'applied', 292, 295, -3, 6],
+      [day(-40), 'applied', 295, 295, 0, 22],
+      // AI FTP's prediction for a day now gone, never taken
+      [day(-30), 'detected', 299, 295, 4, 22],
+      // the history's change, told by TrainerRoad's record of it: a ramp test
+      [day(-20), 'applied', 300, 295, 5, 3],
       // found by AI FTP Detection, waiting to be accepted
-      [day(-2), 'pending', 306, 305, 1],
+      [day(-2), 'pending', 306, 305, 1, 24],
       // predicted for three weeks out: no estimate of this app's for a day to come
-      [day(21), 'predicted', 315, null, null],
+      [day(21), 'predicted', 315, null, null, 22],
     ]);
-    // day by day since its first: 40 days 5 W under, 10 over, 11 under
+    // day by day over its current stretch, from the first change after 840 days without one:
+    // 20 days 5 W under, 20 level (the later of the two changes on day −40 held), 10 over, 11 under
+    expect(r.ftp!.since).toBe(day(-60));
     expect(r.ftp!.agreement!.days).toBe(61);
-    expect(r.ftp!.agreement!.mean).toBeCloseTo((40 * -5 + 10 * 5 + 11 * -5) / 61, 6);
-    expect(r.ftp!.agreement!.meanAbs).toBe(5);
+    expect(r.ftp!.agreement!.mean).toBeCloseTo((20 * -5 + 20 * 0 + 10 * 5 + 11 * -5) / 61, 6);
+    expect(r.ftp!.agreement!.meanAbs).toBeCloseTo((20 * 5 + 10 * 5 + 11 * 5) / 61, 6);
     // the prediction, beside this app's forecast for the day (no capacity model from one ride)
     expect(r.ftp!.forecasts).toEqual([{ date: day(21), trainerRoad: 315, app: null, range: null, days: 21 }]);
-    expect(r.ai).toMatchObject({ can: true, status: 'CanPredict', modelVersion: '3.1', detected: 306, next: day(21) });
+    expect(r.ai).toMatchObject({ can: false, reason: 'the FTP changed too recently', status: 'CanPredict', modelVersion: null, detected: 306, next: day(21), changed: day(-1) });
     // progression levels by zone, in TrainerRoad's order, with what accepting the detection would do
     expect(r.levels.map((l) => [l.zone, l.level, l.predicted])).toEqual([
-      ['Endurance', 5.5, 6],
+      ['Endurance', 5.5, null],
       ['Threshold', 4.2, 6.1],
       ['Anaerobic', 2.1, null],
     ]);
     expect(r.levels[1]).toMatchObject({ changed: { date: day(-3), from: 3.9, to: 4.2, reason: 1 }, ai: { from: 4.2, to: 3.6 } });
-    expect(r.plan).toMatchObject({ name: 'Gran Fondo plan', current: { name: 'Base', start: day(-10), end: day(32) } });
+    expect(r.levels[2].changed).toBeNull();
+    // the plan by its phases: the one under way, and the next; the old plan's left out
+    expect(r.plan).toMatchObject({ name: 'Sweet Spot Base I', volume: 'Mid', current: { name: 'Base', start: day(-10), end: day(32) } });
     expect(r.plan!.phases.map((p: { name: string }) => p.name)).toEqual(['Base', 'Build']);
-    // the ride as TrainerRoad recorded it, how it was rated, and the same ride here
+    // the ride and the run as TrainerRoad recorded them, how the ride was rated, and the same ones here
     expect(r.rides).toEqual([
+      { id: 'g-5002', started: `${day(-1)}T01:00:00`, name: 'Lunch Run', sport: 'run', duration: 1700, tss: 17, if: null, kj: null, survey: null, activity: { id: runId, name: 'Lunch Run', tss: null } },
       {
-        id: '5001',
+        id: 'g-5001',
         started: `${day(-3)}T08:02:00`,
         name: 'Pettit',
+        sport: 'ride',
         duration: 3600,
         tss: 41,
         if: 0.63,
@@ -241,7 +288,7 @@ describe('TrainerRoad', () => {
     const detail = await (await api.request(`/activities/${rideId}`)).json();
     expect(detail.trainerRoad).toMatchObject({ name: 'Pettit', survey: { rating: 'Hard', rpe: 3.25 } });
     // all kept as TrainerRoad gave it
-    expect(db.q.all('SELECT key FROM trainerroad_data ORDER BY key').map((x) => x.key)).toEqual(['ai-ftp', 'ai-ftp-status', 'fitness-thresholds', 'ftp-history', 'levels', 'member', 'plan', 'plan-phases', 'power-records', 'weight']);
+    expect(db.q.all('SELECT key FROM trainerroad_data ORDER BY key').map((x) => x.key)).toEqual(['ai-ftp', 'ai-ftp-status', 'fitness-thresholds', 'ftp-history', 'levels', 'member', 'plan', 'plan-phases', 'power-records', 'timeline', 'weight']);
   });
 
   it('follows TrainerRoad as it adapts the plan: moved, swapped and dropped workouts, a ride’s workout kept', async () => {
@@ -250,18 +297,25 @@ describe('TrainerRoad', () => {
       { id: 9003, date: day(0), workoutId: 104 }, // swapped by Adaptive Training
       { id: 9004, date: day(3), workoutId: 103 }, // moved a day
       { id: 9006, date: day(7), workoutId: 103 }, // added
+      { id: 9008, date: day(6), workoutId: null, activityType: 2, tss: 18 }, // a run, not a workout
       // 9002 (ridden) and 9005 gone
     ];
+    const asked = () => tr.calls.filter((c) => c.endsWith('/planned-activities')).length;
+    const before2 = asked();
     const changes = await run();
-    expect(changes).toEqual({ added: 1, changed: 2, removed: 1 });
+    expect(changes).toEqual({ added: 2, changed: 2, removed: 1 });
+    // TrainerRoad refused the lot for the run, so the workouts were asked for on their own
+    expect(asked() - before2).toBe(2);
     const rows = planned();
     expect(rows.map((r) => [r.date, r.title, r.external_id])).toEqual([
       [day(-3), 'Pettit', '9002'],
       [day(0), 'Antelope', '9003'],
       [day(3), 'Gibbs', '9004'],
+      [day(6), 'Run', '9008'],
       [day(7), 'Gibbs', '9006'],
       [day(60), 'Grafton to Inverell', 'event-7001'],
     ]);
+    expect(rows[3]).toMatchObject({ sport: 'run', planned_tss: 18, planned_duration: null, structure: null });
     // the same rows, changed in place
     expect(rows[1].id).toBe(before.get('9003')!.id);
     expect(rows[2].id).toBe(before.get('9004')!.id);
@@ -357,7 +411,8 @@ describe('TrainerRoad', () => {
       'END:VCALENDAR',
     ].join('\r\n');
     const changes = await run();
-    expect(changes).toMatchObject({ added: 1, removed: 0 });
+    // the run isn't in the export: gone
+    expect(changes).toMatchObject({ added: 1, removed: 1 });
     expect(tr.calls).toEqual([]);
     const rows = planned();
     expect(rows.map((r) => [r.date, r.title, r.planned_duration])).toEqual([
