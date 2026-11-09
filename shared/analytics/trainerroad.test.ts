@@ -124,6 +124,26 @@ describe('TrainerRoad’s FTP beside this app’s', () => {
     expect(compareFtp(applied, [], [], '2026-10-20').agreement).toBeNull();
   });
 
+  it('compares over TrainerRoad’s current stretch: an FTP left a year or more before it is left out', () => {
+    const applied = [
+      { date: '2019-06-01', value: 345 },
+      { date: '2026-10-01', value: 300 },
+      // two changes on a day, in the order made: the later held
+      { date: '2026-10-11', value: 303 },
+      { date: '2026-10-11', value: 310 },
+    ];
+    const { events, agreement, since } = compareFtp(applied, [], app, '2026-10-20');
+    expect(since).toBe('2026-10-01');
+    // as above: 1–5 Oct 300 against 305, 6–10 Oct 300 against 308, 11–20 Oct 310 against 308
+    expect(agreement!.days).toBe(20);
+    expect(agreement!.mean).toBeCloseTo((5 * -5 + 5 * -8 + 10 * 2) / 20, 10);
+    // the old one's still listed
+    expect(events[0]).toMatchObject({ date: '2019-06-01', kind: 'applied', value: 345, app: null, diff: null });
+    // under a year between changes: one stretch, from the first
+    expect(compareFtp([{ date: '2025-11-01', value: 290 }, ...applied.slice(1)], [], app, '2026-10-20').since).toBe('2025-11-01');
+    expect(compareFtp([], [], app, '2026-10-20').since).toBeNull();
+  });
+
   it('lists the progression levels in TrainerRoad’s order of zones, with what AI FTP Detection would do to them', () => {
     const levels = progressionLevels(
       { levels: { 99: { recent: 1 }, 85: { recent: 3.1, predicted: 5.4, changeEvent: { date: '2026-11-06T10:00:00', reason: 'workout', level: { from: 2.8, to: 3.1 } } }, 33: { recent: 6.2 } } },

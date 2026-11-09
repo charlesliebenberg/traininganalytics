@@ -56,11 +56,17 @@ export const plainText = (html: unknown): string =>
         .trim();
 
 /** A workout's or race's sport, from its name: TrainerRoad's are mostly rides. */
-export function sportOf(name: string): Sport {
+export function sportOf(name: string, otherwise: Sport = 'ride'): Sport {
   if (/\b(run|running|jog)\b/i.test(name)) return 'run';
   if (/\b(swim|swimming|endless pool)\b/i.test(name)) return 'swim';
-  return 'ride';
+  if (/\b(ride|cycling|bike|spin)\b/i.test(name)) return 'ride';
+  return otherwise;
 }
+
+/** TrainerRoad's activity types */
+const ACTIVITY_SPORT: Record<number, Sport> = { 1: 'ride', 2: 'run', 3: 'swim' };
+/** the name for something planned without one */
+const SPORT_TITLE: Partial<Record<Sport, string>> = { ride: 'Ride', run: 'Run', swim: 'Swim', strength: 'Strength', other: 'Other activity' };
 
 /** A TrainerRoad date: { year, month, day }, or an ISO date or date-time. */
 export function trDate(d: unknown): string | null {
@@ -111,15 +117,28 @@ function takeCookies(res: Response) {
   }
 }
 
-async function request(path: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}) {
+async function request(path: string, init: { method?: string; headers?: Record<string, string>; body?: string; redirect?: RequestRedirect } = {}) {
   const res = await fetch(`${BASE}${path}`, {
     method: init.method ?? 'GET',
     headers: { ...HEADERS, ...(jar.size ? { cookie: [...jar].map(([k, v]) => `${k}=${v}`).join('; ') } : {}), ...init.headers },
     body: init.body,
-    redirect: 'manual',
+    redirect: init.redirect ?? 'manual',
   });
   takeCookies(res);
   return res;
+}
+
+/**
+ * TrainerRoad's keys as camelCase: it answers in PascalCase unless the camel-case header is
+ * honoured, and some answers nest PascalCase inside camelCase even then. An object whose keys
+ * all start with a capital has them lower-cased, at every depth (as trainerroad-cli does).
+ */
+export function camelize(value: unknown): Json {
+  if (Array.isArray(value)) return value.map(camelize);
+  if (value === null || typeof value !== 'object') return value;
+  const keys = Object.keys(value);
+  const pascal = keys.length > 0 && keys.every((k) => /^[A-Z]/.test(k));
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [pascal ? k[0].toLowerCase() + k.slice(1) : k, camelize(v)]));
 }
 
 async function signIn() {
@@ -147,40 +166,68 @@ async function signIn() {
 async function api(path: string, init: { method?: string; headers?: Record<string, string>; body?: unknown; orNull?: boolean } = {}): Promise<Json> {
   for (let attempt = 0; ; attempt++) {
     if (!jar.has(AUTH_COOKIE)) await signIn();
+    // redirects followed, as TrainerRoad's own app does: some of its addresses have moved
     const res = await request(path, {
       method: init.method,
       headers: { ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}), ...init.headers },
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      redirect: 'follow',
     });
-    // signed out: a 401, or a redirect to the sign-in page
-    if ((res.status === 401 || (res.status >= 300 && res.status < 400)) && attempt === 0) {
+    // signed out: a 401, or sent on to the sign-in page
+    const signedOut = res.status === 401 || (res.redirected && /\/login/i.test(res.url));
+    if (signedOut && attempt === 0) {
       jar.delete(AUTH_COOKIE);
       continue;
     }
     if (res.status === 429) throw new Error('TrainerRoad is limiting requests — trying again at the next sync');
     if (res.status === 404 && init.orNull) return null;
-    if (!res.ok) throw new Error(`${path}: ${res.status} ${(await res.text()).slice(0, 160)}`);
+    if (!res.ok || signedOut) throw new Error(`${path}: ${res.status} ${(await res.text()).slice(0, 160)}`);
     const text = await res.text();
-    return text ? JSON.parse(text) : null;
+    if (/^\s*</.test(text)) throw new Error(`${path}: a page, not data`);
+    return text ? camelize(JSON.parse(text)) : null;
   }
 }
 
 interface LibraryWorkout {
+  /** how it was read: kept workouts read an older way are read again */
+  v?: number;
   name: string | null;
   minutes: number | null;
   tss: number | null;
   if: number | null;
   description: string | null;
   structure: WorkoutStructure | null;
+  /** what TrainerRoad answered, when no intervals could be read from it */
+  unread?: { chart: string; details: string | null };
 }
 
-/** TrainerRoad library workouts, with their intervals: kept, and read again after a month. */
+const WORKOUT_READ = 2;
+
+/** A workout's intervals: TrainerRoad's own points, or each interval's start, end and target. */
+export function workoutStructure(chart: Json, details: Json): WorkoutStructure | null {
+  const points = (xs: unknown) => (Array.isArray(xs) ? xs : []).map((p: Json) => ({ seconds: num(p?.seconds), ftpPercent: num(p?.ftpPercent ?? p?.memberFtpPercent) })).filter((p): p is ProfilePoint => p.seconds != null && p.ftpPercent != null);
+  const fromChart = structureFromProfile(points(chart?.courseData));
+  if (fromChart) return fromChart;
+  const w = details?.workout ?? details;
+  const fromData = structureFromProfile(points(w?.workoutData));
+  if (fromData) return fromData;
+  // intervals as TrainerRoad lists them, "Workout" being the whole: each held at its target
+  const steps = (Array.isArray(w?.intervalData) ? w.intervalData : [])
+    .filter((x: Json) => x?.name !== 'Workout' && num(x?.start) != null && num(x?.end) != null && num(x?.startTargetPowerPercent) != null)
+    .sort((a: Json, b: Json) => a.start - b.start)
+    .flatMap((x: Json) => [{ seconds: x.start, ftpPercent: x.startTargetPowerPercent }, { seconds: x.end, ftpPercent: x.startTargetPowerPercent }]);
+  return structureFromProfile(steps);
+}
+
+/** TrainerRoad library workouts, with their intervals: kept, and read again after a month (a day, without intervals). */
 async function libraryWorkouts(ids: string[]): Promise<Map<string, LibraryWorkout>> {
   const out = new Map<string, LibraryWorkout>();
   const fresh = iso(subDays(new Date(), WORKOUT_DAYS));
+  const today = iso(new Date());
   for (const id of ids) {
     const row = q.get('SELECT data, fetched_at FROM trainerroad_workouts WHERE id = ?', id);
-    if (row && row.fetched_at >= fresh) out.set(id, JSON.parse(row.data));
+    const w: LibraryWorkout | null = row ? JSON.parse(row.data) : null;
+    if (w && w.v === WORKOUT_READ && row!.fetched_at >= (w.structure ? fresh : today)) out.set(id, w);
   }
   const missing = ids.filter((id) => !out.has(id));
   const referer = { referer: `${BASE}/app/workouts/list` };
@@ -198,11 +245,17 @@ async function libraryWorkouts(ids: string[]): Promise<Map<string, LibraryWorkou
   for (const id of missing) {
     const s = summaries.get(id);
     let structure: WorkoutStructure | null = null;
+    let unread: LibraryWorkout['unread'];
     let read = charts;
     if (charts) {
       try {
-        const chart = await api(`/app/api/workouts/${encodeURIComponent(id)}/chart-data`, { headers: referer });
-        structure = structureFromProfile((Array.isArray(chart?.courseData) ? chart.courseData : []) as ProfilePoint[]);
+        const chart = await api(`/app/api/workouts/${encodeURIComponent(id)}/chart-data`, { headers: referer, orNull: true });
+        structure = workoutStructure(chart, null);
+        if (!structure) {
+          const details = await api(`/app/api/workoutdetails/${encodeURIComponent(id)}`, { headers: referer, orNull: true });
+          structure = workoutStructure(chart, details);
+          if (!structure) unread = { chart: JSON.stringify(chart ?? null).slice(0, 1500), details: details ? JSON.stringify(details).slice(0, 1500) : null };
+        }
       } catch (e) {
         read = charts = false;
         log('trainerroad', 'warn', `Intervals: ${(e as Error).message}`);
@@ -210,12 +263,14 @@ async function libraryWorkouts(ids: string[]): Promise<Map<string, LibraryWorkou
     }
     const intensity = num(s?.intensityFactor);
     const w: LibraryWorkout = {
+      v: WORKOUT_READ,
       name: s?.workoutName ?? s?.name ?? null,
       minutes: num(s?.duration),
       tss: num(s?.tss),
       if: intensity == null ? null : intensity > 2 ? intensity / 100 : intensity,
       description: [plainText(s?.workoutDescription), plainText(s?.goalDescription)].filter(Boolean).join('\n\n') || null,
       structure,
+      ...(unread ? { unread } : {}),
     };
     // only what was read in full is kept; the rest is asked for again next time
     if (read && s) q.run("INSERT INTO trainerroad_workouts(id, data, fetched_at) VALUES(?, ?, datetime('now')) ON CONFLICT(id) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at", id, JSON.stringify(w));
@@ -242,17 +297,25 @@ async function readAccount(from: string, to: string): Promise<ExternalPlan> {
     const d = trDate(p?.date);
     return p?.id != null && d && d >= from && d <= to;
   });
-  // each scheduled workout in full: its workout, TSS and length
+  // each scheduled workout in full: its workout, TSS and length. TrainerRoad refuses the lot
+  // when some can't be read this way, so the workouts are asked for on their own then.
   const details = new Map<string, Json>();
-  try {
-    for (let i = 0; i < planned.length; i += 100) {
+  const read = async (items: Json[]) => {
+    for (let i = 0; i < items.length; i += 100) {
       const got = await api(`/app/api/react-calendar/${memberId}/planned-activities`, {
-        headers: { ids: planned.slice(i, i + 100).map((p) => p.id).join(','), 'tr-cache-control': 'no-cache', ...referer },
+        headers: { ids: items.slice(i, i + 100).map((p) => p.id).join(','), 'tr-cache-control': 'use-cache', referer: `${BASE}/app/career/${encodeURIComponent(username)}` },
       });
       for (const d of Array.isArray(got) ? got : []) details.set(String(d.id), d);
     }
-  } catch (e) {
-    log('trainerroad', 'warn', `Scheduled workouts: ${(e as Error).message}`);
+  };
+  try {
+    await read(planned);
+  } catch {
+    try {
+      await read(planned.filter((p) => p.workoutId != null || p.workout?.id != null));
+    } catch (e) {
+      log('trainerroad', 'warn', `Scheduled workouts: ${(e as Error).message}`);
+    }
   }
   const workoutOf = (p: Json) => details.get(String(p.id))?.workout?.id ?? p.workout?.id ?? p.workoutId ?? null;
   const library = await libraryWorkouts([...new Set(planned.map(workoutOf).filter((id) => id != null).map(String))]);
@@ -260,13 +323,16 @@ async function readAccount(from: string, to: string): Promise<ExternalPlan> {
     const d = details.get(String(p.id)) ?? p;
     const wid = workoutOf(p);
     const lib = wid != null ? library.get(String(wid)) : undefined;
-    const title = String(d.workout?.name ?? p.workout?.name ?? lib?.name ?? d.name ?? p.name ?? 'TrainerRoad workout');
+    const name = d.workout?.name ?? p.workout?.name ?? lib?.name ?? d.name ?? p.name ?? null;
+    // not a workout: its own kind (TrainerRoad's activity types: 1 ride, 2 run, 3 swim), else its name's
+    const sport: Sport = wid != null ? sportOf(name ?? '') : (ACTIVITY_SPORT[num(d.activityType ?? p.activityType) ?? -1] ?? (name ? sportOf(name, 'other') : 'other'));
+    const title = String(name ?? SPORT_TITLE[sport]);
     const minutes = num(d.workout?.duration) ?? lib?.minutes ?? null;
-    const seconds = minutes != null ? minutes * 60 : num(d.durationInSeconds);
+    const seconds = minutes != null ? minutes * 60 : num(d.durationInSeconds ?? p.durationInSeconds);
     return {
       id: String(p.id),
       date: trDate(d.date) ?? trDate(p.date)!,
-      sport: sportOf(title),
+      sport,
       title,
       description: lib?.description ?? (plainText(d.notes) || null),
       duration: seconds ? Math.round(seconds) : null,
@@ -304,6 +370,8 @@ const keep = (key: string, data: unknown) =>
 async function readDetails(memberId: string, username: string, member: Json, timeline: Json) {
   keep('member', member);
   keep('fitness-thresholds', { fitnessThresholds: timeline.fitnessThresholds ?? null, pendingAiFtpChange: timeline.pendingAiFtpChange ?? null });
+  // the calendar as it came (its rides are kept one by one, below)
+  keep('timeline', { ...timeline, activities: undefined });
   const career = { referer: `${BASE}/app/career/${encodeURIComponent(username)}` };
   const get = (path: string, headers: Record<string, string> = {}) => () => api(path, { headers: { ...career, ...headers }, orNull: true });
   const records = (path: string) => api(path, { method: 'POST', headers: career, body: [{ Slot: 1, StartDate: '2013-05-10', EndDate: iso(new Date()) }], orNull: true });
@@ -373,25 +441,32 @@ async function readRides(memberId: string, username: string, timeline: Json) {
   const kept = new Map(q.all('SELECT id, survey FROM trainerroad_rides').map((r) => [r.id as string, r.survey as string | null]));
   const referer = { referer: `${BASE}/app/career/${encodeURIComponent(username)}` };
   const added = new Set<string>();
-  const fresh = recent.filter((a) => !kept.has(String(a.id)));
-  for (let i = 0; i < fresh.length; i += 100) {
-    const got = await api(`/app/api/react-calendar/${memberId}/activities`, { headers: { ids: fresh.slice(i, i + 100).map((a) => a.id).join(','), ...referer } });
+  // new rides, and the last week's still without a survey answer: it's part of TrainerRoad's
+  // record of a ride, and often given later
+  const week = iso(subDays(new Date(), 7));
+  const toRead = recent.filter((a) => !kept.has(String(a.id)) || (!kept.get(String(a.id)) && a.started.slice(0, 10) >= week));
+  for (let i = 0; i < toRead.length; i += 100) {
+    const got = await api(`/app/api/react-calendar/${memberId}/activities`, { headers: { ids: toRead.slice(i, i + 100).map((a) => a.id).join(','), ...referer } });
     for (const d of Array.isArray(got) ? got : []) {
       if (d?.id == null) continue;
       q.run('INSERT INTO trainerroad_rides(id, started, data) VALUES(?, ?, ?) ON CONFLICT(id) DO UPDATE SET started = excluded.started, data = excluded.data', String(d.id), d.started ?? null, JSON.stringify(d));
       added.add(String(d.id));
     }
   }
-  // asked when the ride first comes in, then for a week, as it's often answered later
-  const week = iso(subDays(new Date(), 7));
-  for (const a of recent) {
-    const id = String(a.id);
-    if (kept.get(id) || (!added.has(id) && (!kept.has(id) || a.started.slice(0, 10) < week))) continue;
-    const response = await api(`/app/api/survey/response?id=${encodeURIComponent(id)}`, { headers: referer, orNull: true });
-    const options = response ? await api(`/app/api/survey/${encodeURIComponent(id)}`, { headers: referer, orNull: true }) : null;
-    const answer = surveyAnswer(options, response);
+  for (const id of added) {
+    const d = JSON.parse(q.get('SELECT data FROM trainerroad_rides WHERE id = ?', id)!.data);
+    const response = d.surveyResponse;
+    if (!response || typeof response !== 'object') continue;
+    let answer = surveyAnswer(null, response);
+    let options: Json = null;
+    // the words, when the record has only TrainerRoad's ids for them (its survey goes by the ride's number)
+    const reasons = Array.isArray(response.struggleReasonSurveyElementIds) ? response.struggleReasonSurveyElementIds.length : response.struggleReasonSurveyElementId != null ? 1 : 0;
+    if ((!answer?.rating || answer.reasons.length < reasons) && num(d.activityId) != null) {
+      options = await api(`/app/api/survey/${num(d.activityId)}`, { headers: referer, orNull: true });
+      answer = surveyAnswer(options, response);
+      await pause(250);
+    }
     if (answer) q.run('UPDATE trainerroad_rides SET survey = ? WHERE id = ?', JSON.stringify({ ...answer, raw: { response, options } }), id);
-    await pause(250);
   }
 }
 

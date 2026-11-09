@@ -1,12 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { parseISO } from 'date-fns';
 import { AlertTriangle } from 'lucide-react';
-import { valueOn, type FtpAgreement, type FtpEvent, type FtpPoint, type ZoneLevel } from '../../shared/analytics/trainerroad';
+import { FTP_SOURCES, valueOn, type FtpAgreement, type FtpEvent, type FtpPoint, type ZoneLevel } from '../../shared/analytics/trainerroad';
 import { useApi } from '../lib/api';
 import { alpha, useTokens } from '../lib/theme';
 import { fmtDate, fmtDuration, fmtNum, iso } from '../lib/format';
-import { Card, PageHeader, Spinner, Stat } from '../components/ui';
+import { Card, PageHeader, SportIcon, Spinner, Stat } from '../components/ui';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
 import { surveyText, type TrainerRoadRide } from '../components/trainerroad';
 
@@ -21,8 +21,8 @@ interface Forecast {
 interface Insights {
   status: { mode: 'account' | 'calendar' | null; lastSyncAt: string | null; lastError: string | null; syncing: boolean };
   read: string | null;
-  ftp: { trainerRoad: number | null; app: number | null; events: FtpEvent[]; agreement: FtpAgreement | null; forecasts: Forecast[]; plannedThrough: string | null; appSeries: FtpPoint[]; from: string } | null;
-  ai: { can: boolean | null; reason: unknown; status: string | null; modelVersion: string | null; detected: number | null; next: string | null; lastViewed: string | null } | null;
+  ftp: { trainerRoad: number | null; app: number | null; events: FtpEvent[]; agreement: FtpAgreement | null; since: string | null; forecasts: Forecast[]; plannedThrough: string | null; appSeries: FtpPoint[]; from: string } | null;
+  ai: { can: boolean | null; reason: string | null; status: string | null; modelVersion: string | null; detected: number | null; next: string | null; changed: string | null; lastViewed: string | null } | null;
   levels: ZoneLevel[];
   levelsAt: string | null;
   plan: {
@@ -38,8 +38,8 @@ interface Insights {
 
 const KIND: Record<FtpEvent['kind'], string> = {
   applied: 'Applied',
-  detected: 'AI FTP Detection',
-  pending: 'AI FTP Detection, waiting for you to accept it',
+  detected: 'Not applied',
+  pending: 'Waiting for you to accept it',
   predicted: 'Predicted',
 };
 /** AI FTP Detection's status, in words */
@@ -59,10 +59,11 @@ function FtpChart({ f }: { f: NonNullable<Insights['ftp']> }) {
     const today = iso(new Date());
     const x = (d: string) => parseISO(d).getTime();
     const tr = t.series[3];
-    const applied = f.events.filter((e) => e.kind === 'applied');
+    // TrainerRoad's FTP over its current stretch: an earlier one, left a year or more unchanged, isn't drawn
+    const applied = f.events.filter((e) => e.kind === 'applied' && (!f.since || e.date >= f.since));
     const appLine = f.app != null ? [...f.appSeries.map((p) => [x(p.date), p.value]), [x(today), f.app]] : [];
     const trLine = applied.length ? [...applied.map((e) => [x(e.date), e.value]), [x(today), applied[applied.length - 1].value]] : [];
-    const found = f.events.filter((e) => e.kind === 'detected' || e.kind === 'pending');
+    const found = f.events.filter((e) => (e.kind === 'detected' || e.kind === 'pending') && e.date >= f.from);
     const ahead = (from: number | null, to: (p: Forecast) => number | null) =>
       f.forecasts.flatMap((p) => (from != null && to(p) != null ? [[x(today), from], [x(p.date), to(p)], null] : []));
     const series: Record<string, unknown>[] = [
@@ -102,15 +103,37 @@ function FtpChart({ f }: { f: NonNullable<Insights['ftp']> }) {
 
 function FtpCard({ f, ai }: { f: NonNullable<Insights['ftp']>; ai: Insights['ai'] }) {
   const diff = f.trainerRoad != null && f.app != null ? f.trainerRoad - f.app : null;
-  const first = f.events.find((e) => e.kind === 'applied');
   const a = f.agreement;
+  // records from before TrainerRoad's current stretch: left out of the comparison, and folded in the table
+  const [showEarlier, setShowEarlier] = useState(false);
+  const earlier = f.since ? f.events.filter((e) => e.date < f.since!) : [];
+  const recent = f.events.filter((e) => !earlier.includes(e));
+  const years = earlier.length ? [...new Set([earlier[0].date.slice(0, 4), earlier[earlier.length - 1].date.slice(0, 4)])].join('–') : null;
+  const row = (e: FtpEvent) => (
+    <tr key={`${e.date}-${e.kind}-${e.value}`} className="border-b border-line/60 last:border-0">
+      <td className="py-1.5 whitespace-nowrap">{fmtDate(e.date, 'd MMM yyyy')}</td>
+      <td className="pl-3 text-right whitespace-nowrap">{e.value} W</td>
+      <td className="pl-3 text-right whitespace-nowrap">{e.app != null ? `${e.app} W` : '–'}</td>
+      <td className="pl-3 text-right whitespace-nowrap">{e.diff != null ? signed(e.diff) : '–'}</td>
+      <td className="pl-4 text-ink-2">
+        {KIND[e.kind]}
+        {/* 0: from before TrainerRoad kept a source */}
+        {Number(e.source) > 0 && FTP_SOURCES[Number(e.source)] ? <span className="text-muted"> · {FTP_SOURCES[Number(e.source)]}</span> : null}
+        {e.lowConfidence ? ' (low confidence)' : ''}
+      </td>
+    </tr>
+  );
   return (
-    <Card title="FTP: TrainerRoad’s and this app’s" subtitle="TrainerRoad’s FTP as it applied it, what its AI FTP Detection found and predicts, against this app’s own daily estimate from your power (Thresholds)">
+    <Card title="FTP: TrainerRoad’s and this app’s" subtitle="TrainerRoad’s FTP as you, a test or AI FTP Detection set it, what AI FTP Detection found and predicts, against this app’s own daily estimate from your power (Thresholds)">
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="TrainerRoad" value={f.trainerRoad ?? '–'} unit="W" sub="in use there" />
-        <Stat label="AI FTP Detection" value={ai?.detected ?? '–'} unit="W" sub={ai?.detected != null && f.trainerRoad != null ? `${signed(ai.detected - f.trainerRoad)} on TrainerRoad’s` : 'nothing found'} />
+        {ai?.detected != null || !f.forecasts.length ? (
+          <Stat label="AI FTP Detection" value={ai?.detected ?? '–'} unit="W" sub={ai?.detected != null && f.trainerRoad != null ? `${signed(ai.detected - f.trainerRoad)} on TrainerRoad’s` : 'nothing found'} />
+        ) : (
+          <Stat label="AI FTP prediction" value={f.forecasts[0].trainerRoad} unit="W" sub={`for ${fmtDate(f.forecasts[0].date, 'd MMM')}`} />
+        )}
         <Stat label="This app" value={f.app ?? '–'} unit="W" sub="today’s estimate" />
-        <Stat label="TrainerRoad − this app" value={diff != null ? signed(diff, '') : '–'} unit="W" sub={diff != null && f.app ? pct(diff / f.app) : undefined} />
+        <Stat label="Difference" value={diff != null ? signed(diff, '') : '–'} unit="W" sub={diff != null && f.app ? `TrainerRoad’s, ${pct(diff / f.app)}` : undefined} />
       </div>
       {f.forecasts.map((p) => (
         <p key={p.date} className="mt-4 text-[13px] leading-relaxed text-ink-2">
@@ -130,18 +153,19 @@ function FtpCard({ f, ai }: { f: NonNullable<Insights['ftp']>; ai: Insights['ai'
       <div className="mt-4">
         <FtpChart f={f} />
       </div>
-      {a && first && (
+      {a && f.since && (
         <p className="mt-2 text-xs leading-relaxed text-muted">
-          Since TrainerRoad’s first FTP, on {fmtDate(first.date, 'd MMM yyyy')}, its FTP has been{' '}
+          Since {fmtDate(f.since, 'd MMM yyyy')}, TrainerRoad’s FTP has been{' '}
           {Math.abs(a.mean) < 0.5 ? 'level with this app’s on average' : `${Math.abs(Math.round(a.mean))} W (${Math.abs(Math.round(a.meanPct * 100))}%) ${a.mean < 0 ? 'under' : 'over'} this app’s on average`}, {Math.round(a.meanAbs)} W apart either way on a
           typical day ({a.days} days).
+          {years ? ` Its FTPs from ${years} are left out: a year or more went by without a change, so they weren’t being kept up.` : ''}
         </p>
       )}
       {f.events.length > 0 && (
         <div className="mt-4 overflow-x-auto">
           <table className="tnum w-full min-w-[480px] text-[13px]">
             <thead>
-              <tr className="border-b border-line text-left text-[11px] tracking-wide text-muted uppercase">
+              <tr className="border-b border-line text-left text-[11px] tracking-wide whitespace-nowrap text-muted uppercase">
                 <th className="py-1.5 font-medium">Date</th>
                 <th className="pl-3 text-right font-medium">TrainerRoad</th>
                 <th className="pl-3 text-right font-medium">This app</th>
@@ -150,18 +174,17 @@ function FtpCard({ f, ai }: { f: NonNullable<Insights['ftp']>; ai: Insights['ai'
               </tr>
             </thead>
             <tbody>
-              {[...f.events].reverse().map((e) => (
-                <tr key={`${e.date}-${e.kind}-${e.value}`} className="border-b border-line/60 last:border-0">
-                  <td className="py-1.5 whitespace-nowrap">{fmtDate(e.date, 'd MMM yyyy')}</td>
-                  <td className="pl-3 text-right">{e.value} W</td>
-                  <td className="pl-3 text-right">{e.app != null ? `${e.app} W` : '–'}</td>
-                  <td className="pl-3 text-right">{e.diff != null ? signed(e.diff) : '–'}</td>
-                  <td className="pl-4 text-ink-2">
-                    {KIND[e.kind]}
-                    {e.lowConfidence ? ' (low confidence)' : ''}
+              {[...recent].reverse().map(row)}
+              {earlier.length > 0 && (
+                <tr className="border-b border-line/60 last:border-0">
+                  <td colSpan={5} className="py-1.5">
+                    <button type="button" onClick={() => setShowEarlier((x) => !x)} className="text-xs text-accent hover:underline">
+                      {showEarlier ? 'Hide' : 'Show'} {earlier.length} from {years}
+                    </button>
                   </td>
                 </tr>
-              ))}
+              )}
+              {showEarlier && [...earlier].reverse().map(row)}
             </tbody>
           </table>
         </div>
@@ -172,12 +195,11 @@ function FtpCard({ f, ai }: { f: NonNullable<Insights['ftp']>; ai: Insights['ai'
 
 function AiCard({ ai }: { ai: NonNullable<Insights['ai']> }) {
   return (
-    <Card title="AI FTP Detection" subtitle="TrainerRoad’s model of your FTP from your rides">
+    <Card title="AI FTP Detection" subtitle={`TrainerRoad’s model of your FTP from your rides${ai.modelVersion ? ` · model ${ai.modelVersion}` : ''}`}>
       <div className="grid grid-cols-2 gap-3 text-[13px]">
         <div>
           <div className="text-[11px] text-muted uppercase">Now</div>
-          {ai.can == null ? '–' : ai.can ? 'can run' : `can’t run${ai.reason != null ? ` (${String(ai.reason)})` : ''}`}
-          {ai.status ? `; ${AI_STATUS[ai.status] ?? ai.status}` : ''}
+          {ai.can == null ? '–' : ai.can ? `can run${ai.status ? `; ${AI_STATUS[ai.status] ?? ai.status}` : ''}` : `can’t run${ai.reason ? `: ${ai.reason}` : ''}`}
         </div>
         <div>
           <div className="text-[11px] text-muted uppercase">Next</div>
@@ -188,8 +210,8 @@ function AiCard({ ai }: { ai: NonNullable<Insights['ai']> }) {
           {ai.detected != null ? `${ai.detected} W` : '–'}
         </div>
         <div>
-          <div className="text-[11px] text-muted uppercase">Model</div>
-          {ai.modelVersion ?? '–'}
+          <div className="text-[11px] text-muted uppercase">FTP last changed</div>
+          {ai.changed ? fmtDate(ai.changed, 'EEE d MMM') : '–'}
         </div>
       </div>
     </Card>
@@ -257,7 +279,7 @@ function PlanCard({ plan }: { plan: NonNullable<Insights['plan']> }) {
 
 function RidesCard({ rides }: { rides: TrainerRoadRide[] }) {
   return (
-    <Card title="Your rides, as TrainerRoad saw them" subtitle="The last four weeks: TrainerRoad’s TSS from its FTP, how you said each felt in its survey, and the same ride here" pad={false}>
+    <Card title="Your rides and runs, as TrainerRoad saw them" subtitle="The last four weeks: TrainerRoad’s TSS from its FTP, how you said each ride felt in its survey, and the same activity here" pad={false}>
       <div className="overflow-x-auto px-5 pb-4">
         <table className="tnum w-full min-w-[640px] text-[13px]">
           <thead>
@@ -274,6 +296,7 @@ function RidesCard({ rides }: { rides: TrainerRoadRide[] }) {
               <tr key={r.id} className="border-b border-line/60 align-top last:border-0">
                 <td className="py-1.5 whitespace-nowrap">{r.started ? fmtDate(r.started.slice(0, 10), 'EEE d MMM') : '–'}</td>
                 <td>
+                  <SportIcon sport={r.sport} className="mr-1 inline h-3.5 w-3.5 align-[-2px]" />
                   {r.activity ? (
                     <Link to={`/activities/${r.activity.id}`} className="text-accent hover:underline">
                       {r.name ?? r.activity.name}

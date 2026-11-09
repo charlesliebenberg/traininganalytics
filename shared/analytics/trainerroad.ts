@@ -140,12 +140,60 @@ export interface FtpPoint {
 
 /** One of TrainerRoad's FTP records: what it applied, what AI FTP Detection found or predicts. */
 export interface TrFtpRecord extends FtpPoint {
-  /** applied: in use from that day; detected: found by AI FTP Detection, not applied; predicted: expected by a future day; pending: waiting to be accepted */
+  /** applied: in use from that day (set by hand, by a test, or AI FTP's and accepted); detected: AI FTP's, not taken; predicted: expected by a future day; pending: waiting to be accepted */
   kind: 'applied' | 'detected' | 'predicted' | 'pending';
   /** TrainerRoad's own code for where it came from */
   source: number | string | null;
   lowConfidence: boolean | null;
 }
+
+/** Where an FTP record came from, as TrainerRoad's own app words it (its FitnessThresholdSource). */
+export const FTP_SOURCES: Record<number, string> = {
+  0: 'Unknown',
+  1: 'Legacy API: FTP update from older apps',
+  2: 'AI FTP 1.0: detected',
+  3: 'Ramp Test',
+  4: 'Manual FTP entry (profile)',
+  5: 'Fitness slider (onboarding)',
+  6: 'Manual FTP entry (onboarding)',
+  7: '8-minute test',
+  8: '20-minute test',
+  9: 'AI FTP 2.0: onboarding',
+  10: 'Reset',
+  11: '+9 FTP adjustment: Specialty',
+  12: '−2 FTP adjustment: failed workout',
+  13: 'AI FTP 1.0: post workout',
+  14: 'AI FTP 1.0: +9 post workout',
+  15: 'AI FTP 1.0: auto',
+  16: 'Zwift Ramp Test',
+  17: 'AI FTP 2.0: failed workout',
+  18: 'AI FTP 2.0: no RPE workouts found',
+  19: 'AI FTP 2.0: post workout',
+  20: 'AI FTP 2.0: auto',
+  21: 'AI FTP 1.0: prediction',
+  22: 'AI FTP 3.0: prediction',
+  23: 'AI FTP 3.0: hard fail',
+  24: 'AI FTP 3.0: breakthrough',
+  25: 'AI FTP 3.0: mid-phase',
+  26: 'Estimated from backfill',
+};
+
+/**
+ * The sources that are AI FTP's findings and predictions: the athlete takes them or leaves them,
+ * and TrainerRoad marks the ones taken as applied. It doesn't mark any other: an FTP set by hand,
+ * by a test or before it kept sources (0) was in use from the day it was set.
+ */
+export const AI_FTP_SOURCES = new Set([2, 9, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]);
+
+/** Why AI FTP Detection can't run now (its CannotUseAiFtpReason). */
+export const AI_FTP_REASONS: Record<number, string> = {
+  0: 'an error',
+  1: 'no valid date of birth',
+  2: 'not enough data yet',
+  3: 'the FTP changed too recently',
+  4: 'a detection was looked at too recently',
+  5: 'no valid weight',
+};
 
 export interface FtpEvent extends TrFtpRecord {
   /** this app's FTP that day (none for a day still to come), and TrainerRoad's less it */
@@ -154,7 +202,7 @@ export interface FtpEvent extends TrFtpRecord {
 }
 
 export interface FtpAgreement {
-  /** days both had an FTP, from TrainerRoad's first */
+  /** days both had an FTP, from the start of TrainerRoad's current stretch */
   days: number;
   /** TrainerRoad's less this app's, on average (W), its share of this app's, and the typical gap either way */
   mean: number;
@@ -179,31 +227,38 @@ export function valueOn(series: FtpPoint[], date: string): number | null {
 
 const DAY = 86400000;
 const nextDay = (d: string) => new Date(Date.parse(`${d}T00:00:00Z`) + DAY).toISOString().slice(0, 10);
+/** a year or more without a change ends a stretch of TrainerRoad's FTP: one left that long wasn't being kept up */
+const STALE_DAYS = 365;
 
 /**
  * TrainerRoad's FTP records against this app's FTP estimate of the same day, and how closely
- * the FTP each had in effect agreed, day by day, since TrainerRoad's first. `applied` is
- * TrainerRoad's FTP history; `others` its AI FTP Detection records (applied ones are in the history).
+ * the FTP each had in effect agreed, day by day, over TrainerRoad's current stretch (`since`:
+ * from the first change after the last year without one). `applied` is TrainerRoad's FTP
+ * history, two changes on a day in the order made; `others` its records (applied ones are in the history).
  */
-export function compareFtp(applied: FtpPoint[], others: TrFtpRecord[], app: FtpPoint[], today: string): { events: FtpEvent[]; agreement: FtpAgreement | null } {
+export function compareFtp(applied: FtpPoint[], others: TrFtpRecord[], app: FtpPoint[], today: string): { events: FtpEvent[]; agreement: FtpAgreement | null; since: string | null } {
+  // a stable sort: the last change of a day stays last
   const history = [...applied].sort((a, b) => a.date.localeCompare(b.date));
   const series = [...app].sort((a, b) => a.date.localeCompare(b.date));
   const records: TrFtpRecord[] = [
-    ...history.map((p): TrFtpRecord => ({ ...p, kind: 'applied', source: null, lowConfidence: null })),
-    // an applied AI FTP record is the history's own change
-    ...others.filter((o) => !(o.kind === 'applied' && history.some((p) => p.date === o.date && Math.abs(p.value - o.value) < 1))),
+    // a change in the history that TrainerRoad also recorded on its own is told by that record, which says where it came from
+    ...history.filter((p) => !others.some((o) => o.kind === 'applied' && o.date === p.date && Math.abs(p.value - o.value) < 1)).map((p): TrFtpRecord => ({ ...p, kind: 'applied', source: null, lowConfidence: null })),
+    ...others,
   ].sort((a, b) => a.date.localeCompare(b.date));
   const events = records.map((r): FtpEvent => {
     const a = r.date <= today ? valueOn(series, r.date) : null;
     return { ...r, app: a, diff: a != null ? r.value - a : null };
   });
+  let start = 0;
+  for (let i = 1; i < history.length; i++) if (Date.parse(history[i].date) - Date.parse(history[i - 1].date) >= STALE_DAYS * DAY) start = i;
+  const since = history[start]?.date ?? null;
   let agreement: FtpAgreement | null = null;
-  if (history.length && series.length) {
+  if (since && series.length) {
     let n = 0;
     let sum = 0;
     let pct = 0;
     let abs = 0;
-    for (let d = history[0].date; d <= today; d = nextDay(d)) {
+    for (let d = since; d <= today; d = nextDay(d)) {
       const t = valueOn(history, d);
       const a = valueOn(series, d);
       if (t == null || a == null) continue;
@@ -214,7 +269,7 @@ export function compareFtp(applied: FtpPoint[], others: TrFtpRecord[], app: FtpP
     }
     if (n) agreement = { days: n, mean: sum / n, meanPct: pct / n, meanAbs: abs / n };
   }
-  return { events, agreement };
+  return { events, agreement, since };
 }
 
 // ---------- progression levels ----------
@@ -256,12 +311,17 @@ export function progressionLevels(levels: unknown, detection: unknown): ZoneLeve
     .map(([key, v]): ZoneLevel => {
       const id = Number(key);
       const c = v?.changeEvent;
+      const from = numOr(c?.level?.from);
+      const to = numOr(c?.level?.to);
+      const predicted = numOr(v?.predicted);
       return {
         id,
         zone: name.get(id) ?? `Progression ${key}`,
         level: numOr(v?.recent),
-        predicted: numOr(v?.predicted),
-        changed: c ? { date: typeof c.date === 'string' ? c.date.slice(0, 10) : null, from: numOr(c.level?.from), to: numOr(c.level?.to), reason: (c.reason as string | number | null) ?? null } : null,
+        // 0: none expected
+        predicted: predicted != null && predicted > 0 ? predicted : null,
+        // a change that left the level where it was isn't one
+        changed: c && to != null && from !== to ? { date: typeof c.date === 'string' ? c.date.slice(0, 10) : null, from, to, reason: (c.reason as string | number | null) ?? null } : null,
         ai: now.has(id) || after.has(id) ? { from: now.get(id) ?? null, to: after.get(id) ?? null } : null,
       };
     })

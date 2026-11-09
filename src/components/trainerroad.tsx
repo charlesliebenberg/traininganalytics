@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import type { FtpEvent } from '../../shared/analytics/trainerroad';
+import type { Sport } from '../../shared/types';
 import { useApi } from '../lib/api';
 import { fmtDate } from '../lib/format';
 
@@ -17,6 +18,7 @@ export interface TrainerRoadRide {
   id: string;
   started: string | null;
   name: string | null;
+  sport: Sport;
   duration: number | null;
   tss: number | null;
   if: number | null;
