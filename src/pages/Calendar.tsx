@@ -147,6 +147,8 @@ function PlannedModal({ p, activity, onClose, th }: { p: PlannedWorkout; activit
   const del = useAction(() => http(`/planned/${p.id}`, { method: 'DELETE' }), { onSuccess: onClose });
   const m = p.structure ? workoutMetrics(p.structure, th?.ftp) : null;
   const c = compliance(p, activity);
+  // planned in TrainerRoad: changed there, and followed here
+  const followed = p.source === 'trainerroad';
   return (
     <Modal
       open
@@ -159,29 +161,37 @@ function PlannedModal({ p, activity, onClose, th }: { p: PlannedWorkout; activit
         </span>
       }
       footer={
-        <>
-          <Button variant="danger" icon={<Trash2 className="h-4 w-4" />} loading={del.isPending} onClick={() => del.mutate(undefined)}>
-            Delete
-          </Button>
-          {p.structure && (
-            <Button icon={<PenLine className="h-4 w-4" />} onClick={() => nav(`/workouts?planned=${p.id}`)}>
-              Edit in builder
+        followed ? undefined : (
+          <>
+            <Button variant="danger" icon={<Trash2 className="h-4 w-4" />} loading={del.isPending} onClick={() => del.mutate(undefined)}>
+              Delete
             </Button>
-          )}
-          <Button variant="primary" loading={update.isPending} onClick={() => update.mutate({ date, title })}>
-            Save
-          </Button>
-        </>
+            {p.structure && (
+              <Button icon={<PenLine className="h-4 w-4" />} onClick={() => nav(`/workouts?planned=${p.id}`)}>
+                Edit in builder
+              </Button>
+            )}
+            <Button variant="primary" loading={update.isPending} onClick={() => update.mutate({ date, title })}>
+              Save
+            </Button>
+          </>
+        )
       }
     >
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Title">
-          <Input value={title} onChange={(e) => setTitle(e.target.value)} />
-        </Field>
-        <Field label="Date">
-          <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-        </Field>
-      </div>
+      {followed ? (
+        <p className="text-[13px] text-ink-2">
+          {fmtDate(p.date, 'EEEE d MMMM')} · planned in TrainerRoad. Move or change it there, and this calendar follows within the hour.
+        </p>
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Title">
+            <Input value={title} onChange={(e) => setTitle(e.target.value)} />
+          </Field>
+          <Field label="Date">
+            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </Field>
+        </div>
+      )}
       <div className="mt-4 grid grid-cols-4 gap-3 rounded-lg bg-surface-2 p-3 text-center">
         <div>
           <div className="text-[11px] text-muted uppercase">Duration</div>
@@ -374,13 +384,16 @@ export function Calendar() {
                               .map((p) => {
                                 const c = compliance(p, undefined);
                                 const missed = c.label === 'Missed';
+                                // TrainerRoad's own: moved in TrainerRoad, not here
+                                const followed = p.source === 'trainerroad';
                                 return (
                                   <div
                                     key={p.id}
-                                    draggable
-                                    onDragStart={(ev) => ev.dataTransfer.setData('planned', String(p.id))}
+                                    draggable={!followed}
+                                    onDragStart={followed ? undefined : (ev) => ev.dataTransfer.setData('planned', String(p.id))}
                                     onClick={() => setOpen(p)}
-                                    className={clsx('cursor-grab rounded-md border border-dashed px-1.5 py-1 hover:bg-surface-2 active:cursor-grabbing', missed ? 'border-critical/60 opacity-70' : 'border-line-strong')}
+                                    title={followed ? 'Planned in TrainerRoad' : undefined}
+                                    className={clsx('rounded-md border border-dashed px-1.5 py-1 hover:bg-surface-2', followed ? 'cursor-pointer' : 'cursor-grab active:cursor-grabbing', missed ? 'border-critical/60 opacity-70' : 'border-line-strong')}
                                   >
                                     <div className="flex items-center gap-1">
                                       {missed ? <XCircle className="h-3 w-3 text-critical" /> : <SportIcon sport={p.sport} className="h-3 w-3" />}

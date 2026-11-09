@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { randomBytes } from 'node:crypto';
 import { addDays, differenceInCalendarDays, parseISO, subDays } from 'date-fns';
-import { config, eightSleepConfigured, stravaConfigured } from './config';
+import { config, eightSleepConfigured, stravaConfigured, trainerRoadMode } from './config';
 import {
   ACTIVITY_LIST_COLUMNS,
   deleteThresholds,
@@ -39,6 +39,7 @@ import type { ThresholdEstimate, ThresholdSport } from '../shared/analytics/thre
 import { CURVE_DURATIONS } from '../shared/analytics/series';
 import { stravaAuthUrl, stravaDisconnect, stravaExchangeCode, stravaHandleWebhook, stravaWebhookSubscribe } from './providers/strava';
 import { sleepStatus, syncSleep } from './providers/eightsleep';
+import { syncTrainerRoad, trainerRoadStatus } from './providers/trainerroad';
 import { nightBefore, sleepTrend } from './sleep';
 import { readNight } from '../shared/analytics/sleep';
 import { BUILTIN_WORKOUTS } from '../shared/library';
@@ -470,11 +471,15 @@ api.post('/planned', async (c) => {
   return c.json(rowToPlanned(q.get('SELECT * FROM planned_workouts WHERE id = ?', id)!));
 });
 
+// planned in TrainerRoad: changed there, and followed here (a change here would be undone at the next sync)
+const FOLLOWED = { error: 'Planned in TrainerRoad: change it there, and this calendar follows' };
+
 api.patch('/planned/:id', async (c) => {
   const id = Number(c.req.param('id'));
   const b = await c.req.json();
   const cur = q.get('SELECT * FROM planned_workouts WHERE id = ?', id);
   if (!cur) return c.json({ error: 'Not found' }, 404);
+  if (cur.source === 'trainerroad') return c.json(FOLLOWED, 409);
   const next = { ...rowToPlanned(cur), ...b };
   const m = 'structure' in b || 'plannedTss' in b || 'plannedDuration' in b ? plannedMetrics(next.structure, { duration: next.plannedDuration, tss: next.plannedTss, if: next.plannedIf }) : { duration: next.plannedDuration, tss: next.plannedTss, if: next.plannedIf };
   if ('date' in b && b.date !== cur.date && cur.activity_id) {
@@ -506,6 +511,7 @@ api.patch('/planned/:id', async (c) => {
 
 api.delete('/planned/:id', (c) => {
   const id = Number(c.req.param('id'));
+  if (q.get('SELECT source FROM planned_workouts WHERE id = ?', id)?.source === 'trainerroad') return c.json(FOLLOWED, 409);
   q.run('UPDATE activities SET planned_id = NULL WHERE planned_id = ?', id);
   q.run('DELETE FROM planned_workouts WHERE id = ?', id);
   return c.json({ ok: true });
@@ -564,10 +570,13 @@ api.patch('/events/:id', async (c) => {
   const cur = q.get('SELECT * FROM events WHERE id = ?', id);
   if (!cur) return c.json({ error: 'Not found' }, 404);
   const n = { ...rowToEvent(cur), ...(await c.req.json()) };
+  // a TrainerRoad race follows TrainerRoad; only its target CTL is set here
+  if (cur.source === 'trainerroad' && (['date', 'name', 'sport', 'priority', 'description'] as const).some((k) => n[k] !== rowToEvent(cur)[k])) return c.json(FOLLOWED, 409);
   q.run('UPDATE events SET date = ?, name = ?, sport = ?, priority = ?, description = ?, target_ctl = ? WHERE id = ?', n.date, n.name, n.sport, n.priority, n.description, n.targetCtl, id);
   return c.json(n);
 });
 api.delete('/events/:id', (c) => {
+  if (q.get('SELECT source FROM events WHERE id = ?', Number(c.req.param('id')))?.source === 'trainerroad') return c.json(FOLLOWED, 409);
   q.run('DELETE FROM events WHERE id = ?', Number(c.req.param('id')));
   return c.json({ ok: true });
 });
@@ -685,6 +694,14 @@ api.post('/demo', async (c) => {
 api.delete('/demo', (c) => {
   clearDemo();
   return c.json({ ok: true });
+});
+
+// ---------- TrainerRoad: the plan, followed ----------
+api.get('/trainerroad/status', (c) => c.json(trainerRoadStatus()));
+api.post('/trainerroad/sync', (c) => {
+  if (!trainerRoadMode()) return c.json({ error: 'TrainerRoad is not set up: set TRAINERROAD_USERNAME and TRAINERROAD_PASSWORD, or TRAINERROAD_CALENDAR_URL' }, 400);
+  void syncTrainerRoad();
+  return c.json(trainerRoadStatus());
 });
 
 // ---------- sleep: Eight Sleep nights, against your normal and your training ----------

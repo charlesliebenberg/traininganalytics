@@ -10,7 +10,7 @@ import { PmcChart, FormLegend, formColor, MiniProfile } from '../components/char
 import { RouteThumb } from '../components/RouteThumb';
 import { Chart, axisStyle, legendStyle, tooltipStyle, valueAxis, tipRow } from '../components/Chart';
 import { useTokens } from '../lib/theme';
-import { fmtDate, fmtDistance, fmtDuration, fmtNum, fmtPace, SPORT_LABEL } from '../lib/format';
+import { fmtDate, fmtDistance, fmtDuration, fmtNum, fmtPace, iso, SPORT_LABEL } from '../lib/format';
 import { useStatus } from '../components/Layout';
 import { Onboarding } from './Onboarding';
 import { WeekCard } from '../components/review';
@@ -181,7 +181,7 @@ export function Dashboard() {
           </div>
         </Card>
         <div className="flex flex-col gap-4">
-          {data.sleep && <LastNightCard read={data.sleep} tsb={today?.tsb ?? null} />}
+          {data.sleep && <LastNightCard read={data.sleep} tsb={today?.tsb ?? null} planned={data.upcoming.filter((p) => p.date === iso(new Date()))} />}
           {data.latest && (data.latest.aerobic || data.latest.efforts.length > 0 || data.latest.fitness || data.latest.session) && (
             <LatestCard latest={data.latest} activity={data.recent.find((a) => a.id === data.latest!.id)} />
           )}

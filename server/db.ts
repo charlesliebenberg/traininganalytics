@@ -102,6 +102,8 @@ CREATE TABLE IF NOT EXISTS sleep (
   processing INTEGER NOT NULL DEFAULT 0, data TEXT,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+-- TrainerRoad's library workouts as planned (see providers/trainerroad.ts): details and intervals, kept as they rarely change
+CREATE TABLE IF NOT EXISTS trainerroad_workouts (id TEXT PRIMARY KEY, data TEXT NOT NULL, fetched_at TEXT NOT NULL DEFAULT (datetime('now')));
 `);
 
 // columns added since the table was first created
@@ -109,6 +111,12 @@ CREATE TABLE IF NOT EXISTS sleep (
   const cols = new Set((db.prepare('PRAGMA table_info(activities)').all() as { name: string }[]).map((c) => c.name));
   // what the session was and how it went (session.ts), computed with the other metrics
   if (!cols.has('session')) db.exec('ALTER TABLE activities ADD COLUMN session TEXT');
+}
+{
+  const cols = new Set((db.prepare('PRAGMA table_info(events)').all() as { name: string }[]).map((c) => c.name));
+  // races from a plan kept elsewhere (TrainerRoad), kept in step with it
+  if (!cols.has('source')) db.exec("ALTER TABLE events ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'");
+  if (!cols.has('external_id')) db.exec('ALTER TABLE events ADD COLUMN external_id TEXT');
 }
 
 // Repair: thresholds imported from a Strava profile used to be stored with the 1970 placeholder date.
@@ -464,6 +472,7 @@ export function rowToEvent(r: Row): RaceEvent {
     priority: r.priority,
     description: r.description,
     targetCtl: r.target_ctl,
+    source: r.source ?? 'manual',
   };
 }
 

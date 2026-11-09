@@ -12,7 +12,7 @@ export type Sport =
   | 'row'
   | 'other';
 
-export type Source = 'strava' | 'file' | 'demo' | 'manual';
+export type Source = 'strava' | 'file' | 'demo' | 'manual' | 'trainerroad';
 
 export type TssMethod = 'power' | 'pace' | 'swim' | 'hr' | 'estimate' | 'manual' | 'none';
 
@@ -224,6 +224,8 @@ export interface RaceEvent {
   priority: EventPriority;
   description: string | null;
   targetCtl: number | null;
+  /** where it was entered: here, or a plan kept elsewhere (TrainerRoad), which it follows */
+  source?: Source;
 }
 
 /** One night from a sleep tracker (Eight Sleep), keyed by the day you woke up. */

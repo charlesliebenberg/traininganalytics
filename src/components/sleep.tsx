@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { parseISO } from 'date-fns';
 import { AlertTriangle, ArrowRight, CheckCircle2, Moon } from 'lucide-react';
 import type { SleepNight } from '../../shared/types';
-import { signedPct as pct, sleepAdvice, type MorningAfter, type SleepRead } from '../../shared/analytics/sleep';
+import { signedPct as pct, sleepAdvice, type MorningAfter, type PlannedToday, type SleepRead } from '../../shared/analytics/sleep';
 import { qs, useApi } from '../lib/api';
 import { alpha, useTokens } from '../lib/theme';
 import { fmtDate, fmtNum, iso } from '../lib/format';
@@ -26,11 +26,12 @@ function Tone({ tone }: { tone: 'good' | 'neutral' | 'warning' }) {
 }
 
 /** Last night against your normal, and what it means for today's training given your form. */
-export function LastNightCard({ read, tsb }: { read: SleepRead; tsb: number | null }) {
+export function LastNightCard({ read, tsb, planned = [] }: { read: SleepRead; tsb: number | null; planned?: PlannedToday[] }) {
   const n = read.night;
   // the night you woke up from this morning: anything older says nothing about today
   const fresh = n.date === iso(new Date());
-  const advice = sleepAdvice(read, tsb);
+  // what's planned matters only for the day it's planned on
+  const advice = sleepAdvice(read, tsb, fresh ? planned : []);
   return (
     <Card
       title="Last night"

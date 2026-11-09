@@ -1,0 +1,477 @@
+/**
+ * TrainerRoad: the plan TrainerRoad builds and adapts, in this app's calendar, so the fitness
+ * projection, the week's plan and compliance follow it.
+ *
+ * Two ways in. With the account's login it reads the plan as TrainerRoad's own web app does:
+ * each scheduled workout with its intervals, and the races the plan is built around, with their
+ * priority. TrainerRoad has no public API, so this is the private one, as the unofficial
+ * trainerroad-cli and tp2intervals use it; it can change without notice. Without a login, the
+ * calendar export's private URL (TrainerRoad → Settings → Calendar Sync) gives the workouts with
+ * their length, TSS, IF and description, but not their intervals.
+ *
+ * Every sync reads the plan from four weeks back (to match rides to) to a year ahead, and the
+ * calendar follows it: TrainerRoad's Adaptive Training changes workouts often.
+ */
+import { addDays, format, subDays } from 'date-fns';
+import type { EventPriority, Sport, WorkoutStructure } from '../../shared/types';
+import { structureFromProfile, type ProfilePoint } from '../../shared/analytics/trainerroad';
+import { config, trainerRoadMode } from '../config';
+import { log, q } from '../db';
+import { today } from '../aggregate';
+import { applyExternalPlan, type ExternalPlan, type ExternalRace, type ExternalWorkout, type PlanChanges } from '../external-plan';
+
+const BASE = 'https://www.trainerroad.com';
+const AUTH_COOKIE = 'SharedTrainerRoadAuth';
+const HEADERS = { 'user-agent': 'traininganalytics (self-hosted; personal data)', accept: 'application/json, text/plain, */*', 'trainerroad-jsonformat': 'camel-case' };
+const BACK_DAYS = 28;
+const AHEAD_DAYS = 365;
+/** a library workout's details are read again after this many days */
+const WORKOUT_DAYS = 30;
+/** TrainerRoad's race priorities */
+const PRIORITY: Record<number, EventPriority> = { 3: 'A', 2: 'B', 1: 'C' };
+
+const iso = (d: Date) => format(d, 'yyyy-MM-dd');
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const num = (x: unknown): number | null => (typeof x === 'number' && Number.isFinite(x) ? x : typeof x === 'string' && x.trim() && Number.isFinite(Number(x)) ? Number(x) : null);
+/** what TrainerRoad's private API answers: read field by field, defensively */
+type Json = any;
+
+/** Text from TrainerRoad's HTML descriptions. */
+export const plainText = (html: unknown): string =>
+  typeof html !== 'string'
+    ? ''
+    : html
+        .replace(/<\s*br\s*\/?>/gi, '\n')
+        .replace(/<\/(p|div|li)>\s*/gi, '\n\n')
+        .replace(/<[^>]*>/g, '')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;|&rsquo;/g, '’')
+        .replace(/&amp;/g, '&')
+        .replace(/[ \t]+/g, ' ')
+        .replace(/ *\n */g, '\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+/** A workout's or race's sport, from its name: TrainerRoad's are mostly rides. */
+export function sportOf(name: string): Sport {
+  if (/\b(run|running|jog)\b/i.test(name)) return 'run';
+  if (/\b(swim|swimming|endless pool)\b/i.test(name)) return 'swim';
+  return 'ride';
+}
+
+/** A TrainerRoad date: { year, month, day }, or an ISO date or date-time. */
+export function trDate(d: unknown): string | null {
+  if (d && typeof d === 'object') {
+    const { year, month, day } = d as { year: unknown; month: unknown; day: unknown };
+    const [y, m, dd] = [num(year), num(month), num(day)];
+    return y && m && dd ? `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(dd).padStart(2, '0')}` : null;
+  }
+  return typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d) ? d.slice(0, 10) : null;
+}
+
+// ---------- the account ----------
+
+/** The session's cookies, kept with the connection so a restart doesn't sign in again (snapshots strip them). */
+const jar = new Map<string, string>();
+
+function loadJar() {
+  jar.clear();
+  const c = q.get("SELECT access_token, scope FROM connections WHERE provider = 'trainerroad'");
+  // only for the account they're from
+  if (!c?.access_token || c.scope !== config.trainerRoad.username) return;
+  try {
+    for (const [k, v] of Object.entries(JSON.parse(c.access_token) as Record<string, string>)) jar.set(k, v);
+  } catch {
+    // unreadable: sign in again
+  }
+}
+
+function saveJar() {
+  q.run(
+    `INSERT INTO connections(provider, access_token, scope) VALUES('trainerroad', ?, ?)
+     ON CONFLICT(provider) DO UPDATE SET access_token = excluded.access_token, scope = excluded.scope`,
+    JSON.stringify(Object.fromEntries(jar)),
+    config.trainerRoad.username,
+  );
+}
+
+function takeCookies(res: Response) {
+  for (const c of res.headers.getSetCookie?.() ?? []) {
+    const [pair, ...attrs] = c.split(';');
+    const at = pair.indexOf('=');
+    if (at <= 0) continue;
+    const name = pair.slice(0, at).trim();
+    const value = pair.slice(at + 1).trim();
+    const expired = attrs.some((a) => /^\s*max-age\s*=\s*0\s*$/i.test(a) || (/^\s*expires\s*=/i.test(a) && Date.parse(a.slice(a.indexOf('=') + 1)) < Date.now()));
+    if (!value || expired) jar.delete(name);
+    else jar.set(name, value);
+  }
+}
+
+async function request(path: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: init.method ?? 'GET',
+    headers: { ...HEADERS, ...(jar.size ? { cookie: [...jar].map(([k, v]) => `${k}=${v}`).join('; ') } : {}), ...init.headers },
+    body: init.body,
+    redirect: 'manual',
+  });
+  takeCookies(res);
+  return res;
+}
+
+async function signIn() {
+  jar.clear();
+  const { username, password } = config.trainerRoad;
+  const res = await request('/app/api/login/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: BASE, referer: `${BASE}/app/login` },
+    body: JSON.stringify({ username, password, returnUrl: '/app/career' }),
+  });
+  const text = await res.text();
+  let body: Json = null;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    // not JSON
+  }
+  if (res.ok && body?.success !== false && jar.has(AUTH_COOKIE)) return saveJar();
+  if (res.status === 429) throw new Error('TrainerRoad is limiting sign-ins — trying again at the next sync');
+  if (body?.success === false || [400, 401, 403].includes(res.status)) throw new Error('sign-in refused — check TRAINERROAD_USERNAME and TRAINERROAD_PASSWORD');
+  throw new Error(`sign-in failed (${res.status})${text ? `: ${text.slice(0, 160)}` : ''}`);
+}
+
+/** A JSON call, signed in; signs in again once if the session has run out. */
+async function api(path: string, init: { method?: string; headers?: Record<string, string>; body?: unknown } = {}): Promise<Json> {
+  for (let attempt = 0; ; attempt++) {
+    if (!jar.has(AUTH_COOKIE)) await signIn();
+    const res = await request(path, {
+      method: init.method,
+      headers: { ...(init.body !== undefined ? { 'content-type': 'application/json' } : {}), ...init.headers },
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+    });
+    // signed out: a 401, or a redirect to the sign-in page
+    if ((res.status === 401 || (res.status >= 300 && res.status < 400)) && attempt === 0) {
+      jar.delete(AUTH_COOKIE);
+      continue;
+    }
+    if (res.status === 429) throw new Error('TrainerRoad is limiting requests — trying again at the next sync');
+    if (!res.ok) throw new Error(`${path}: ${res.status} ${(await res.text()).slice(0, 160)}`);
+    const text = await res.text();
+    return text ? JSON.parse(text) : null;
+  }
+}
+
+interface LibraryWorkout {
+  name: string | null;
+  minutes: number | null;
+  tss: number | null;
+  if: number | null;
+  description: string | null;
+  structure: WorkoutStructure | null;
+}
+
+/** TrainerRoad library workouts, with their intervals: kept, and read again after a month. */
+async function libraryWorkouts(ids: string[]): Promise<Map<string, LibraryWorkout>> {
+  const out = new Map<string, LibraryWorkout>();
+  const fresh = iso(subDays(new Date(), WORKOUT_DAYS));
+  for (const id of ids) {
+    const row = q.get('SELECT data, fetched_at FROM trainerroad_workouts WHERE id = ?', id);
+    if (row && row.fetched_at >= fresh) out.set(id, JSON.parse(row.data));
+  }
+  const missing = ids.filter((id) => !out.has(id));
+  const referer = { referer: `${BASE}/app/workouts/list` };
+  const summaries = new Map<string, Json>();
+  try {
+    for (let i = 0; i < missing.length; i += 100) {
+      const got = await api('/app/api/workouts/by-id', { method: 'POST', body: missing.slice(i, i + 100).map(Number), headers: referer });
+      for (const w of Array.isArray(got) ? got : []) summaries.set(String(w.id), w);
+    }
+  } catch (e) {
+    log('trainerroad', 'warn', `Workout details: ${(e as Error).message}`);
+  }
+  // once the intervals can't be read, not for the rest either this time: one warning, not one a workout
+  let charts = true;
+  for (const id of missing) {
+    const s = summaries.get(id);
+    let structure: WorkoutStructure | null = null;
+    let read = charts;
+    if (charts) {
+      try {
+        const chart = await api(`/app/api/workouts/${encodeURIComponent(id)}/chart-data`, { headers: referer });
+        structure = structureFromProfile((Array.isArray(chart?.courseData) ? chart.courseData : []) as ProfilePoint[]);
+      } catch (e) {
+        read = charts = false;
+        log('trainerroad', 'warn', `Intervals: ${(e as Error).message}`);
+      }
+    }
+    const intensity = num(s?.intensityFactor);
+    const w: LibraryWorkout = {
+      name: s?.workoutName ?? s?.name ?? null,
+      minutes: num(s?.duration),
+      tss: num(s?.tss),
+      if: intensity == null ? null : intensity > 2 ? intensity / 100 : intensity,
+      description: [plainText(s?.workoutDescription), plainText(s?.goalDescription)].filter(Boolean).join('\n\n') || null,
+      structure,
+    };
+    // only what was read in full is kept; the rest is asked for again next time
+    if (read && s) q.run("INSERT INTO trainerroad_workouts(id, data, fetched_at) VALUES(?, ?, datetime('now')) ON CONFLICT(id) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at", id, JSON.stringify(w));
+    out.set(id, w);
+    // gently: one workout at a time
+    if (charts) await pause(250);
+  }
+  return out;
+}
+
+/** The plan between two dates, from the account. */
+async function readAccount(from: string, to: string): Promise<ExternalPlan> {
+  loadJar();
+  const m = await api('/app/api/member-info');
+  const memberId = m?.memberId ?? m?.MemberId;
+  const username = m?.username ?? m?.Username;
+  if (memberId == null || !username) throw new Error('TrainerRoad gave no member id');
+  q.run("UPDATE connections SET athlete_id = ?, athlete_name = ? WHERE provider = 'trainerroad'", String(memberId), String(username));
+  const referer = { referer: `${BASE}/app/calendar/${encodeURIComponent(username)}` };
+  const timeline = await api(`/app/api/react-calendar/${memberId}/timeline`, { headers: { 'tr-cache-control': 'no-cache', ...referer } });
+  // a calendar it can't read is an error, not an empty plan: the plan here would be cleared
+  if (!Array.isArray(timeline?.plannedActivities)) throw new Error('TrainerRoad’s calendar came back in a form this doesn’t read');
+  const planned: Json[] = timeline.plannedActivities.filter((p: Json) => {
+    const d = trDate(p?.date);
+    return p?.id != null && d && d >= from && d <= to;
+  });
+  // each scheduled workout in full: its workout, TSS and length
+  const details = new Map<string, Json>();
+  try {
+    for (let i = 0; i < planned.length; i += 100) {
+      const got = await api(`/app/api/react-calendar/${memberId}/planned-activities`, {
+        headers: { ids: planned.slice(i, i + 100).map((p) => p.id).join(','), 'tr-cache-control': 'no-cache', ...referer },
+      });
+      for (const d of Array.isArray(got) ? got : []) details.set(String(d.id), d);
+    }
+  } catch (e) {
+    log('trainerroad', 'warn', `Scheduled workouts: ${(e as Error).message}`);
+  }
+  const workoutOf = (p: Json) => details.get(String(p.id))?.workout?.id ?? p.workout?.id ?? p.workoutId ?? null;
+  const library = await libraryWorkouts([...new Set(planned.map(workoutOf).filter((id) => id != null).map(String))]);
+  const workouts: ExternalWorkout[] = planned.map((p) => {
+    const d = details.get(String(p.id)) ?? p;
+    const wid = workoutOf(p);
+    const lib = wid != null ? library.get(String(wid)) : undefined;
+    const title = String(d.workout?.name ?? p.workout?.name ?? lib?.name ?? d.name ?? p.name ?? 'TrainerRoad workout');
+    const minutes = num(d.workout?.duration) ?? lib?.minutes ?? null;
+    const seconds = minutes != null ? minutes * 60 : num(d.durationInSeconds);
+    return {
+      id: String(p.id),
+      date: trDate(d.date) ?? trDate(p.date)!,
+      sport: sportOf(title),
+      title,
+      description: lib?.description ?? (plainText(d.notes) || null),
+      duration: seconds ? Math.round(seconds) : null,
+      tss: num(d.tss) ?? num(d.workout?.tss) ?? lib?.tss ?? null,
+      if: lib?.if ?? null,
+      structure: lib?.structure ?? null,
+    };
+  });
+  const races: ExternalRace[] = [];
+  for (const e of Array.isArray(timeline.events) ? timeline.events : []) {
+    const date = trDate(e?.date);
+    if (e?.id == null || !e.name || !date || date < from || date > to) continue;
+    const sport: Sport = e.isTriathlonType ? 'other' : sportOf(e.name);
+    races.push({ id: `event-${e.id}`, date, name: String(e.name), sport, priority: PRIORITY[num(e.racePriority) ?? 0] ?? 'B', description: plainText(e.notes) || null });
+    // the race's own load on the day, unless it's a scheduled workout already
+    const tss = num(e.tss) ?? num(e.activityTss);
+    if (tss && !workouts.some((w) => w.date === date && w.title === e.name))
+      workouts.push({ id: `event-${e.id}`, date, sport, title: String(e.name), description: null, duration: num(e.durationInSeconds) ?? num(e.duration), tss, if: null, structure: null });
+  }
+  saveJar();
+  return { from, to, workouts, races };
+}
+
+// ---------- the calendar export ----------
+
+export interface IcsEvent {
+  uid: string;
+  summary: string;
+  description: string;
+  /** the day it's on */
+  date: string;
+  /** a whole-day entry, rather than one at a time of day */
+  allDay: boolean;
+  /** how long, for one at a time of day */
+  minutes: number | null;
+}
+
+type IcsProp = { params: string; value: string };
+
+/** An iCalendar date or date-time: its day (a UTC time's day here), and the moment for a time. */
+function icsWhen(p: IcsProp | undefined): { date: string; at: number | null } | null {
+  const m = p?.value.trim().match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/);
+  if (!m) return null;
+  const [, y, mo, d, h, mi, s, z] = m;
+  if (h == null) return { date: `${y}-${mo}-${d}`, at: null };
+  const at = z ? Date.UTC(+y, +mo - 1, +d, +h, +mi, +s) : new Date(+y, +mo - 1, +d, +h, +mi, +s).getTime();
+  return { date: z ? iso(new Date(at)) : `${y}-${mo}-${d}`, at };
+}
+
+/** The events of an iCalendar file. */
+export function parseIcs(text: string): IcsEvent[] {
+  const out: IcsEvent[] = [];
+  let cur: Record<string, IcsProp> | null = null;
+  // long lines continue on the next, indented
+  for (const line of text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/)) {
+    if (/^BEGIN:VEVENT$/i.test(line)) cur = {};
+    else if (/^END:VEVENT$/i.test(line)) {
+      const start = icsWhen(cur?.DTSTART);
+      const summary = icsText(cur?.SUMMARY?.value ?? '').trim();
+      if (cur && start && summary) {
+        const end = icsWhen(cur.DTEND);
+        const allDay = start.at == null || /VALUE=DATE(?!-)/i.test(cur.DTSTART.params);
+        out.push({
+          uid: cur.UID?.value.trim() || `${start.date}|${summary}`,
+          summary,
+          description: icsText(cur.DESCRIPTION?.value ?? '').trim(),
+          date: start.date,
+          allDay,
+          minutes: !allDay && end?.at != null && start.at != null ? Math.round((end.at - start.at) / 60000) : null,
+        });
+      }
+      cur = null;
+    } else if (cur) {
+      // NAME;PARAMS:value — the first colon outside quotes
+      let colon = -1;
+      for (let i = 0, quoted = false; i < line.length; i++) {
+        if (line[i] === '"') quoted = !quoted;
+        else if (line[i] === ':' && !quoted) {
+          colon = i;
+          break;
+        }
+      }
+      if (colon < 0) continue;
+      const head = line.slice(0, colon);
+      const semi = head.indexOf(';');
+      const name = (semi < 0 ? head : head.slice(0, semi)).toUpperCase();
+      cur[name] ??= { params: semi < 0 ? '' : head.slice(semi + 1), value: line.slice(colon + 1) };
+    }
+  }
+  return out;
+}
+
+/** An iCalendar text value: \n, \, \; and \\ escaped */
+const icsText = (s: string) => s.replace(/\\([nN,;\\])/g, (_, c: string) => (c === 'n' || c === 'N' ? '\n' : c));
+
+/** "1:30 - Pettit": the planned length, then the workout */
+const LENGTH = /^(\d{1,2}):(\d{2})\s*[-–—]\s*(.+)$/;
+/** the plan's phases, marked on its first day */
+const PHASES = new Set(['base', 'build', 'specialty', 'recovery week']);
+
+/** TSS, IF and the words from a calendar entry: "TSS 72, IF 0.75, kJ(Cal) 701. Description: …". */
+export function entryText(text: string): { tss: number | null; if: number | null; words: string | null } {
+  const tss = text.match(/\bTSS[:\s]+(\d+(?:\.\d+)?)/i);
+  const intensity = text.match(/\b(?:IF|Intensity Factor)[:\s]+(\d+(?:\.\d+)?)/i);
+  const f = intensity ? Number(intensity[1]) : null;
+  const parts = text.split(/\bDescription:\s*/i);
+  const words = (parts.length > 1 ? parts.slice(1).join(' ') : text.replace(/^\s*TSS\b[^\n]*\n?/i, '')).trim();
+  return { tss: tss ? Number(tss[1]) : null, if: f == null ? null : f > 2 ? f / 100 : f, words: words || null };
+}
+
+/**
+ * Workouts and races from the calendar export: a workout's entry is named with its length
+ * ("1:30 - Pettit") or set at a time of day; a race is a day's entry with legs of the same name.
+ * Notes, illness, time off and the plan's phase markers are left out.
+ */
+export function planFromCalendar(events: IcsEvent[], from: string, to: string): ExternalPlan {
+  const workouts: ExternalWorkout[] = [];
+  const legs = new Set<string>();
+  for (const e of events) {
+    if (e.date < from || e.date > to) continue;
+    const m = e.summary.match(LENGTH);
+    const minutes = m ? Number(m[1]) * 60 + Number(m[2]) : !e.allDay && e.minutes != null && e.minutes > 0 && e.minutes < 720 ? e.minutes : null;
+    if (minutes == null) continue;
+    const title = (m ? m[3] : e.summary).trim();
+    const t = entryText(e.description);
+    workouts.push({ id: e.uid, date: e.date, sport: sportOf(title), title, description: t.words, duration: minutes * 60, tss: t.tss, if: t.if, structure: null });
+    legs.add(`${e.date}|${title}`);
+  }
+  const races: ExternalRace[] = [];
+  for (const e of events) {
+    if (e.date < from || e.date > to || !e.allDay || LENGTH.test(e.summary) || PHASES.has(e.summary.toLowerCase())) continue;
+    if (!legs.has(`${e.date}|${e.summary}`)) continue;
+    // the export doesn't say A, B or C unless the race's own notes do
+    const p = e.description.match(/\b([ABC])[ -](?:race|event|priority)\b/i) ?? e.description.match(/\bpriority[:\s]+([ABC])\b/i);
+    races.push({ id: e.uid, date: e.date, name: e.summary, sport: sportOf(e.summary), priority: (p?.[1].toUpperCase() as EventPriority) ?? 'B', description: entryText(e.description).words });
+  }
+  return { from, to, workouts, races };
+}
+
+async function readCalendar(from: string, to: string): Promise<ExternalPlan> {
+  const res = await fetch(config.trainerRoad.calendarUrl, { headers: { 'user-agent': HEADERS['user-agent'], accept: 'text/calendar, */*' } });
+  if ([401, 403, 404].includes(res.status)) throw new Error(`the calendar export refused (${res.status}) — check TRAINERROAD_CALENDAR_URL`);
+  if (!res.ok) throw new Error(`the calendar export: ${res.status}`);
+  const text = await res.text();
+  if (!/BEGIN:VCALENDAR/i.test(text)) throw new Error('TRAINERROAD_CALENDAR_URL gave something other than a calendar');
+  return planFromCalendar(parseIcs(text), from, to);
+}
+
+// ---------- syncing ----------
+
+const sync = { running: false };
+
+/** Bring the calendar in line with TrainerRoad's plan; null when not set up, already syncing, or it failed. */
+export async function syncTrainerRoad(): Promise<PlanChanges | null> {
+  const mode = trainerRoadMode();
+  if (!mode || sync.running) return null;
+  sync.running = true;
+  try {
+    const from = iso(subDays(new Date(), BACK_DAYS));
+    const to = iso(addDays(new Date(), AHEAD_DAYS));
+    const plan = mode === 'account' ? await readAccount(from, to) : await readCalendar(from, to);
+    const changes = applyExternalPlan('trainerroad', plan);
+    q.run(
+      `INSERT INTO connections(provider, last_sync_at, last_error, cursor) VALUES('trainerroad', ?, NULL, ?)
+       ON CONFLICT(provider) DO UPDATE SET last_sync_at = excluded.last_sync_at, last_error = NULL, cursor = excluded.cursor`,
+      new Date().toISOString(),
+      mode,
+    );
+    if (changes.added || changes.changed || changes.removed) log('trainerroad', 'info', `Plan: ${changes.added} added, ${changes.changed} changed, ${changes.removed} removed`);
+    return changes;
+  } catch (e) {
+    const msg = (e as Error).message;
+    q.run("INSERT INTO connections(provider, last_error) VALUES('trainerroad', ?) ON CONFLICT(provider) DO UPDATE SET last_error = excluded.last_error", msg);
+    log('trainerroad', 'error', `Sync failed: ${msg}`);
+    return null;
+  } finally {
+    sync.running = false;
+  }
+}
+
+/** Sync shortly after start, then every TRAINERROAD_SYNC_MINUTES — when set up. */
+export function startTrainerRoadSync() {
+  if (!trainerRoadMode()) return;
+  setTimeout(() => void syncTrainerRoad(), 30_000).unref();
+  setInterval(() => void syncTrainerRoad(), config.trainerRoad.syncMinutes * 60_000).unref();
+}
+
+export function trainerRoadStatus() {
+  const c = q.get("SELECT last_sync_at, last_error, athlete_name, cursor FROM connections WHERE provider = 'trainerroad'");
+  const t = today();
+  const ahead = q.get("SELECT COUNT(*) AS n, MAX(date) AS last FROM planned_workouts WHERE source = 'trainerroad' AND date >= ?", t);
+  const next = q.get("SELECT date, title FROM planned_workouts WHERE source = 'trainerroad' AND date >= ? AND activity_id IS NULL ORDER BY date, sort_order LIMIT 1", t);
+  const races = q.get("SELECT COUNT(*) AS n FROM events WHERE source = 'trainerroad' AND date >= ?", t);
+  const mode = trainerRoadMode();
+  return {
+    mode,
+    /** how the last sync read it */
+    readBy: (c?.cursor as 'account' | 'calendar' | null) ?? null,
+    account: mode === 'account' ? ((c?.athlete_name as string | null) ?? null) : null,
+    syncing: sync.running,
+    lastSyncAt: (c?.last_sync_at as string | null) ?? null,
+    lastError: (c?.last_error as string | null) ?? null,
+    upcoming: Number(ahead?.n ?? 0),
+    through: (ahead?.last as string | null) ?? null,
+    next: next ? { date: next.date as string, title: next.title as string } : null,
+    races: Number(races?.n ?? 0),
+    everyMinutes: config.trainerRoad.syncMinutes,
+  };
+}

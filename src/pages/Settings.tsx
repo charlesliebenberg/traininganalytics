@@ -198,6 +198,94 @@ function EightSleepCard() {
   );
 }
 
+interface TrainerRoadStatus {
+  mode: 'account' | 'calendar' | null;
+  readBy: 'account' | 'calendar' | null;
+  account: string | null;
+  syncing: boolean;
+  lastSyncAt: string | null;
+  lastError: string | null;
+  upcoming: number;
+  through: string | null;
+  next: { date: string; title: string } | null;
+  races: number;
+  everyMinutes: number;
+}
+
+function TrainerRoadCard() {
+  const { data: s } = useApi<TrainerRoadStatus>('/trainerroad/status', { refetchInterval: (q) => (q.state.data?.syncing ? 3000 : 60000) });
+  const sync = useAction(() => http('/trainerroad/sync', { method: 'POST' }));
+  if (!s) return null;
+  const code = (x: string) => <code className="rounded bg-surface-3 px-1">{x}</code>;
+  const badge = s.syncing ? <Badge>Syncing…</Badge> : !s.mode ? <Badge color="var(--warning)">Not configured</Badge> : s.lastError ? <Badge color="var(--warning)">Sync failed</Badge> : s.lastSyncAt ? <Badge color="var(--good)">Connected</Badge> : <Badge>Not synced yet</Badge>;
+  return (
+    <Card
+      title={
+        <span className="flex items-center gap-2">
+          <span className="flex h-6 w-6 items-center justify-center rounded-md bg-ink text-[10px] font-bold text-surface">TR</span>
+          TrainerRoad
+        </span>
+      }
+      actions={badge}
+    >
+      {s.mode ? (
+        <>
+          <div className="grid grid-cols-2 gap-3 text-[13px]">
+            <div>
+              <div className="text-[11px] text-muted uppercase">Plan</div>
+              {s.upcoming ? `${s.upcoming} workout${s.upcoming === 1 ? '' : 's'} ahead${s.through ? `, to ${fmtDate(s.through, 'd MMM')}` : ''}` : 'nothing ahead yet'}
+            </div>
+            <div>
+              <div className="text-[11px] text-muted uppercase">Next</div>
+              {s.next ? `${fmtDate(s.next.date, 'EEE d MMM')} · ${s.next.title}` : '–'}
+            </div>
+            <div>
+              <div className="text-[11px] text-muted uppercase">Races</div>
+              {s.races || 'none ahead'}
+            </div>
+            <div>
+              <div className="text-[11px] text-muted uppercase">Last sync</div>
+              {s.lastSyncAt ? `${fmtDate(s.lastSyncAt, 'd MMM HH:mm')} · every ${s.everyMinutes} min` : 'pending'}
+            </div>
+          </div>
+          {s.lastError && (
+            <div className="mt-3 flex items-start gap-2 rounded-lg bg-surface-2 p-2.5 text-xs">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-warning" />
+              {s.lastError}
+            </div>
+          )}
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button size="sm" icon={<RefreshCw className="h-3.5 w-3.5" />} loading={sync.isPending || s.syncing} onClick={() => sync.mutate(undefined)}>
+              Sync now
+            </Button>
+          </div>
+          {sync.error && <p className="mt-2 text-xs text-critical">{(sync.error as Error).message}</p>}
+          <p className="mt-3 text-[11px] text-muted">
+            {s.mode === 'account'
+              ? `From your TrainerRoad account${s.account ? ` (${s.account})` : ''}: each workout with its intervals, and the races the plan is built around, through the API TrainerRoad’s web app uses. It isn’t an official API, so a change on TrainerRoad’s side can break it until this is updated.`
+              : 'From TrainerRoad’s calendar export: each workout’s length, TSS, IF and description, but not its intervals. Set your TrainerRoad login instead to get those.'}{' '}
+            TrainerRoad stays in charge of the plan: move or change workouts there, and this calendar follows.
+          </p>
+        </>
+      ) : (
+        <ol className="list-decimal space-y-1 pl-4 text-xs text-ink-2">
+          <li>
+            Set {code('TRAINERROAD_USERNAME')} and {code('TRAINERROAD_PASSWORD')} (your TrainerRoad login) in the server’s environment: on Render, your service → Environment; locally, {code('.env')}. This reads each workout with its intervals, and your races with their priority.
+          </li>
+          <li>
+            Or, without giving this app your password: copy the calendar URL from{' '}
+            <a className="text-accent hover:underline" href="https://www.trainerroad.com/profile/calendar-sync" target="_blank" rel="noreferrer">
+              TrainerRoad’s Calendar Sync page
+            </a>{' '}
+            into {code('TRAINERROAD_CALENDAR_URL')}. The workouts come with their length, TSS and IF, but not their intervals.
+          </li>
+          <li>Redeploy. The plan then syncs every hour into the calendar, the dashboard and the fitness projection, and follows TrainerRoad as it adapts.</li>
+        </ol>
+      )}
+    </Card>
+  );
+}
+
 function SyncLog() {
   const { data } = useApi<{ id: number; at: string; provider: string | null; level: string; message: string }[]>('/sync/log', { refetchInterval: 10000 });
   return (
@@ -455,6 +543,7 @@ export function Settings() {
         <div className="grid gap-4 xl:grid-cols-2">
           <StravaCard />
           <EightSleepCard />
+          <TrainerRoadCard />
           <SyncLog />
         </div>
       )}
