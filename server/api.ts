@@ -40,6 +40,7 @@ import { CURVE_DURATIONS } from '../shared/analytics/series';
 import { stravaAuthUrl, stravaDisconnect, stravaExchangeCode, stravaHandleWebhook, stravaWebhookSubscribe } from './providers/strava';
 import { sleepStatus, syncSleep } from './providers/eightsleep';
 import { syncTrainerRoad, trainerRoadStatus } from './providers/trainerroad';
+import { trainerRoadInsights, trainerRoadRide } from './trainerroad-insights';
 import { nightBefore, sleepTrend } from './sleep';
 import { readNight } from '../shared/analytics/sleep';
 import { BUILTIN_WORKOUTS } from '../shared/library';
@@ -296,6 +297,7 @@ api.get('/activities/:id', (c) => {
     nav,
     planned: planned ? rowToPlanned(planned) : null,
     sleep: nightBefore(a.localDate),
+    trainerRoad: trainerRoadRide(a),
   });
 });
 
@@ -698,6 +700,8 @@ api.delete('/demo', (c) => {
 
 // ---------- TrainerRoad: the plan, followed ----------
 api.get('/trainerroad/status', (c) => c.json(trainerRoadStatus()));
+// its FTP (applied, AI FTP Detection, predicted) against this app's, its levels, plan and ride ratings
+api.get('/trainerroad/insights', (c) => c.json(trainerRoadInsights()));
 api.post('/trainerroad/sync', (c) => {
   if (!trainerRoadMode()) return c.json({ error: 'TrainerRoad is not set up: set TRAINERROAD_USERNAME and TRAINERROAD_PASSWORD, or TRAINERROAD_CALENDAR_URL' }, 400);
   void syncTrainerRoad();

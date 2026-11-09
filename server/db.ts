@@ -104,6 +104,10 @@ CREATE TABLE IF NOT EXISTS sleep (
 );
 -- TrainerRoad's library workouts as planned (see providers/trainerroad.ts): details and intervals, kept as they rarely change
 CREATE TABLE IF NOT EXISTS trainerroad_workouts (id TEXT PRIMARY KEY, data TEXT NOT NULL, fetched_at TEXT NOT NULL DEFAULT (datetime('now')));
+-- what else TrainerRoad keeps about the athlete, as it gives it: FTP history, AI FTP Detection, progression levels, plan… (one row each)
+CREATE TABLE IF NOT EXISTS trainerroad_data (key TEXT PRIMARY KEY, data TEXT NOT NULL, fetched_at TEXT NOT NULL DEFAULT (datetime('now')));
+-- rides as TrainerRoad recorded them, and the athlete's answer to its post-ride survey
+CREATE TABLE IF NOT EXISTS trainerroad_rides (id TEXT PRIMARY KEY, started TEXT, data TEXT NOT NULL, survey TEXT, fetched_at TEXT NOT NULL DEFAULT (datetime('now')));
 `);
 
 // columns added since the table was first created

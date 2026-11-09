@@ -21,6 +21,7 @@ import {
   LogOut,
   Gauge,
   Mountain,
+  Bike,
 } from 'lucide-react';
 import { Suspense, useEffect, useState } from 'react';
 import { http, useApi, useAction } from '../lib/api';
@@ -58,6 +59,7 @@ const NAV = [
     items: [
       { to: '/comeback', label: 'Comeback', icon: Mountain },
       { to: '/calendar', label: 'Calendar', icon: CalendarDays },
+      { to: '/trainerroad', label: 'TrainerRoad', icon: Bike },
       { to: '/workouts', label: 'Workout Builder', icon: Dumbbell },
       { to: '/season', label: 'Season Planner', icon: Flag },
     ],

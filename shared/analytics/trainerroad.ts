@@ -131,6 +131,143 @@ function repeats(steps: WorkoutStep[]): WorkoutBlock[] {
   return out;
 }
 
+// ---------- TrainerRoad's FTP beside this app's ----------
+
+export interface FtpPoint {
+  date: string;
+  value: number;
+}
+
+/** One of TrainerRoad's FTP records: what it applied, what AI FTP Detection found or predicts. */
+export interface TrFtpRecord extends FtpPoint {
+  /** applied: in use from that day; detected: found by AI FTP Detection, not applied; predicted: expected by a future day; pending: waiting to be accepted */
+  kind: 'applied' | 'detected' | 'predicted' | 'pending';
+  /** TrainerRoad's own code for where it came from */
+  source: number | string | null;
+  lowConfidence: boolean | null;
+}
+
+export interface FtpEvent extends TrFtpRecord {
+  /** this app's FTP that day (none for a day still to come), and TrainerRoad's less it */
+  app: number | null;
+  diff: number | null;
+}
+
+export interface FtpAgreement {
+  /** days both had an FTP, from TrainerRoad's first */
+  days: number;
+  /** TrainerRoad's less this app's, on average (W), its share of this app's, and the typical gap either way */
+  mean: number;
+  meanPct: number;
+  meanAbs: number;
+}
+
+/** The value in effect on a day from a series of changes (sorted by date). */
+export function valueOn(series: FtpPoint[], date: string): number | null {
+  let lo = 0;
+  let hi = series.length - 1;
+  let found: number | null = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (series[mid].date <= date) {
+      found = series[mid].value;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return found;
+}
+
+const DAY = 86400000;
+const nextDay = (d: string) => new Date(Date.parse(`${d}T00:00:00Z`) + DAY).toISOString().slice(0, 10);
+
+/**
+ * TrainerRoad's FTP records against this app's FTP estimate of the same day, and how closely
+ * the FTP each had in effect agreed, day by day, since TrainerRoad's first. `applied` is
+ * TrainerRoad's FTP history; `others` its AI FTP Detection records (applied ones are in the history).
+ */
+export function compareFtp(applied: FtpPoint[], others: TrFtpRecord[], app: FtpPoint[], today: string): { events: FtpEvent[]; agreement: FtpAgreement | null } {
+  const history = [...applied].sort((a, b) => a.date.localeCompare(b.date));
+  const series = [...app].sort((a, b) => a.date.localeCompare(b.date));
+  const records: TrFtpRecord[] = [
+    ...history.map((p): TrFtpRecord => ({ ...p, kind: 'applied', source: null, lowConfidence: null })),
+    // an applied AI FTP record is the history's own change
+    ...others.filter((o) => !(o.kind === 'applied' && history.some((p) => p.date === o.date && Math.abs(p.value - o.value) < 1))),
+  ].sort((a, b) => a.date.localeCompare(b.date));
+  const events = records.map((r): FtpEvent => {
+    const a = r.date <= today ? valueOn(series, r.date) : null;
+    return { ...r, app: a, diff: a != null ? r.value - a : null };
+  });
+  let agreement: FtpAgreement | null = null;
+  if (history.length && series.length) {
+    let n = 0;
+    let sum = 0;
+    let pct = 0;
+    let abs = 0;
+    for (let d = history[0].date; d <= today; d = nextDay(d)) {
+      const t = valueOn(history, d);
+      const a = valueOn(series, d);
+      if (t == null || a == null) continue;
+      n++;
+      sum += t - a;
+      pct += (t - a) / a;
+      abs += Math.abs(t - a);
+    }
+    if (n) agreement = { days: n, mean: sum / n, meanPct: pct / n, meanAbs: abs / n };
+  }
+  return { events, agreement };
+}
+
+// ---------- progression levels ----------
+
+/** TrainerRoad's progression ids, as its zones */
+export const PROGRESSION_ZONES: [number, string][] = [
+  [33, 'Endurance'],
+  [16, 'Tempo'],
+  [84, 'Sweet Spot'],
+  [83, 'Threshold'],
+  [85, 'VO2 Max'],
+  [79, 'Anaerobic'],
+];
+
+export interface ZoneLevel {
+  id: number;
+  zone: string;
+  /** where it stands (1–10), and where TrainerRoad expects it by the end of the plan */
+  level: number | null;
+  predicted: number | null;
+  /** its last change */
+  changed: { date: string | null; from: number | null; to: number | null; reason: string | number | null } | null;
+  /** were AI FTP Detection's FTP accepted: the level now, and after */
+  ai: { from: number | null; to: number | null } | null;
+}
+
+const numOr = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+
+/** Progression levels by zone, from TrainerRoad's levels and AI FTP Detection's projection of them. */
+export function progressionLevels(levels: unknown, detection: unknown): ZoneLevel[] {
+  // TrainerRoad's shapes, read defensively
+  const raw = ((levels as { levels?: Record<string, unknown> } | null)?.levels ?? {}) as Record<string, { recent?: unknown; predicted?: unknown; changeEvent?: { date?: unknown; reason?: unknown; level?: { from?: unknown; to?: unknown } } }>;
+  const det = (detection ?? {}) as { currentProgressionLevels?: { progressionId?: unknown; previousDisplayLevel?: unknown }[]; projectedProgressionLevels?: { progressionId?: unknown; displayFinalLevel?: unknown }[] };
+  const now = new Map((Array.isArray(det.currentProgressionLevels) ? det.currentProgressionLevels : []).map((x) => [Number(x.progressionId), numOr(x.previousDisplayLevel)]));
+  const after = new Map((Array.isArray(det.projectedProgressionLevels) ? det.projectedProgressionLevels : []).map((x) => [Number(x.progressionId), numOr(x.displayFinalLevel)]));
+  const order = new Map(PROGRESSION_ZONES.map(([id], i) => [id, i]));
+  const name = new Map(PROGRESSION_ZONES);
+  return Object.entries(raw)
+    .map(([key, v]): ZoneLevel => {
+      const id = Number(key);
+      const c = v?.changeEvent;
+      return {
+        id,
+        zone: name.get(id) ?? `Progression ${key}`,
+        level: numOr(v?.recent),
+        predicted: numOr(v?.predicted),
+        changed: c ? { date: typeof c.date === 'string' ? c.date.slice(0, 10) : null, from: numOr(c.level?.from), to: numOr(c.level?.to), reason: (c.reason as string | number | null) ?? null } : null,
+        ai: now.has(id) || after.has(id) ? { from: now.get(id) ?? null, to: after.get(id) ?? null } : null,
+      };
+    })
+    .sort((a, b) => (order.get(a.id) ?? 99 + a.id) - (order.get(b.id) ?? 99 + b.id));
+}
+
 /** A workout's structure from its TrainerRoad profile; null when there's nothing to read. */
 export function structureFromProfile(points: ProfilePoint[]): WorkoutStructure | null {
   const pts = points.filter((p) => Number.isFinite(p?.seconds) && Number.isFinite(p?.ftpPercent) && p.seconds >= 0).sort((a, b) => a.seconds - b.seconds);

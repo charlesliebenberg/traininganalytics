@@ -9,6 +9,7 @@ import { alpha, useTokens } from '../lib/theme';
 import { fmtDate, fmtDurLabel, fmtDuration, fmtPace, iso } from '../lib/format';
 import { Badge, Button, Card, Empty, PageHeader, Segmented, Spinner, Stat, Toggle } from '../components/ui';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
+import { TrainerRoadFtpNote } from '../components/trainerroad';
 import { breakNames, makeTimeline, monthsText, type Gap, type Timeline } from '../lib/timeline';
 
 interface SeriesResponse {
@@ -409,6 +410,7 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
           </>
         }
       />
+      {sport === 'ride' && <TrainerRoadFtpNote />}
       {isLoading || !data ? (
         <Spinner />
       ) : !data.series.length ? (

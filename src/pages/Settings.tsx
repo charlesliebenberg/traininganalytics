@@ -262,7 +262,7 @@ function TrainerRoadCard() {
           {sync.error && <p className="mt-2 text-xs text-critical">{(sync.error as Error).message}</p>}
           <p className="mt-3 text-[11px] text-muted">
             {s.mode === 'account'
-              ? `From your TrainerRoad account${s.account ? ` (${s.account})` : ''}: each workout with its intervals, and the races the plan is built around, through the API TrainerRoad’s web app uses. It isn’t an official API, so a change on TrainerRoad’s side can break it until this is updated.`
+              ? `From your TrainerRoad account${s.account ? ` (${s.account})` : ''}: each workout with its intervals and the races the plan is built around, plus its FTP, AI FTP Detection, progression levels and how your rides felt (the TrainerRoad page), through the API TrainerRoad’s web app uses. It isn’t an official API, so a change on TrainerRoad’s side can break it until this is updated.`
               : 'From TrainerRoad’s calendar export: each workout’s length, TSS, IF and description, but not its intervals. Set your TrainerRoad login instead to get those.'}{' '}
             TrainerRoad stays in charge of the plan: move or change workouts there, and this calendar follows.
           </p>
