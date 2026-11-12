@@ -9,6 +9,7 @@ import { fmtDate, fmtDuration, fmtNum, iso } from '../lib/format';
 import { Card, PageHeader, SportIcon, Spinner, Stat } from '../components/ui';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
 import { surveyText, type TrainerRoadRide } from '../components/trainerroad';
+import { PlanWeeksChart, UnplannedNote, complianceText, usePlanOutlook, type FtpPath, type PlanOutlook } from '../components/plan';
 
 interface Forecast {
   date: string;
@@ -53,7 +54,7 @@ const signed = (x: number, unit = ' W') => `${x > 0.5 ? '+' : x < -0.5 ? '−' :
 const pct = (x: number) => `${x > 0.005 ? '+' : x < -0.005 ? '−' : ''}${Math.abs(Math.round(x * 100))}%`;
 
 /** The two FTPs through time: each one's in effect, AI FTP Detection's finds, and what each expects next. */
-function FtpChart({ f }: { f: NonNullable<Insights['ftp']> }) {
+function FtpChart({ f, path }: { f: NonNullable<Insights['ftp']>; path: FtpPath[] }) {
   const t = useTokens();
   const option = useMemo(() => {
     const today = iso(new Date());
@@ -71,17 +72,25 @@ function FtpChart({ f }: { f: NonNullable<Insights['ftp']> }) {
       { type: 'line', name: 'TrainerRoad', step: 'end', data: trLine, showSymbol: false, lineStyle: { color: tr, width: 2 }, itemStyle: { color: tr } },
       { type: 'scatter', name: 'AI FTP Detection', data: found.map((e) => [x(e.date), e.value]), symbol: 'diamond', symbolSize: 11, itemStyle: { color: tr } },
       { type: 'line', name: 'TrainerRoad’s prediction', data: ahead(f.trainerRoad, (p) => p.trainerRoad), connectNulls: false, symbol: 'circle', symbolSize: 6, lineStyle: { color: tr, type: 'dashed' }, itemStyle: { color: tr } },
-      { type: 'line', name: 'This app’s forecast', data: ahead(f.app, (p) => p.app), connectNulls: false, symbol: 'circle', symbolSize: 6, lineStyle: { color: t.accent, type: 'dashed' }, itemStyle: { color: t.accent } },
-      // the plausible models' range at the date
-      ...f.forecasts
-        .filter((p) => p.range)
-        .map((p) => ({ type: 'line', name: 'This app’s forecast', data: [[x(p.date), p.range![0]], [x(p.date), p.range![1]]], showSymbol: false, silent: true, lineStyle: { color: alpha(t.accent, 0.3), width: 8 }, tooltip: { show: false } })),
+      // this app's own outlook, week by week as far as rides are planned (else to TrainerRoad's prediction)
+      path.length && f.app != null
+        ? { type: 'line', name: 'This app’s forecast', data: [[x(today), f.app], ...path.map((p) => [x(p.date), p.value])], showSymbol: false, lineStyle: { color: t.accent, type: 'dashed' }, itemStyle: { color: t.accent } }
+        : { type: 'line', name: 'This app’s forecast', data: ahead(f.app, (p) => p.app), connectNulls: false, symbol: 'circle', symbolSize: 6, lineStyle: { color: t.accent, type: 'dashed' }, itemStyle: { color: t.accent } },
+      // the plausible models' range
+      ...(path.length
+        ? [
+            { type: 'line', stack: 'range', silent: true, showSymbol: false, data: path.map((p) => [x(p.date), p.low]), lineStyle: { opacity: 0 }, tooltip: { show: false } },
+            { type: 'line', stack: 'range', silent: true, showSymbol: false, data: path.map((p) => [x(p.date), p.high - p.low]), lineStyle: { opacity: 0 }, areaStyle: { color: alpha(t.accent, 0.14) }, tooltip: { show: false } },
+          ]
+        : f.forecasts
+            .filter((p) => p.range)
+            .map((p) => ({ type: 'line', name: 'This app’s forecast', data: [[x(p.date), p.range![0]], [x(p.date), p.range![1]]], showSymbol: false, silent: true, lineStyle: { color: alpha(t.accent, 0.3), width: 8 }, tooltip: { show: false } }))),
     ];
     return {
       animation: false,
       // the legend gets its own row: on a phone it spans the width and would sit on the axis name
       grid: { left: 52, right: 16, top: 60, bottom: 28 },
-      legend: { ...legendStyle(t), data: ['This app', 'TrainerRoad', 'AI FTP Detection', 'TrainerRoad’s prediction', 'This app’s forecast'] },
+      legend: { ...legendStyle(t), data: ['This app', 'TrainerRoad', ...(found.length ? ['AI FTP Detection'] : []), ...(f.forecasts.length ? ['TrainerRoad’s prediction'] : []), ...(path.length || f.forecasts.length ? ['This app’s forecast'] : [])] },
       tooltip: {
         trigger: 'axis',
         ...tooltipStyle(t),
@@ -97,11 +106,13 @@ function FtpChart({ f }: { f: NonNullable<Insights['ftp']> }) {
       yAxis: valueAxis(t, { scale: true, name: 'FTP (W)', nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -40] } }),
       series,
     };
-  }, [f, t]);
+  }, [f, path, t]);
   return <Chart option={option} height={300} />;
 }
 
-function FtpCard({ f, ai }: { f: NonNullable<Insights['ftp']>; ai: Insights['ai'] }) {
+function FtpCard({ f, ai, outlook }: { f: NonNullable<Insights['ftp']>; ai: Insights['ai']; outlook: PlanOutlook | undefined }) {
+  const path = outlook?.ftp.app?.path ?? [];
+  const end = path[path.length - 1] ?? null;
   const diff = f.trainerRoad != null && f.app != null ? f.trainerRoad - f.app : null;
   const a = f.agreement;
   // records from before TrainerRoad's current stretch: left out of the comparison, and folded in the table
@@ -135,6 +146,12 @@ function FtpCard({ f, ai }: { f: NonNullable<Insights['ftp']>; ai: Insights['ai'
         <Stat label="This app" value={f.app ?? '–'} unit="W" sub="today’s estimate" />
         <Stat label="Difference" value={diff != null ? signed(diff, '') : '–'} unit="W" sub={diff != null && f.app ? `TrainerRoad’s, ${pct(diff / f.app)}` : undefined} />
       </div>
+      {!f.forecasts.length && end && f.app != null && (
+        <p className="mt-4 text-[13px] leading-relaxed text-ink-2">
+          AI FTP has no prediction out now{ai?.next ? `; it can run again from ${fmtDate(ai.next, 'd MMM')}` : ''}. This app’s capacity model, riding the rides planned to {fmtDate(end.date, 'd MMM')}, expects <b className="text-ink">{end.value} W</b>
+          {end.low !== end.high ? ` (${end.low}–${end.high} W)` : ''} by then, from {f.app} W now.
+        </p>
+      )}
       {f.forecasts.map((p) => (
         <p key={p.date} className="mt-4 text-[13px] leading-relaxed text-ink-2">
           TrainerRoad predicts <b className="text-ink">{p.trainerRoad} W</b> by {fmtDate(p.date, 'EEE d MMM')}, in {p.days} days.{' '}
@@ -151,7 +168,7 @@ function FtpCard({ f, ai }: { f: NonNullable<Insights['ftp']>; ai: Insights['ai'
         </p>
       ))}
       <div className="mt-4">
-        <FtpChart f={f} />
+        <FtpChart f={f} path={path} />
       </div>
       {a && f.since && (
         <p className="mt-2 text-xs leading-relaxed text-muted">
@@ -247,7 +264,7 @@ function LevelsCard({ levels, at }: { levels: ZoneLevel[]; at: string | null }) 
   );
 }
 
-function PlanCard({ plan }: { plan: NonNullable<Insights['plan']> }) {
+function PlanCard({ plan, outlook }: { plan: NonNullable<Insights['plan']>; outlook: PlanOutlook | undefined }) {
   const today = iso(new Date());
   return (
     <Card title={plan.name ?? 'Plan'} subtitle={[plan.volume ? `${String(plan.volume)} volume` : null, plan.start && plan.end ? `${fmtDate(plan.start, 'd MMM')} – ${fmtDate(plan.end, 'd MMM yyyy')}` : null].filter(Boolean).join(' · ') || undefined}>
@@ -273,6 +290,15 @@ function PlanCard({ plan }: { plan: NonNullable<Insights['plan']> }) {
           </div>
         )}
       </div>
+      {outlook && outlook.weeks.length > 0 && (
+        <div className="mt-3">
+          <PlanWeeksChart weeks={outlook.weeks.filter((w) => w.when !== 'past' || w.planned.n > 0)} height={140} />
+          {outlook.compliance && <p className="mt-1 text-xs text-muted">Followed: {complianceText(outlook.compliance)}.</p>}
+          <div className="mt-1.5">
+            <UnplannedNote o={outlook} />
+          </div>
+        </div>
+      )}
     </Card>
   );
 }
@@ -323,6 +349,7 @@ function RidesCard({ rides }: { rides: TrainerRoadRide[] }) {
 
 export function TrainerRoad() {
   // what TrainerRoad says changes with a sync, not by the minute
+  const outlook = usePlanOutlook();
   const { data: d, isLoading } = useApi<Insights>('/trainerroad/insights', { refetchInterval: (q) => (q.state.data?.status.syncing ? 3000 : false) });
   const header = <PageHeader title="TrainerRoad" subtitle="TrainerRoad’s view of you beside this app’s: FTP and AI FTP Detection against this app’s model, progression levels, your plan, and how your rides felt" />;
   if (isLoading || !d) return <>{header}<Spinner /></>;
@@ -363,11 +390,11 @@ export function TrainerRoad() {
         </div>
       )}
       <div className="grid gap-4 xl:grid-cols-3">
-        <div className="min-w-0 xl:col-span-2">{d.ftp && <FtpCard f={d.ftp} ai={d.ai} />}</div>
+        <div className="min-w-0 xl:col-span-2">{d.ftp && <FtpCard f={d.ftp} ai={d.ai} outlook={outlook.data} />}</div>
         <div className="flex min-w-0 flex-col gap-4">
           {d.ai && <AiCard ai={d.ai} />}
           {d.levels.length > 0 && <LevelsCard levels={d.levels} at={d.levelsAt} />}
-          {d.plan && <PlanCard plan={d.plan} />}
+          {d.plan && <PlanCard plan={d.plan} outlook={outlook.data} />}
         </div>
       </div>
       <div className="mt-4">

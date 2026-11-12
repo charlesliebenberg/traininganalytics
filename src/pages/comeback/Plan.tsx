@@ -16,7 +16,7 @@ import { peakName, type Overview, type PeakCard, type Preview } from './types';
  * A plan that ramps to the chosen steady load and holds it until the capacity model says the
  * peak's level is back — then creates it and fills the next four weeks of the calendar.
  */
-export function PlanSection({ o, peak, weeklyTss, setWeeklyTss, mix, buildTssPerHour, recentTssPerHour }: { o: Overview; peak: PeakCard; weeklyTss: number; setWeeklyTss: (n: number) => void; mix: BuildSummary['mix'] | null; buildTssPerHour: number | null; recentTssPerHour: number }) {
+export function PlanSection({ o, peak, weeklyTss, setWeeklyTss, mix, buildTssPerHour, recentTssPerHour, following }: { o: Overview; peak: PeakCard; weeklyTss: number; setWeeklyTss: (n: number) => void; mix: BuildSummary['mix'] | null; buildTssPerHour: number | null; recentTssPerHour: number; following?: string | null }) {
   const t = useTokens();
   const nav = useNavigate();
   const name = peakName(peak);
@@ -118,9 +118,13 @@ export function PlanSection({ o, peak, weeklyTss, setWeeklyTss, mix, buildTssPer
             </div>
           )}
           <Button className="col-span-2 mt-2" variant="primary" icon={<Wand2 className="h-4 w-4" />} disabled={!preview} loading={create.isPending} onClick={() => create.mutate(undefined)}>
-            Create plan & fill next 4 weeks
+            {following ? 'Create anyway & fill next 4 weeks' : 'Create plan & fill next 4 weeks'}
           </Button>
-          <p className="col-span-2 text-[11px] text-muted">Saved as your active season plan; fill later weeks from the Season Planner as you go.</p>
+          <p className="col-span-2 text-[11px] text-muted">
+            {following
+              ? `You follow ${following}’s plan: this adds its own workouts beside ${following}’s, doubling the load the calendar and projections count. Use it to compare, or if you leave ${following}.`
+              : 'Saved as your active season plan; fill later weeks from the Season Planner as you go.'}
+          </p>
         </div>
         <div className="min-w-0">
           {error && !preview ? (

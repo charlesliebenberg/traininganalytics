@@ -16,6 +16,7 @@ import { Onboarding } from './Onboarding';
 import { WeekCard } from '../components/review';
 import { InsightPanel, type ActivityInsights } from '../components/insights';
 import { LastNightCard } from '../components/sleep';
+import { PlanCard, usePlanOutlook } from '../components/plan';
 import type { SleepRead } from '../../shared/analytics/sleep';
 
 interface DashboardData {
@@ -104,6 +105,7 @@ function Progress({ value, max, color }: { value: number; max: number; color: st
 export function Dashboard() {
   const status = useStatus();
   const { data, isLoading } = useApi<DashboardData>('/dashboard');
+  const outlook = usePlanOutlook();
   const t = useTokens();
   const nav = useNavigate();
   if (status.data && status.data.activityCount === 0 && !status.data.job) return <Onboarding />;
@@ -175,7 +177,7 @@ export function Dashboard() {
             </Link>
           }
         >
-          <PmcChart points={data.pmc} events={data.events} height={330} compact />
+          <PmcChart points={data.pmc} events={data.events} phases={outlook.data?.plan?.phases} height={330} compact />
           <div className="mt-2">
             <FormLegend />
           </div>
@@ -186,7 +188,8 @@ export function Dashboard() {
             <LatestCard latest={data.latest} activity={data.recent.find((a) => a.id === data.latest!.id)} />
           )}
           <WeekCard />
-          {data.nextEvent && (
+          {outlook.data?.source && <PlanCard o={outlook.data} ctlNow={today?.ctl ?? null} />}
+          {data.nextEvent && !outlook.data?.source && (
             <Card title="Next goal event">
               <div className="flex items-start gap-3">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">

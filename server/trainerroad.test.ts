@@ -63,7 +63,7 @@ const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
   if (url.pathname === '/app/api/member-info') return Response.json({ memberId: 4242, username: 'rider', ftp: 300 });
   if (url.pathname === '/app/api/react-calendar/4242/timeline')
     return Response.json({
-      plannedActivities: tr.planned.map((p) => ({ id: p.id, date: ymd(p.date), workoutId: p.workoutId, name: p.name ?? null, canMove: true, ...(p.activityType ? { activityType: p.activityType } : {}), ...(p.tss ? { tss: p.tss } : {}) })),
+      plannedActivities: tr.planned.map((p) => ({ id: p.id, date: ymd(p.date), workoutId: p.workoutId, name: p.name ?? null, canMove: true, ...(p.activityType ? { type: p.activityType } : {}), ...(p.tss ? { tss: p.tss } : {}) })),
       events: tr.events,
       annotations: [],
       // FTP records as TrainerRoad gives them: in no order, and marked applied only when AI FTP's and
@@ -324,6 +324,24 @@ describe('TrainerRoad', () => {
     // only the new workout's intervals read
     expect(charts()).toBe(4);
     expect(tr.signIns).toBe(1);
+  });
+
+  it('sets out the plan ahead for every page: the race, the weeks, how it was followed, and the two FTP outlooks apart', async () => {
+    const { planOutlook } = await import('./plan-outlook');
+    const o = planOutlook();
+    expect(o.source).toBe('trainerroad');
+    expect(o.race).toMatchObject({ name: 'Grafton to Inverell', priority: 'A', date: day(60) });
+    expect(o.raceDay?.days).toBe(60);
+    // the weeks carry the planned load, the riding in it, and what was done
+    const planned = o.weeks.reduce((s, w) => s + w.planned.n, 0);
+    expect(planned).toBeGreaterThan(0);
+    expect(o.weeks.every((w) => w.planned.rideTss <= w.planned.tss)).toBe(true);
+    // TrainerRoad's FTP and prediction as its own; this app's outlook as its own (none without a capacity model)
+    expect(o.ftp.trainerRoad).toMatchObject({ now: 300, predicted: [{ date: day(21), value: 315 }] });
+    expect(o.ftp.trainerRoad!.history[0].date).toBe(day(-60));
+    expect(o.ftp.app?.path ?? []).toEqual([]);
+    // days before the race with nothing planned are called out
+    expect(o.unplanned.every((g) => g.days >= 4 && g.to < day(60))).toBe(true);
   });
 
   it('reads a chart that counts in ticks, as TrainerRoad’s live one does', () => {

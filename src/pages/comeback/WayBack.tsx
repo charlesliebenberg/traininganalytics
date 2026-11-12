@@ -18,7 +18,7 @@ const isoDay = (d: Date) => format(d, 'yyyy-MM-dd');
  * Load needed per target date, and when a steady load gets there — across the plausible
  * models — with the comeback so far against what the model predicted for it beforehand.
  */
-export function WayBack({ o, peak, months, weeklyTss, setWeeklyTss }: { o: Overview; peak: PeakCard; months: Months | undefined; weeklyTss: number; setWeeklyTss: (n: number) => void }) {
+export function WayBack({ o, peak, months, weeklyTss, setWeeklyTss, planLoad }: { o: Overview; peak: PeakCard; months: Months | undefined; weeklyTss: number; setWeeklyTss: (n: number) => void; planLoad?: { label: string; tss: number } | null }) {
   const t = useTokens();
   const { data: story } = useApi<Story>('/comeback/story');
   const cap = o.capacity;
@@ -180,6 +180,7 @@ export function WayBack({ o, peak, months, weeklyTss, setWeeklyTss }: { o: Overv
   const over = beyondSustained(o, weeklyTss);
   const sliderMax = Math.max(1200, r10((sus?.tss ?? 0) * 1.5));
   const picks = [
+    ...(planLoad ? [{ label: planLoad.label, value: planLoad.tss }] : []),
     { label: recentLabel, value: o.now.weeklyTss },
     ...(peakLoad != null ? [{ label: `year before ${name}`, value: peakLoad }] : []),
     ...(sus ? [{ label: 'most sustained', value: sus.tss }] : []),

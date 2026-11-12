@@ -11,6 +11,7 @@ import { Year } from './comeback/Year';
 import { BuildSection, RecipeTable } from './comeback/Build';
 import { WayBack } from './comeback/WayBack';
 import { PlanSection } from './comeback/Plan';
+import { PlanAgainstPeak, usePlanOutlook } from '../components/plan';
 import { peakName, type Compare, type HrCompareResponse, type Months, type Overview, type Story as StoryData } from './comeback/types';
 
 function Section({ title, sub, children }: { title: string; sub: string; children: ReactNode }) {
@@ -39,11 +40,17 @@ export function Comeback() {
   const build = useApi<BuildSummary>(peak ? `/comeback/build${qs({ date: peak.date, weeks })}` : null);
   const cmp = useApi<Compare>(peak ? `/comeback/compare${qs({ date: peak.date })}` : null);
   const story = useApi<StoryData>(peak ? '/comeback/story' : null);
+  const outlook = usePlanOutlook();
   useEffect(() => {
     if (data && weeklyTss == null) setWeeklyTss(Math.max(200, Math.round(data.now.weeklyTss / 10) * 10));
   }, [data, weeklyTss]);
 
   if (isLoading || !data) return <Spinner />;
+  // the planned riding load, a week on average over the full weeks to come
+  const o = outlook.data;
+  const following = o?.source === 'trainerroad' ? 'TrainerRoad' : null;
+  const ahead = (o?.weeks ?? []).filter((w) => w.when === 'ahead' && w.planned.n > 0);
+  const planLoad = ahead.length ? { label: following ? 'TrainerRoad’s plan' : 'your plan', tss: ahead.reduce((s, w) => s + w.planned.rideTss, 0) / ahead.length } : null;
   const load = weeklyTss ?? 500;
   const recentTph = data.now.weeklyHours > 0.5 ? clampTph(data.now.weeklyTss / data.now.weeklyHours) : 60;
   const buildTph = build.data && build.data.avgHours > 1 ? clampTph(build.data.avgTss / build.data.avgHours) : null;
@@ -81,8 +88,9 @@ export function Comeback() {
           </Section>
 
           <Section title="The way back" sub="How long a steady load takes to rebuild your capacity, and a plan to do it.">
-            <WayBack o={data} peak={peak} months={months.data} weeklyTss={load} setWeeklyTss={setWeeklyTss} />
-            <PlanSection o={data} peak={peak} weeklyTss={load} setWeeklyTss={setWeeklyTss} mix={build.data?.mix ?? null} buildTssPerHour={buildTph} recentTssPerHour={recentTph} />
+            <WayBack o={data} peak={peak} months={months.data} weeklyTss={load} setWeeklyTss={setWeeklyTss} planLoad={planLoad} />
+            {o?.source && <PlanAgainstPeak o={o} peak={peak} planLoad={planLoad?.tss ?? null} onUse={planLoad ? () => setWeeklyTss(Math.round(planLoad.tss / 10) * 10) : undefined} />}
+            <PlanSection o={data} peak={peak} weeklyTss={load} setWeeklyTss={setWeeklyTss} mix={build.data?.mix ?? null} buildTssPerHour={buildTph} recentTssPerHour={recentTph} following={following} />
           </Section>
         </>
       )}

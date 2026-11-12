@@ -3,6 +3,7 @@ import { AlertTriangle, Flag, Trash2, Wand2, Save, Plus } from 'lucide-react';
 import type { RaceEvent, SeasonPlan, SeasonPlanConfig, SeasonWeek, Sport } from '../../shared/types';
 import type { PlanReach } from '../../shared/analytics/plan';
 import { http, useAction, useApi } from '../lib/api';
+import { usePlanOutlook } from '../components/plan';
 import { alpha, useTokens, type Tokens } from '../lib/theme';
 import { fmtDate, fmtNum, SPORT_LABEL, iso } from '../lib/format';
 import { Badge, Button, Card, Field, Input, PageHeader, Segmented, Select, Spinner, Stat, Empty } from '../components/ui';
@@ -130,6 +131,7 @@ export function Season() {
   const defaults = useApi<SeasonPlanConfig & { eventId: number | null }>('/plans/defaults');
   const events = useApi<RaceEvent[]>('/events');
   const plans = useApi<SeasonPlan[]>('/plans');
+  const following = usePlanOutlook().data?.source === 'trainerroad' ? 'TrainerRoad' : null;
   const [cfg, setCfg] = useState<SeasonPlanConfig | null>(null);
   const [name, setName] = useState('Season plan');
   const [eventId, setEventId] = useState<number | null>(null);
@@ -297,7 +299,7 @@ export function Season() {
               </div>
             </Card>
           )}
-          <Card title="Saved plans" subtitle="The latest plan drives calendar week targets and long-range PMC projection">
+          <Card title="Saved plans" subtitle={following ? `You follow ${following}’s plan: its workouts set the calendar’s weekly targets and the projections. The latest plan here fills only weeks with nothing planned.` : 'The latest plan drives calendar week targets and long-range PMC projection'}>
             {!plans.data?.length ? (
               <Empty title="No saved plans yet">Tune the settings, then save to use the plan across the app.</Empty>
             ) : (
@@ -319,7 +321,7 @@ export function Season() {
                         </option>
                       ))}
                     </Select>
-                    <Button size="sm" variant="primary" icon={<Wand2 className="h-3.5 w-3.5" />} loading={apply.isPending} onClick={() => apply.mutate(p.id)}>
+                    <Button size="sm" variant="primary" icon={<Wand2 className="h-3.5 w-3.5" />} loading={apply.isPending} onClick={() => (!following || confirm(`This adds its own workouts beside ${following}’s, doubling the load the calendar and projections count. Fill anyway?`)) && apply.mutate(p.id)}>
                       Fill calendar
                     </Button>
                     <Button size="sm" variant="danger" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => del.mutate(p.id)} />

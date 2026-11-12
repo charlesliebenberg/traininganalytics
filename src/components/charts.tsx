@@ -26,7 +26,7 @@ export function formColor(t: Tokens, id: string): string {
 }
 
 // ---------- Performance Management Chart ----------
-export function PmcChart({ points, events = [], height = 420, compact = false, showTss = true }: { points: PmcPoint[]; events?: RaceEvent[]; height?: number; compact?: boolean; showTss?: boolean }) {
+export function PmcChart({ points, events = [], phases, height = 420, compact = false, showTss = true }: { points: PmcPoint[]; events?: RaceEvent[]; phases?: { name: string | null; start: string | null; end: string | null }[]; height?: number; compact?: boolean; showTss?: boolean }) {
   const t = useTokens();
   const option = useMemo<EChartsOption>(() => {
     const actual = points.filter((p) => !p.projected);
@@ -87,6 +87,26 @@ export function PmcChart({ points, events = [], height = 420, compact = false, s
       { ...line(t.atl), name: 'Fatigue (ATL)', xAxisIndex: 0, yAxisIndex: 0, data: actual.map((p) => [ts(p.date), p.atl]), lineStyle: { width: 1.5, color: t.atl }, ...breakBands(true) },
       { type: 'bar', name: 'Form (TSB)', xAxisIndex: 1, yAxisIndex: 1, data: tsbData, barMaxWidth: 6, barCategoryGap: '10%', itemStyle: { color: t.good }, ...breakBands(false) },
     ];
+    // the plan's phases (TrainerRoad's), shaded behind fitness
+    const shown = (phases ?? []).filter((p) => p.start && p.end && p.end >= points[0]?.date && p.start <= points[points.length - 1]?.date);
+    if (shown.length) {
+      const lo = points[0].date;
+      const hi = points[points.length - 1].date;
+      series.push({
+        type: 'line',
+        name: 'Plan phase',
+        xAxisIndex: 0,
+        yAxisIndex: 0,
+        data: [],
+        silent: true,
+        markArea: {
+          silent: true,
+          itemStyle: { color: alpha(t.series[3], 0.07), borderColor: alpha(t.series[3], 0.35), borderWidth: 0.5 },
+          label: { show: true, position: 'insideTopLeft' as const, color: t.muted, fontSize: 10, formatter: (p: any) => p.name },
+          data: shown.map((p) => [{ xAxis: ts(p.start! < lo ? lo : p.start!), name: p.name ?? '' }, { xAxis: ts(p.end! > hi ? hi : p.end!) }]),
+        },
+      });
+    }
     if (projWithJoin.length) {
       series.push(
         { ...line(t.ctl, true), name: 'Fitness (CTL)', xAxisIndex: 0, yAxisIndex: 0, data: projWithJoin.map((p) => [ts(p.date), p.ctl]), lineStyle: { width: 2, color: t.ctl, type: 'dashed' } },
@@ -130,7 +150,7 @@ export function PmcChart({ points, events = [], height = 420, compact = false, s
       dataZoom: compact ? [] : [{ type: 'inside', xAxisIndex: grids.map((_, i) => i) }, { type: 'slider', xAxisIndex: grids.map((_, i) => i), height: 18, bottom: 8, borderColor: t.line, backgroundColor: t.surface2, fillerColor: alpha(t.accent, 0.15), handleStyle: { color: t.surface, borderColor: t.lineStrong }, dataBackground: { lineStyle: { color: t.lineStrong }, areaStyle: { color: t.surface3 } }, textStyle: { color: t.muted }, moveHandleSize: 0, showDetail: false }],
       series,
     };
-  }, [points, events, t, height, compact, showTss]);
+  }, [points, events, phases, t, height, compact, showTss]);
   return <Chart option={option} height={height} />;
 }
 
