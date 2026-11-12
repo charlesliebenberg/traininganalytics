@@ -65,6 +65,8 @@ export function sportOf(name: string, otherwise: Sport = 'ride'): Sport {
 
 /** TrainerRoad's activity types */
 const ACTIVITY_SPORT: Record<number, Sport> = { 1: 'ride', 2: 'run', 3: 'swim' };
+/** TrainerRoad's planned rides that aren't its sessions (its openType) */
+const OPEN_TITLE: Record<number, string> = { 1: 'Group ride', 2: 'Solo ride', 3: 'Zwift race' };
 /** the name for something planned without one */
 const SPORT_TITLE: Partial<Record<Sport, string>> = { ride: 'Ride', run: 'Run', swim: 'Swim', strength: 'Strength', other: 'Other activity' };
 
@@ -305,38 +307,51 @@ async function readAccount(from: string, to: string): Promise<ExternalPlan> {
     const d = trDate(p?.date);
     return p?.id != null && d && d >= from && d <= to;
   });
-  // each scheduled workout in full: its workout, TSS and length. TrainerRoad refuses the lot
-  // when some can't be read this way, so the workouts are asked for on their own then.
+  // each item in full: its workout, TSS and length. TrainerRoad refuses a whole batch for one
+  // item it can't give this way, so a refused batch is halved until that item is found and left out
   const details = new Map<string, Json>();
-  const read = async (items: Json[]) => {
-    for (let i = 0; i < items.length; i += 100) {
-      const got = await api(`/app/api/react-calendar/${memberId}/planned-activities`, {
-        headers: { ids: items.slice(i, i + 100).map((p) => p.id).join(','), 'tr-cache-control': 'use-cache', referer: `${BASE}/app/career/${encodeURIComponent(username)}` },
-      });
+  const headers = (items: Json[]) => ({ ids: items.map((p) => p.id).join(','), 'tr-cache-control': 'use-cache', referer: `${BASE}/app/calendar/${encodeURIComponent(username)}` });
+  const refused: string[] = [];
+  let calls = 0;
+  const read = async (items: Json[]): Promise<void> => {
+    if (!items.length || calls > 40) return;
+    calls++;
+    try {
+      const got = await api(`/app/api/react-calendar/${memberId}/planned-activities`, { headers: headers(items) });
       for (const d of Array.isArray(got) ? got : []) details.set(String(d.id), d);
+    } catch (e) {
+      if (!/: 400\b/.test((e as Error).message)) throw e;
+      if (items.length === 1) refused.push(`${items[0].title || 'untitled'} ${trDate(items[0].date)}`);
+      else {
+        const half = Math.ceil(items.length / 2);
+        await read(items.slice(0, half));
+        await read(items.slice(half));
+      }
     }
   };
   try {
-    await read(planned);
-  } catch {
-    try {
-      await read(planned.filter((p) => p.workoutId != null || p.workout?.id != null));
-    } catch (e) {
-      log('trainerroad', 'warn', `Scheduled workouts: ${(e as Error).message}`);
-    }
+    for (let i = 0; i < planned.length; i += 100) await read(planned.slice(i, i + 100));
+    if (refused.length) log('trainerroad', 'info', `Not given in full by TrainerRoad (read from its calendar instead): ${refused.slice(0, 8).join(', ')}${refused.length > 8 ? ` and ${refused.length - 8} more` : ''}`);
+  } catch (e) {
+    log('trainerroad', 'warn', `Scheduled workouts: ${(e as Error).message}`);
   }
-  const workoutOf = (p: Json) => details.get(String(p.id))?.workout?.id ?? p.workout?.id ?? p.workoutId ?? null;
+  // a solo ride, group ride or Zwift race in the plan: no TrainerRoad session, though TrainerRoad
+  // keeps the workout it would suggest on it
+  const openOf = (p: Json) => num(details.get(String(p.id))?.openType ?? p.openType) ?? 0;
+  const workoutOf = (p: Json) => (openOf(p) > 0 ? null : (details.get(String(p.id))?.workout?.id ?? p.workout?.id ?? p.workoutId ?? null));
   const library = await libraryWorkouts([...new Set(planned.map(workoutOf).filter((id) => id != null).map(String))]);
   const workouts: ExternalWorkout[] = planned.map((p) => {
     const d = details.get(String(p.id)) ?? p;
     const wid = workoutOf(p);
     const lib = wid != null ? library.get(String(wid)) : undefined;
-    const name = d.workout?.name ?? p.workout?.name ?? lib?.name ?? d.name ?? p.name ?? null;
+    const name = openOf(p) > 0 ? null : (d.workout?.name ?? p.workout?.name ?? lib?.name ?? d.name ?? p.name ?? null);
     // not a workout: its own kind (TrainerRoad's activity types: 1 ride, 2 run, 3 swim), else its name's
     // (the timeline calls it `type`)
-    const sport: Sport = wid != null ? sportOf(name ?? '') : (ACTIVITY_SPORT[num(d.activityType ?? p.activityType ?? p.type) ?? -1] ?? (name ? sportOf(name, 'other') : 'other'));
-    const title = String(name ?? SPORT_TITLE[sport]);
-    const minutes = num(d.workout?.duration) ?? lib?.minutes ?? null;
+    const sport: Sport = openOf(p) > 0 ? 'ride' : wid != null ? sportOf(name ?? '') : (ACTIVITY_SPORT[num(d.activityType ?? p.activityType ?? p.type) ?? -1] ?? (name ? sportOf(name, 'other') : 'other'));
+    const open = OPEN_TITLE[openOf(p)];
+    const title = String(open ?? name ?? SPORT_TITLE[sport]);
+    // a ride that isn't a session has its own length, not its suggested workout's
+    const minutes = openOf(p) > 0 ? null : (num(d.workout?.duration) ?? lib?.minutes ?? null);
     const seconds = minutes != null ? minutes * 60 : num(d.durationInSeconds ?? p.durationInSeconds);
     return {
       id: String(p.id),
@@ -345,7 +360,7 @@ async function readAccount(from: string, to: string): Promise<ExternalPlan> {
       title,
       description: lib?.description ?? (plainText(d.notes) || null),
       duration: seconds ? Math.round(seconds) : null,
-      tss: num(d.tss) ?? num(d.workout?.tss) ?? lib?.tss ?? null,
+      tss: num(d.tss) ?? (openOf(p) > 0 ? null : (num(d.workout?.tss) ?? lib?.tss ?? null)),
       if: lib?.if ?? null,
       structure: lib?.structure ?? null,
     };
@@ -376,9 +391,24 @@ const keep = (key: string, data: unknown) =>
  * and its phases, power records, weight, and the rides it recorded, with the post-ride survey.
  * What can't be read is said once, and left as it was.
  */
+/**
+ * TrainerRoad's FTP records, with a prediction it blanks for a while (0 W, while AI FTP works it
+ * out again) kept at its last value, marked held, until it gives one again.
+ */
+function holdPredictions(records: unknown): Json {
+  if (!Array.isArray(records)) return null;
+  const before = q.get("SELECT data FROM trainerroad_data WHERE key = 'fitness-thresholds'");
+  const last = new Map<string, Json>((before ? (JSON.parse(before.data)?.fitnessThresholds ?? []) : []).filter((x: Json) => x?.id != null).map((x: Json) => [String(x.id), x]));
+  return records.map((x: Json) => {
+    const prev = x?.id != null ? last.get(String(x.id)) : null;
+    if (num(x?.value) === 0 && !x?.isApplied && prev && (num(prev.value) ?? 0) > 0) return { ...x, value: prev.value, held: prev.held ?? new Date().toISOString() };
+    return x;
+  });
+}
+
 async function readDetails(memberId: string, username: string, member: Json, timeline: Json) {
   keep('member', member);
-  keep('fitness-thresholds', { fitnessThresholds: timeline.fitnessThresholds ?? null, pendingAiFtpChange: timeline.pendingAiFtpChange ?? null });
+  keep('fitness-thresholds', { fitnessThresholds: holdPredictions(timeline.fitnessThresholds), pendingAiFtpChange: timeline.pendingAiFtpChange ?? null });
   // the calendar as it came (its rides are kept one by one, below)
   keep('timeline', { ...timeline, activities: undefined });
   const career = { referer: `${BASE}/app/career/${encodeURIComponent(username)}` };
