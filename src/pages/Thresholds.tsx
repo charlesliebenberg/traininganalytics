@@ -10,6 +10,8 @@ import { fmtDate, fmtDurLabel, fmtDuration, fmtPace, iso } from '../lib/format';
 import { Badge, Button, Card, Empty, PageHeader, Segmented, Spinner, Stat, Toggle } from '../components/ui';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
 import { TrainerRoadFtpNote } from '../components/trainerroad';
+import { trColor, usePlanOutlook, type PlanOutlook } from '../components/plan';
+import { valueOn } from '../../shared/analytics/trainerroad';
 import { breakNames, makeTimeline, monthsText, type Gap, type Timeline } from '../lib/timeline';
 
 interface SeriesResponse {
@@ -49,7 +51,7 @@ function fmt(sport: ThresholdSport) {
 }
 const wpText = (sport: ThresholdSport, w: number) => (sport === 'ride' ? `${(w / 1000).toFixed(1)} kJ` : `${Math.round(w)} m`);
 
-function HistoryChart({ sport, data, series, timeline, selected, onSelect }: { sport: ThresholdSport; data: SeriesResponse; series: ThresholdEstimate[]; timeline: Timeline; selected: string | null; onSelect: (d: string) => void }) {
+function HistoryChart({ sport, data, series, timeline, selected, onSelect, outlook }: { sport: ThresholdSport; data: SeriesResponse; series: ThresholdEstimate[]; timeline: Timeline; selected: string | null; onSelect: (d: string) => void; outlook?: PlanOutlook | null }) {
   const t = useTokens();
   const f = fmt(sport);
   // the click handler is bound once; read the latest data through a ref
@@ -70,6 +72,20 @@ function HistoryChart({ sport, data, series, timeline, selected, onSelect }: { s
     });
     if (manualPts.length) manualPts.push([X(lastDate), manualPts[manualPts.length - 1][1]]);
     const sel = s.find((e) => e.date === selected);
+    // beside this app's FTP, never in it: TrainerRoad's own (its current stretch) and AI FTP's
+    // prediction, and this app's own outlook, its capacity model riding the rides planned
+    const todayIso = iso(new Date());
+    const tr = sport === 'ride' ? outlook?.ftp.trainerRoad : null;
+    const trHist = (tr?.history ?? []).filter((p) => p.date >= firstDate);
+    const trPts: [number, number][] = trHist.map((p) => [X(p.date), p.value]);
+    if (trPts.length && tr?.now != null) trPts.push([X(todayIso), tr.now]);
+    const trPred = tr?.predicted ?? [];
+    const ahead = sport === 'ride' && outlook?.ftp.app ? outlook.ftp.app.path : [];
+    const appNow = sport === 'ride' ? outlook?.ftp.app?.now : null;
+    const aheadPts: [number, number][] = ahead.length && appNow != null ? [[X(todayIso), appNow], ...ahead.map((p): [number, number] => [X(p.date), p.value])] : [];
+    const aheadBy = new Map(ahead.map((p) => [X(p.date), p]));
+    const predBy = new Map(trPred.map((p) => [X(p.date), p]));
+    const lastX = Math.max(X(lastDate), ...ahead.map((p) => X(p.date)), ...trPred.map((p) => X(p.date)));
     // split lines at breaks so they don't draw across collapsed periods
     const withBreaks = (pts: { date: string; v: number }[]) => {
       const out: (number[] | null[])[] = [];
@@ -82,21 +98,28 @@ function HistoryChart({ sport, data, series, timeline, selected, onSelect }: { s
     return {
       animation: false,
       grid: { left: 64, right: 16, top: 34, bottom: 30 },
-      legend: { ...legendStyle(t), data: ['Applied', 'Raw fit', ...(manualPts.length ? ['Manual setting'] : [])] },
+      legend: { ...legendStyle(t), data: ['Applied', 'Raw fit', ...(manualPts.length ? ['Manual setting'] : []), ...(aheadPts.length ? ['Forecast, riding the plan'] : []), ...(trPts.length ? ['TrainerRoad'] : []), ...(trPred.length ? ['TrainerRoad prediction'] : [])] },
       tooltip: {
         trigger: 'axis',
         ...tooltipStyle(t),
         formatter: (ps: any) => {
           const x = ps[0].value?.[0];
+          const ahead = aheadBy.get(x);
+          const pred = predBy.get(x);
+          if (ahead || pred) {
+            const d = (ahead ?? pred)!.date;
+            return `<b>${fmtDate(d, 'EEE d MMM yyyy')}</b>${ahead ? `${tipRow(t.accent, 'This app, forecast', `${ahead.value} W`)}<div style="opacity:.6;font-size:11px">${ahead.low}–${ahead.high} W across its plausible fits · riding the rides planned</div>` : ''}${pred ? tipRow(trColor(t), 'TrainerRoad prediction', `${pred.value} W`) : ''}`;
+          }
           const e = s.find((z) => X(z.date) === x);
           if (!e) return '';
-          return `<b>From ${fmtDate(e.date, 'd MMM yyyy')}</b><div style="opacity:.6;font-size:11px;margin-bottom:4px">window ${fmtDate(e.windowFrom, 'd MMM')} – ${fmtDate(e.windowTo, 'd MMM yyyy')}</div>${tipRow(t.accent, 'Applied', f.value(e.threshold))}${tipRow(t.muted, 'Raw fit', f.value(e.raw))}${sport === 'ride' && e.basis ? tipRow('transparent', 'Set by', ftpBasisText(e)) : ''}${tipRow('transparent', LABEL[sport].wp, wpText(sport, e.wPrime))}<div style="opacity:.6;font-size:11px;margin-top:4px">Click to inspect the fit</div>`;
+          const trOn = tr ? valueOn(trHist, e.date) : null;
+          return `<b>From ${fmtDate(e.date, 'd MMM yyyy')}</b><div style="opacity:.6;font-size:11px;margin-bottom:4px">window ${fmtDate(e.windowFrom, 'd MMM')} – ${fmtDate(e.windowTo, 'd MMM yyyy')}</div>${tipRow(t.accent, 'Applied', f.value(e.threshold))}${tipRow(t.muted, 'Raw fit', f.value(e.raw))}${sport === 'ride' && e.basis ? tipRow('transparent', 'Set by', ftpBasisText(e)) : ''}${tipRow('transparent', LABEL[sport].wp, wpText(sport, e.wPrime))}${trOn != null ? tipRow(trColor(t), 'TrainerRoad’s (its own)', f.value(trOn)) : ''}<div style="opacity:.6;font-size:11px;margin-top:4px">Click to inspect the fit</div>`;
         },
       },
       xAxis: {
         type: 'value',
         min: X(firstDate) - 7 * DAY,
-        max: X(lastDate) + 7 * DAY,
+        max: lastX + 7 * DAY,
         ...axisStyle(t, { grid: false }),
         splitNumber: 8,
         axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => (timeline.inBreak(v) ? '' : fmtDate(new Date(timeline.fromX(v)), "MMM ''yy")) },
@@ -134,9 +157,12 @@ function HistoryChart({ sport, data, series, timeline, selected, onSelect }: { s
           itemStyle: { color: alpha(t.muted, 0.7) },
         },
         ...(manualPts.length ? [{ type: 'line', name: 'Manual setting', step: 'end', showSymbol: false, data: manualPts, lineStyle: { color: t.series[1], width: 1.5 }, itemStyle: { color: t.series[1] } }] : []),
+        ...(aheadPts.length ? [{ type: 'line', name: 'Forecast, riding the plan', showSymbol: false, data: aheadPts, lineStyle: { color: t.accent, width: 2, type: 'dashed' }, itemStyle: { color: t.accent } }] : []),
+        ...(trPts.length ? [{ type: 'line', name: 'TrainerRoad', step: 'end', showSymbol: false, data: trPts, lineStyle: { color: trColor(t), width: 1.5 }, itemStyle: { color: trColor(t) }, z: 1 }] : []),
+        ...(trPred.length ? [{ type: 'scatter', name: 'TrainerRoad prediction', symbol: 'diamond', symbolSize: 11, data: trPred.map((p) => [X(p.date), p.value]), itemStyle: { color: trColor(t) } }] : []),
       ],
     };
-  }, [data, series, timeline, t, selected, sport, f]);
+  }, [data, series, timeline, t, selected, sport, f, outlook]);
   return (
     <Chart
       option={option}
@@ -361,6 +387,7 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
   const [selected, setSelected] = useState<string | null>(null);
   const curves = useApi<CurvesResponse>(data?.series.length ? `/estimates/curves${qs({ sport, n: data.series.length, last: data.series[data.series.length - 1].date })}` : null, { staleTime: 5 * 60_000 });
   const prefs = useApi<Preferences>('/preferences');
+  const outlook = usePlanOutlook();
   const setAuto = useAction((v: boolean) => http('/preferences', { method: 'PUT', json: { autoThresholds: { ...prefs.data!.autoThresholds, [sport]: v } } }));
   const f = fmt(sport);
   const today = iso(new Date());
@@ -441,8 +468,8 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
             </div>
           </div>
 
-          <Card title="History" subtitle="Applied value (used for zones and TSS on that date), the raw fit for each day's window, and your manual setting. Breaks of 3+ months without activities are collapsed. Click anywhere, or use the timeline below, to inspect an estimate.">
-            <HistoryChart sport={sport} data={data} series={series} timeline={timeline} selected={sel} onSelect={setSelected} />
+          <Card title="History" subtitle={`Applied value (used for zones and TSS on that date), the raw fit for each day's window, and your manual setting.${sport === 'ride' && outlook.data?.ftp.app?.path.length ? ' Dashed: where this app’s capacity model takes it, riding the rides planned.' : ''}${sport === 'ride' && outlook.data?.ftp.trainerRoad ? ' TrainerRoad’s own FTP is drawn beside it, for comparison only: it never sets this app’s.' : ''} Breaks of 3+ months without activities are collapsed. Click anywhere, or use the timeline below, to inspect an estimate.`}>
+            <HistoryChart sport={sport} data={data} series={series} timeline={timeline} selected={sel} onSelect={setSelected} outlook={outlook.data} />
           </Card>
 
           {e && <Scrubber series={series} index={index} onIndex={setIndex} timeline={timeline} />}

@@ -12,6 +12,7 @@ import { exportWorkout } from '../lib/download';
 import { Badge, Button, Field, Input, Modal, PageHeader, Segmented, Select, SportIcon, Spinner, Tabs } from '../components/ui';
 import { MiniProfile, WorkoutProfile, formColor } from '../components/charts';
 import { formZone } from '../../shared/analytics/pmc';
+import { TrChip, usePlanOutlook } from '../components/plan';
 
 interface CalendarData {
   activities: Activity[];
@@ -249,6 +250,7 @@ export function Calendar() {
   const gridStart = startOfWeek(month, { weekStartsOn: 1 });
   const gridEnd = addDays(startOfWeek(endOfMonth(month), { weekStartsOn: 1 }), 6);
   const { data, isLoading } = useApi<CalendarData>(`/calendar${qs({ from: iso(gridStart), to: iso(gridEnd) })}`, { placeholderData: (p) => p });
+  const trPhases = usePlanOutlook().data?.plan?.phases ?? [];
   const templates = useApi<WorkoutTemplate[]>('/templates');
   const th = useApi<{ current: Thresholds }>('/thresholds');
   const move = useAction(({ id, date }: { id: number; date: string }) => http(`/planned/${id}`, { method: 'PATCH', json: { date } }));
@@ -331,7 +333,9 @@ export function Calendar() {
                   });
                 });
                 const endPmc = pmcByDay.get(we <= today ? we : today >= ws ? today : we);
-                const target = planWeek?.tss ?? (pTss || null);
+                // the plan followed sets the week's target: its workouts' load, else the season plan's
+                const target = pTss || planWeek?.tss || null;
+                const trPhase = trPhases.find((p) => p.start && p.end && p.start <= we && p.end >= ws)?.name ?? null;
                 return (
                   <div key={ws} className="contents">
                     {week.map((d) => {
@@ -411,12 +415,17 @@ export function Calendar() {
                       );
                     })}
                     <div className="border-b border-line bg-surface-2/50 p-2.5 text-[11px]">
-                      {planWeek && (
+                      {trPhase ? (
+                        <div className="mb-1.5 flex items-center gap-1.5" title="TrainerRoad’s phase this week">
+                          <TrChip />
+                          <Badge>{trPhase}</Badge>
+                        </div>
+                      ) : planWeek && !pTss ? (
                         <div className="mb-1.5 flex items-center justify-between">
                           <Badge>{planWeek.phase}</Badge>
                           <span className="text-muted">target {planWeek.tss}</span>
                         </div>
-                      )}
+                      ) : null}
                       <div className="flex justify-between">
                         <span className="text-muted">TSS</span>
                         <span className="tnum font-semibold">

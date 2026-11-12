@@ -97,7 +97,8 @@ function aiFtp() {
 const PHASE_TYPES = ['Base', 'Base', 'Build', 'Specialty'];
 const VOLUMES = ['Low', 'Mid', 'High'];
 
-function plan() {
+/** TrainerRoad's plan: its name, volume, the phase under way, and its phases of the last three months and to come. */
+export function trainerRoadPlan() {
   const t = today();
   const p = stored('plan');
   const raw = Array.isArray(p?.phases) && p.phases.length ? p.phases : stored('plan-phases');
@@ -241,7 +242,7 @@ export function trainerRoadInsights() {
     ai: aiFtp(),
     levels: progressionLevels(levelsRaw, stored('ai-ftp')?.additionalData?.detection),
     levelsAt: dateOf(levelsRaw?.timestamp),
-    plan: plan(),
+    plan: trainerRoadPlan(),
     rides,
   };
 }

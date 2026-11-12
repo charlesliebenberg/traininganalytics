@@ -159,6 +159,33 @@ export function capacityChange(to: string, plannedLoad: (date: string) => number
   return { ratio: ratio(m), range: [Math.min(...all), Math.max(...all)], tau: m.tau };
 }
 
+/**
+ * The capacity model's 20-minute power day by day to `to`, riding the load planned until then:
+ * each day's as a share of today's, by the best model and the range of the plausible ones (each
+ * against its own today). Null as for capacityChange.
+ */
+export function capacityPath(to: string, plannedLoad: (date: string) => number): { date: string; ratio: number; range: [number, number] }[] | null {
+  const h = history();
+  const m = h.model;
+  if (!m || !h.days.length || !informative(m)) return null;
+  const last = h.days[h.days.length - 1].date;
+  const n = differenceInCalendarDays(parseISO(to), parseISO(last));
+  if (n <= 0) return [];
+  const dates = Array.from({ length: n }, (_, k) => iso(addDays(parseISO(last), k + 1)));
+  const loads = dates.map(plannedLoad);
+  const path = (f: { a: number; b: number; tau: number }) => {
+    const ltl0 = h.ltl(f.tau)[h.days.length - 1];
+    const now = capacityAt(f, ltl0);
+    return projectCapacity(f, f.tau, ltl0, loads).map((c) => c / now);
+  };
+  const best = path(m);
+  const all = m.fits.filter((f) => f.plausible).map(path);
+  return dates.map((date, i) => {
+    const xs = all.map((p) => p[i]);
+    return { date, ratio: best[i], range: (xs.length ? [Math.min(...xs), Math.max(...xs)] : [best[i], best[i]]) as [number, number] };
+  });
+}
+
 /** Index of a date in the history (clamped), and the LTL carried into it. */
 function dayIndex(h: History, date: string): number {
   if (!h.days.length) return -1;

@@ -333,7 +333,8 @@ async function readAccount(from: string, to: string): Promise<ExternalPlan> {
     const lib = wid != null ? library.get(String(wid)) : undefined;
     const name = d.workout?.name ?? p.workout?.name ?? lib?.name ?? d.name ?? p.name ?? null;
     // not a workout: its own kind (TrainerRoad's activity types: 1 ride, 2 run, 3 swim), else its name's
-    const sport: Sport = wid != null ? sportOf(name ?? '') : (ACTIVITY_SPORT[num(d.activityType ?? p.activityType) ?? -1] ?? (name ? sportOf(name, 'other') : 'other'));
+    // (the timeline calls it `type`)
+    const sport: Sport = wid != null ? sportOf(name ?? '') : (ACTIVITY_SPORT[num(d.activityType ?? p.activityType ?? p.type) ?? -1] ?? (name ? sportOf(name, 'other') : 'other'));
     const title = String(name ?? SPORT_TITLE[sport]);
     const minutes = num(d.workout?.duration) ?? lib?.minutes ?? null;
     const seconds = minutes != null ? minutes * 60 : num(d.durationInSeconds ?? p.durationInSeconds);

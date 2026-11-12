@@ -3,6 +3,7 @@ import { addDays, differenceInCalendarDays, parseISO, startOfWeek } from 'date-f
 import type { PmcPoint, RaceEvent } from '../../shared/types';
 import { monotonyStrain, formZone, dailyTssForCtl, acwr } from '../../shared/analytics/pmc';
 import { qs, useApi } from '../lib/api';
+import { PlanWeeksChart, TrChip, UnplannedNote, complianceText, usePlanOutlook, type PlanOutlook } from '../components/plan';
 import { useRange, resolvePreset } from '../lib/range';
 import { useTokens, alpha } from '../lib/theme';
 import { fmtDate, fmtNum, iso, SPORT_LABEL } from '../lib/format';
@@ -214,6 +215,7 @@ export function Fitness() {
   const current = points?.filter((p) => p.date <= todayStr).pop();
   const zone = current ? formZone(current.tsb, current.ctl) : null;
   const ms = useMemo(() => (points ? monotonyStrain(points.filter((p) => !p.projected).map((p) => p.tss)).pop() : null), [points]);
+  const outlook = usePlanOutlook();
   const visibleEvents = (events.data ?? []).filter((e) => points?.length && e.date >= points[0].date && e.date <= points[points.length - 1].date);
 
   return (
@@ -256,8 +258,9 @@ export function Fitness() {
         }${points && gapsInDaily(points.filter((p) => !p.projected), (p) => p.tss === 0).length ? ' · breaks of 3+ months are squeezed' : ''}`}
         actions={<FormLegend />}
       >
-        {isLoading || !points ? <Spinner /> : <PmcChart points={points} events={visibleEvents} height={520} />}
+        {isLoading || !points ? <Spinner /> : <PmcChart points={points} events={visibleEvents} phases={projection ? outlook.data?.plan?.phases : undefined} height={520} />}
       </Card>
+      {projection && !sport && outlook.data?.source && outlook.data.weeks.length > 0 && <PlanAheadCard o={outlook.data} />}
       <AerobicFitnessCard />
       <RecoveryCard from={localRange.from} to={localRange.to < todayStr ? localRange.to : todayStr} />
       <div className="mt-4 grid gap-4 xl:grid-cols-3">
@@ -273,5 +276,38 @@ export function Fitness() {
         <LoadCalendar />
       </Card>
     </div>
+  );
+}
+
+/** The planned load week by week — gone by and to come — and where it leaves fitness and form for the goal race. */
+function PlanAheadCard({ o }: { o: PlanOutlook }) {
+  const t = useTokens();
+  const rd = o.raceDay;
+  const weeks = o.weeks.filter((w) => w.when !== 'past' || w.planned.n > 0);
+  return (
+    <Card
+      className="mt-4"
+      title="The plan, week by week"
+      subtitle={
+        <span className="inline-flex flex-wrap items-center gap-1.5">
+          {o.source === 'trainerroad' && <TrChip />}
+          {o.source === 'trainerroad' ? `${o.plan?.name ?? 'TrainerRoad'}: the load it plans, and what you rode against it. The dashed lines above project it.` : 'The load planned in your calendar, and what you rode against it. The dashed lines above project it.'}
+        </span>
+      }
+    >
+      <div className="grid gap-4 lg:grid-cols-[1fr_260px]">
+        <PlanWeeksChart weeks={weeks} height={190} />
+        <div className="space-y-3">
+          {rd && o.race && (
+            <div className="grid grid-cols-2 gap-3 rounded-lg bg-surface-2 p-3">
+              <Stat label={`${o.race.name} · CTL`} accent={t.ctl} value={fmtNum(rd.ctl, 0)} sub={rd.ctlNow != null ? `${rd.ctl - rd.ctlNow >= 0 ? '+' : ''}${fmtNum(rd.ctl - rd.ctlNow, 0)} on today` : undefined} />
+              <Stat label="Race-day TSB" accent={formColor(t, rd.form.id)} value={fmtNum(rd.tsb, 0)} sub={rd.form.label} title={rd.form.hint} />
+            </div>
+          )}
+          <UnplannedNote o={o} />
+          {o.compliance && <p className="text-xs text-muted">Followed so far: {complianceText(o.compliance)}.</p>}
+        </div>
+      </div>
+    </Card>
   );
 }
