@@ -371,6 +371,9 @@ export function Workouts() {
               <Button icon={<Download className="h-4 w-4" />} onClick={() => exportWorkout('mrc', draft, ftp ?? 250)} disabled={draft.structure.target !== 'power'}>
                 MRC (.mrc, % FTP)
               </Button>
+              <Button icon={<Download className="h-4 w-4" />} onClick={() => exportWorkout('fit', draft, ftp ?? 250)}>
+                Garmin (.fit)
+              </Button>
               <Button icon={<Download className="h-4 w-4" />} onClick={() => exportWorkout('json', draft, ftp ?? 250)}>
                 JSON
               </Button>

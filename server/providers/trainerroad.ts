@@ -201,11 +201,19 @@ interface LibraryWorkout {
   unread?: { chart: string; details: string | null };
 }
 
-const WORKOUT_READ = 2;
+const WORKOUT_READ = 3;
 
 /** A workout's intervals: TrainerRoad's own points, or each interval's start, end and target. */
-export function workoutStructure(chart: Json, details: Json): WorkoutStructure | null {
-  const points = (xs: unknown) => (Array.isArray(xs) ? xs : []).map((p: Json) => ({ seconds: num(p?.seconds), ftpPercent: num(p?.ftpPercent ?? p?.memberFtpPercent) })).filter((p): p is ProfilePoint => p.seconds != null && p.ftpPercent != null);
+export function workoutStructure(chart: Json, details: Json, minutes: number | null = null): WorkoutStructure | null {
+  const points = (xs: unknown) => {
+    const raw = Array.isArray(xs) ? xs : [];
+    // its chart counts in ticks, not seconds: set against the workout's length when known
+    const last = Math.max(0, ...raw.map((p: Json) => num(p?.tick) ?? 0));
+    const perTick = minutes && last > 0 ? (minutes * 60) / (last + 1) : 1;
+    return raw
+      .map((p: Json) => ({ seconds: num(p?.seconds) ?? (num(p?.tick) != null ? Math.round(num(p.tick)! * perTick) : null), ftpPercent: num(p?.ftpPercent ?? p?.memberFtpPercent) }))
+      .filter((p): p is ProfilePoint => p.seconds != null && p.ftpPercent != null);
+  };
   const fromChart = structureFromProfile(points(chart?.courseData));
   if (fromChart) return fromChart;
   const w = details?.workout ?? details;
@@ -250,11 +258,11 @@ async function libraryWorkouts(ids: string[]): Promise<Map<string, LibraryWorkou
     if (charts) {
       try {
         const chart = await api(`/app/api/workouts/${encodeURIComponent(id)}/chart-data`, { headers: referer, orNull: true });
-        structure = workoutStructure(chart, null);
+        structure = workoutStructure(chart, null, num(s?.duration));
         if (!structure) {
           const details = await api(`/app/api/workoutdetails/${encodeURIComponent(id)}`, { headers: referer, orNull: true });
-          structure = workoutStructure(chart, details);
-          if (!structure) unread = { chart: JSON.stringify(chart ?? null).slice(0, 1500), details: details ? JSON.stringify(details).slice(0, 1500) : null };
+          structure = workoutStructure(chart, details, num(s?.duration));
+          if (!structure) unread = { chart: JSON.stringify(chart ?? null).slice(0, 4000), details: details ? JSON.stringify(details).slice(0, 4000) : null };
         }
       } catch (e) {
         read = charts = false;

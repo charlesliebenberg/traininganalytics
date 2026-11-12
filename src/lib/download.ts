@@ -1,8 +1,9 @@
 import type { Sport, WorkoutStructure } from '../../shared/types';
 import { toErg, toMrc, toZwo } from '../../shared/analytics/workout';
+import { toFitWorkout } from '../../shared/analytics/fit-workout';
 
-export function download(filename: string, text: string, type = 'text/plain') {
-  const blob = new Blob([text], { type });
+export function download(filename: string, data: string | Uint8Array<ArrayBuffer>, type = 'text/plain') {
+  const blob = new Blob([data], { type });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -13,10 +14,12 @@ export function download(filename: string, text: string, type = 'text/plain') {
 
 const safe = (s: string) => s.replace(/[^a-z0-9-_ ]/gi, '').trim().replace(/\s+/g, '_') || 'workout';
 
-export function exportWorkout(format: 'zwo' | 'erg' | 'mrc' | 'json', w: { name: string; description?: string | null; sport: Sport; structure: WorkoutStructure }, ftp: number) {
+export function exportWorkout(format: 'zwo' | 'erg' | 'mrc' | 'fit' | 'json', w: { name: string; description?: string | null; sport: Sport; structure: WorkoutStructure }, ftp: number) {
   const name = safe(w.name);
   if (format === 'zwo') download(`${name}.zwo`, toZwo(w.name, w.description ?? '', w.structure, w.sport), 'application/xml');
   else if (format === 'erg') download(`${name}.erg`, toErg(w.name, w.structure, ftp));
   else if (format === 'mrc') download(`${name}.mrc`, toMrc(w.name, w.structure));
+  // Garmin: copy to the device's GARMIN/NewFiles folder
+  else if (format === 'fit') download(`${name}.fit`, toFitWorkout(w.name, w.structure, w.sport) as Uint8Array<ArrayBuffer>, 'application/octet-stream');
   else download(`${name}.json`, JSON.stringify(w, null, 2), 'application/json');
 }
