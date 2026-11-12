@@ -39,7 +39,8 @@ const tr = {
   password: 'pw',
   token: 0,
   signIns: 0,
-  planned: [] as { id: number; date: string; workoutId: number | null; name?: string; activityType?: number; tss?: number }[],
+  planned: [] as { id: number; date: string; workoutId: number | null; name?: string; activityType?: number; tss?: number; openType?: number; seconds?: number }[],
+  blankPrediction: false,
   events: [] as Record<string, unknown>[],
   calls: [] as string[],
   ics: '',
@@ -63,7 +64,7 @@ const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
   if (url.pathname === '/app/api/member-info') return Response.json({ memberId: 4242, username: 'rider', ftp: 300 });
   if (url.pathname === '/app/api/react-calendar/4242/timeline')
     return Response.json({
-      plannedActivities: tr.planned.map((p) => ({ id: p.id, date: ymd(p.date), workoutId: p.workoutId, name: p.name ?? null, canMove: true, ...(p.activityType ? { type: p.activityType } : {}), ...(p.tss ? { tss: p.tss } : {}) })),
+      plannedActivities: tr.planned.map((p) => ({ id: p.id, date: ymd(p.date), workoutId: p.workoutId, name: p.name ?? null, canMove: true, ...(p.activityType ? { type: p.activityType } : {}), ...(p.tss ? { tss: p.tss } : {}), openType: p.openType ?? 0 })),
       events: tr.events,
       annotations: [],
       // FTP records as TrainerRoad gives them: in no order, and marked applied only when AI FTP's and
@@ -78,7 +79,7 @@ const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
         { id: 'd1', date: `${day(-20)}T00:00:00`, value: 300, isApplied: false, source: 3 },
         { id: 'x1', date: `${day(-30)}T13:00:00`, value: 299, isApplied: false, source: 22 },
         { id: 'd2', date: `${day(-2)}T00:00:00`, value: 306, isApplied: false, source: 24 },
-        { id: 'p1', date: `${day(21)}T13:00:00`, value: 315, isApplied: false, source: 22 },
+        { id: 'p1', date: `${day(21)}T13:00:00`, value: tr.blankPrediction ? 0 : 315, isApplied: false, source: 22 },
       ],
       pendingAiFtpChange: { id: 'd2', value: 306, source: 24, date: `${day(-2)}T00:00:00`, isApplied: false, isLowConfidence: false },
       // the ride three days ago and yesterday's run, as TrainerRoad recorded them (their starts without a zone)
@@ -121,7 +122,7 @@ const fakeFetch = async (input: string | URL | Request, init?: RequestInit) => {
     return Response.json(
       tr.planned
         .filter((p) => ids.includes(p.id))
-        .map((p) => ({ id: p.id, date: ymd(p.date), tss: p.workoutId ? w(p.workoutId).tss : 30, durationInSeconds: 1800, workout: p.workoutId ? { id: p.workoutId, name: w(p.workoutId).name, duration: w(p.workoutId).minutes, tss: w(p.workoutId).tss, isOutside: false } : null })),
+        .map((p) => ({ id: p.id, date: ymd(p.date), openType: p.openType ?? 0, tss: p.tss ?? (p.workoutId ? w(p.workoutId).tss : 30), durationInSeconds: p.seconds ?? 1800, workout: p.workoutId ? { id: p.workoutId, name: w(p.workoutId).name, duration: w(p.workoutId).minutes, tss: w(p.workoutId).tss, isOutside: false } : null })),
     );
   }
   if (url.pathname === '/app/api/workouts/by-id') {
@@ -298,24 +299,33 @@ describe('TrainerRoad', () => {
       { id: 9004, date: day(3), workoutId: 103 }, // moved a day
       { id: 9006, date: day(7), workoutId: 103 }, // added
       { id: 9008, date: day(6), workoutId: null, activityType: 2, tss: 18 }, // a run, not a workout
+      // a solo ride: no session, though TrainerRoad keeps the workout it would suggest on it
+      { id: 9009, date: day(5), workoutId: 101, openType: 2, tss: 130, seconds: 3 * 3600 },
       // 9002 (ridden) and 9005 gone
     ];
+    tr.blankPrediction = true;
     const asked = () => tr.calls.filter((c) => c.endsWith('/planned-activities')).length;
     const before2 = asked();
     const changes = await run();
-    expect(changes).toEqual({ added: 2, changed: 2, removed: 1 });
-    // TrainerRoad refused the lot for the run, so the workouts were asked for on their own
-    expect(asked() - before2).toBe(2);
+    expect(changes).toEqual({ added: 3, changed: 2, removed: 1 });
+    // TrainerRoad refused the lot for the run, so the batch was halved until the run was left out
+    expect(asked() - before2).toBeGreaterThan(1);
+    tr.blankPrediction = false;
+    // a prediction TrainerRoad blanked for the while is held at its last value
+    const th = JSON.parse(db.q.get("SELECT data FROM trainerroad_data WHERE key = 'fitness-thresholds'")!.data);
+    expect(th.fitnessThresholds.find((x: { id: string }) => x.id === 'p1')).toMatchObject({ value: 315 });
     const rows = planned();
     expect(rows.map((r) => [r.date, r.title, r.external_id])).toEqual([
       [day(-3), 'Pettit', '9002'],
       [day(0), 'Antelope', '9003'],
       [day(3), 'Gibbs', '9004'],
+      [day(5), 'Solo ride', '9009'],
       [day(6), 'Run', '9008'],
       [day(7), 'Gibbs', '9006'],
       [day(60), 'Grafton to Inverell', 'event-7001'],
     ]);
-    expect(rows[3]).toMatchObject({ sport: 'run', planned_tss: 18, planned_duration: null, structure: null });
+    expect(rows[3]).toMatchObject({ sport: 'ride', planned_tss: 130, planned_duration: 3 * 3600, structure: null });
+    expect(rows[4]).toMatchObject({ sport: 'run', planned_tss: 18, planned_duration: null, structure: null });
     // the same rows, changed in place
     expect(rows[1].id).toBe(before.get('9003')!.id);
     expect(rows[2].id).toBe(before.get('9004')!.id);
@@ -436,8 +446,8 @@ describe('TrainerRoad', () => {
       'END:VCALENDAR',
     ].join('\r\n');
     const changes = await run();
-    // the run isn't in the export: gone
-    expect(changes).toMatchObject({ added: 1, removed: 1 });
+    // the run and the solo ride aren't in the export: gone
+    expect(changes).toMatchObject({ added: 1, removed: 2 });
     expect(tr.calls).toEqual([]);
     const rows = planned();
     expect(rows.map((r) => [r.date, r.title, r.planned_duration])).toEqual([
