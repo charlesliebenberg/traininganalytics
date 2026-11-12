@@ -326,6 +326,13 @@ describe('TrainerRoad', () => {
     expect(tr.signIns).toBe(1);
   });
 
+  it('reads a chart that counts in ticks, as TrainerRoad’s live one does', () => {
+    // 10 min at 50%, 5 min at 110%, 5 min at 50%: one tick a second, over its 20 minutes
+    const courseData = Array.from({ length: 1200 }, (_, t) => ({ tick: t, memberFtpPercent: 162.5, ftpPercent: t >= 600 && t < 900 ? 110 : 50 }));
+    const s = trp.workoutStructure({ courseData }, null, 20)!;
+    expect(flatten(s).map((x) => [x.duration, x.low])).toEqual([[600, 0.5], [300, 1.1], [300, 0.5]]);
+  });
+
   it('signs in again when the session has run out', async () => {
     // the session held here is one TrainerRoad no longer knows
     db.q.run("UPDATE connections SET access_token = '{\"SharedTrainerRoadAuth\":\"stale\"}' WHERE provider = 'trainerroad'");

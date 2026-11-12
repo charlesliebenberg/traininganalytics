@@ -217,7 +217,7 @@ function PlannedModal({ p, activity, onClose, th }: { p: PlannedWorkout; activit
           </div>
           <p className="mt-2 text-xs text-ink-2">{describe(p.structure)}</p>
           <div className="mt-3 flex flex-wrap gap-2">
-            {(['zwo', 'erg', 'mrc'] as const).map((f) => (
+            {(['zwo', 'erg', 'mrc', 'fit'] as const).map((f) => (
               <Button key={f} size="sm" icon={<Download className="h-3.5 w-3.5" />} onClick={() => exportWorkout(f, { name: p.title, description: p.description, sport: p.sport, structure: p.structure! }, th?.ftp ?? 250)}>
                 .{f}
               </Button>
