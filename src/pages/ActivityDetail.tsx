@@ -193,7 +193,7 @@ export function ActivityDetail() {
             {!a.detailed && <Badge color={t.warning}>Summary only — streams pending</Badge>}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Select value={a.rpe ?? ''} onChange={(e) => update.mutate({ rpe: e.target.value ? Number(e.target.value) : null })} title="Rate of perceived exertion">
             <option value="">RPE –</option>
             {Array.from({ length: 10 }, (_, i) => (

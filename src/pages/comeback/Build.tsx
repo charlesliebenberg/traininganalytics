@@ -147,7 +147,7 @@ export function BuildSection({ peak, weeks, setWeeks }: { peak: PeakCard; weeks:
       {b.keySessions.length > 0 && (
         <div className="mt-4">
           <div className="mb-2 text-xs font-medium text-ink-2">Biggest sessions of the build</div>
-          <div className="grid gap-1.5 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
             {b.keySessions.map((k) => (
               <Link key={k.id} to={`/activities/${k.id}`} className="flex items-center gap-3 rounded-lg border border-line px-3 py-2 text-[13px] hover:bg-surface-2">
                 <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: sessionColor(t, k.type) }} />

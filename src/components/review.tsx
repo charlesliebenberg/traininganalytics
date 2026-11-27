@@ -1,14 +1,16 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { addDays, format, parseISO } from 'date-fns';
-import { AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, Minus } from 'lucide-react';
+import { AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, ClipboardCopy, Minus } from 'lucide-react';
 import clsx from 'clsx';
 import type { Review, ReviewActivity, ReviewNote, ReviewTitle } from '../../shared/analytics/review';
 import type { SessionType } from '../../shared/analytics/session';
 import { qs, useApi } from '../lib/api';
 import { alpha, useTokens } from '../lib/theme';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
-import { GROUP_LABEL, GROUP_OF, SESSION_GROUPS, TYPE_LABEL, TYPE_SHORT, groupColor, outText, setLabel, typeColor, type SessionGroup } from '../lib/session';
+import { GROUP_LABEL, GROUP_OF, SESSION_GROUPS, TYPE_LABEL, TYPE_SHORT, activityTitle, groupColor, outText, sessionBrief, setLabel, typeColor, type SessionGroup } from '../lib/session';
+import { toast } from '../lib/toast';
+import { surveyText, type SurveyAnswer } from './trainerroad';
 import { effortSentence } from './insights';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from './Chart';
 import { Button, Card, Segmented, Spinner, Stat } from './ui';
@@ -18,7 +20,7 @@ export interface DayActs {
   date: string;
   future: boolean;
   tss: number;
-  acts: { id: number; sport: string; name: string; type: SessionType | null; long: boolean; tss: number; moving: number }[];
+  acts: { id: number; sport: string; name: string; plannedTitle: string | null; type: SessionType | null; long: boolean; tss: number; moving: number; mainSet: { kind: 'reps' | 'ladder' | 'single'; reps: number; dur: number; out: number } | null; felt: SurveyAnswer | null }[];
 }
 export interface TrainingReviewData {
   from: string;
@@ -313,7 +315,70 @@ function periodText(d: TrainingReviewData) {
 }
 
 /** The training review: a week or a block against the athlete's normal, with what it showed. */
+/**
+ * The review as plain text, to paste into a message to a coach: the headline and figures, the
+ * signs of fitness and notes as the page words them, and (for a week) each day's sessions.
+ */
+function reviewText(d: TrainingReviewData, el: HTMLElement | null): string {
+  const r = d.review;
+  const s = r.stats;
+  const b = d.baseline;
+  const p1 = d.pmc[d.pmc.length - 1];
+  const per = (v: number, key: 'tss' | 'hours') => (d.weeks === 1 ? v : r.stats.perWeek[key]);
+  const out = [
+    `${TITLES[r.title][d.weeks === 1 ? 0 : 1]}, ${fmtDate(d.from, 'd MMM')} – ${fmtDate(d.to, 'd MMM yyyy')}${r.partial ? ' (so far)' : ''}`,
+    [
+      `${Math.round(per(s.tss, 'tss'))} TSS${d.weeks === 1 ? '' : ' a week'}${b ? ` (usual ${Math.round(b.tss)})` : ''}`,
+      `${per(s.hours, 'hours').toFixed(1)} h${b ? ` (usual ${b.hours.toFixed(1)})` : ''}`,
+      `${s.sessions} sessions, ${s.hard} hard, ${s.long} long`,
+      p1 ? `CTL ${Math.round(p1.ctl)}, form ${Math.round(p1.tsb) > 0 ? '+' : Math.round(p1.tsb) < 0 ? '−' : ''}${Math.abs(Math.round(p1.tsb))}` : null,
+    ]
+      .filter(Boolean)
+      .join(' · '),
+  ];
+  const section = (title: string, key: string) => {
+    const items = [...(el?.querySelectorAll(`[data-review="${key}"] li`) ?? [])].map((li) => `- ${li.textContent?.replace(/\s+/g, ' ').trim()}`);
+    if (items.length) out.push('', title, ...items);
+  };
+  section('Signs of fitness', 'signals');
+  section(d.weeks === 1 ? 'The week' : 'The block', 'notes');
+  if (d.weeks === 1) {
+    out.push('', 'Day by day');
+    for (const day of d.daily.filter((x) => !x.future))
+      out.push(
+        `${fmtDate(day.date, 'EEE d MMM')}: ${
+          day.acts.length
+            ? day.acts
+                .map((a) => {
+                  const brief = sessionBrief({ sport: a.sport, sessionType: a.type, sessionLong: a.long, mainSet: a.mainSet });
+                  return `${activityTitle(a)}${brief ? ` (${brief})` : ''}, ${fmtDuration(a.moving, { short: true })}, ${a.tss} TSS${a.felt ? `, felt ${surveyText(a.felt)}` : ''}`;
+                })
+                .join('; ')
+            : 'rest'
+        }`,
+      );
+  }
+  return out.join('\n');
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // no clipboard API (an http address other than localhost): the old way
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  }
+}
+
 export function ReviewCard() {
+  const body = useRef<HTMLDivElement>(null);
   const [weeks, setWeeks] = useState(1);
   const [anchor, setAnchor] = useState(() => format(new Date(), 'yyyy-MM-dd'));
   const { data, isLoading, error } = useApi<TrainingReviewData>(`/review${qs({ date: anchor, weeks })}`);
@@ -326,6 +391,17 @@ export function ReviewCard() {
       subtitle={data ? periodText(data) : 'How the training went, against your own normal'}
       actions={
         <>
+          {data && (
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={<ClipboardCopy className="h-3.5 w-3.5" />}
+              title="Copy this review as text, to send to a coach"
+              onClick={() => copyText(reviewText(data, body.current)).then(() => toast('Review copied: paste it into a message'))}
+            >
+              Copy
+            </Button>
+          )}
           <Segmented size="sm" value={weeks} onChange={setWeeks} options={SCOPES} />
           <div className="flex">
             <Button variant="ghost" size="sm" icon={<ChevronLeft className="h-4 w-4" />} onClick={() => step(-1)} title="Earlier" />
@@ -334,7 +410,15 @@ export function ReviewCard() {
         </>
       }
     >
-      {isLoading ? <Spinner /> : error || !data ? <p className="py-6 text-center text-xs text-muted">Nothing to review for this period.</p> : <ReviewBody d={data} />}
+      {isLoading ? (
+        <Spinner />
+      ) : error || !data ? (
+        <p className="py-6 text-center text-xs text-muted">Nothing to review for this period.</p>
+      ) : (
+        <div ref={body}>
+          <ReviewBody d={data} />
+        </div>
+      )}
     </Card>
   );
 }
@@ -361,11 +445,17 @@ function ReviewBody({ d }: { d: TrainingReviewData }) {
       <div className="mt-5 grid gap-6 lg:grid-cols-2">
         <div className="min-w-0">
           <div className="mb-2 text-[11px] font-medium tracking-wide text-muted uppercase">Signs of fitness</div>
-          {r.signals.length ? <NoteList notes={r.signals} r={r} weeks={d.weeks} limit={6} /> : <p className="text-[13px] text-ink-2">No new bests or clear changes {d.weeks === 1 ? 'this week' : 'in this block'} — most training builds quietly; the reviews of longer blocks show where it's heading.</p>}
+          {r.signals.length ? (
+            <div data-review="signals">
+              <NoteList notes={r.signals} r={r} weeks={d.weeks} limit={6} />
+            </div>
+          ) : <p className="text-[13px] text-ink-2">No new bests or clear changes {d.weeks === 1 ? 'this week' : 'in this block'} — most training builds quietly; the reviews of longer blocks show where it's heading.</p>}
         </div>
         <div className="min-w-0">
           <div className="mb-2 text-[11px] font-medium tracking-wide text-muted uppercase">{d.weeks === 1 ? 'The week' : 'The block'}</div>
-          <NoteList notes={r.notes} r={r} weeks={d.weeks} />
+          <div data-review="notes">
+            <NoteList notes={r.notes} r={r} weeks={d.weeks} />
+          </div>
         </div>
       </div>
       <div className="mt-5">{d.weeks === 1 ? <DayStrip daily={d.daily} /> : <WeekBars daily={d.daily} base={b?.tss ?? null} weeks={d.weeks} />}</div>

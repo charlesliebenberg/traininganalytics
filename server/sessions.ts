@@ -6,6 +6,7 @@ import { firstActivityDate, curvesInRange, iso, pmc, today } from './aggregate';
 import { getPreferences, q, thresholdsFor } from './db';
 import { storedSeries } from './estimates';
 import { aerobicChange, aerobicScores } from './aerobic';
+import { trainerRoadRide } from './trainerroad-insights';
 
 // ---------- main sets ----------
 const setCache: Record<string, { key: string; sets: SetSummary[] }> = {};
@@ -90,7 +91,8 @@ export function trainingReview(date: string, weeks: number) {
   const baseWeeks = first ? Math.min(bw, Math.floor(differenceInCalendarDays(parseISO(from), parseISO(first)) / 7)) : 0;
 
   const rows = q.all(
-    `SELECT id, local_date, sport, name, moving_time, COALESCE(tss_override, tss, 0) AS tss, zones, session, curves, best_efforts
+    `SELECT id, local_date, start_time, sport, name, moving_time, COALESCE(tss_override, tss, 0) AS tss, zones, session, curves, best_efforts,
+       (SELECT title FROM planned_workouts p WHERE p.id = activities.planned_id) AS planned_title
      FROM activities WHERE local_date BETWEEN ? AND ? ORDER BY start_time`,
     bFrom,
     end,
@@ -110,6 +112,8 @@ export function trainingReview(date: string, weeks: number) {
       main: !!s?.main,
       curves: r.curves as string | null,
       bestEfforts: r.best_efforts as string | null,
+      planned: (r.planned_title as string | null) ?? null,
+      start: r.start_time as string,
     };
   };
   const all = rows.map(parse);
@@ -165,10 +169,19 @@ export function trainingReview(date: string, weeks: number) {
     ftp: inPeriod.some((a) => a.sport === 'ride') ? [ftp0, ftp1] : null,
     longStreak,
   });
+  // the planned workout's name, the main set and how it felt (TrainerRoad's survey), so a day
+  // reads as what it was
+  const planned = new Map(inPeriod.map((a) => [a.id, a.planned]));
+  const felt = new Map(inPeriod.map((a) => [a.id, trainerRoadRide({ startTime: a.start })?.survey ?? null]));
   const daily = Array.from({ length: weeks * 7 }, (_, i) => {
     const d = iso(addDays(parseISO(from), i));
     const list = acts.filter((a) => a.date === d);
-    return { date: d, future: d > end, tss: list.reduce((s, a) => s + a.tss, 0), acts: list.map((a) => ({ id: a.id, sport: a.sport, name: a.name, type: a.type, long: a.long, tss: Math.round(a.tss), moving: a.moving })) };
+    return {
+      date: d,
+      future: d > end,
+      tss: list.reduce((s, a) => s + a.tss, 0),
+      acts: list.map((a) => ({ id: a.id, sport: a.sport, name: a.name, plannedTitle: planned.get(a.id) ?? null, type: a.type, long: a.long, tss: Math.round(a.tss), moving: a.moving, mainSet: a.set ? { kind: a.set.kind, reps: a.set.reps, dur: a.set.dur, out: a.set.out } : null, felt: felt.get(a.id) ?? null })),
+    };
   });
   const pmcDaily = p.slice(1).map((x) => ({ date: x.date, ctl: x.ctl, atl: x.atl, tsb: x.tsb }));
   return { from, to, end, weeks, days, review, daily, pmc: pmcDaily, baseline };

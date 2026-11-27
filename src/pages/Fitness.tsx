@@ -127,7 +127,9 @@ function LoadCalendar() {
 }
 
 function GoalCalculator({ current }: { current: PmcPoint | undefined }) {
-  const [target, setTarget] = useState(Math.round((current?.ctl ?? 40) + 15));
+  // 15 above today's fitness until you set your own (the PMC may still be loading on first render)
+  const [typed, setTarget] = useState<number | null>(null);
+  const target = typed ?? Math.round((current?.ctl ?? 40) + 15);
   const [date, setDate] = useState(iso(addDays(new Date(), 70)));
   const days = Math.max(1, differenceInCalendarDays(parseISO(date), new Date()));
   const ctl = current?.ctl ?? 0;
