@@ -76,7 +76,8 @@ export function PmcChart({ points, events = [], phases, height = 420, compact = 
     const evLines = events.map((e) => ({
       xAxis: ts(e.date),
       lineStyle: { color: e.priority === 'A' ? t.critical : e.priority === 'B' ? t.serious : t.muted, width: 1, type: 'solid' as const },
-      label: { formatter: `${e.priority} · ${e.name}`, color: t.ink2, fontSize: 10, position: 'insideEndTop' as const },
+      // along the line, cut to the fitness panel's height so it doesn't run down into form
+      label: { formatter: `${e.priority} · ${e.name}`, color: t.ink2, fontSize: 10, position: 'insideEndTop' as const, width: Math.max(40, h1 - 12), overflow: 'truncate' as const },
     }));
     const tsbData = points.map((p) => ({
       value: [ts(p.date), Math.round(p.tsb * 10) / 10],
@@ -244,7 +245,7 @@ export function CurveChart({
   yMin,
 }: {
   series: CurveSeries[];
-  height?: number;
+  height?: number | string;
   unit: string;
   format?: (v: number) => string;
   minDuration?: number;

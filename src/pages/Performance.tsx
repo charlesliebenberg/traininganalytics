@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { addDays, differenceInCalendarDays, parseISO, subDays, subYears } from 'date-fns';
+import { differenceInCalendarDays, parseISO, subDays, subYears } from 'date-fns';
 import type { Thresholds } from '../../shared/types';
 import { CURVE_DURATIONS } from '../../shared/analytics/series';
 import { FIXED_MAX, ompd, POWER_PROFILE, PROFILE_LEVELS, profileLevel, type PdModel } from '../../shared/analytics/models';
@@ -8,11 +8,11 @@ import { qs, useApi } from '../lib/api';
 import { resolvePreset, type DateRange } from '../lib/range';
 import { alpha, useTokens } from '../lib/theme';
 import { fmtDate, fmtDurLabel, fmtPaceSec, iso, paceSeconds, paceUnit } from '../lib/format';
-import { Card, PageHeader, Segmented, Select, Spinner, Stat, Toggle } from '../components/ui';
+import { Card, FillBox, PageHeader, Segmented, Select, Spinner, Stat, Toggle } from '../components/ui';
 import { RangePicker } from '../components/RangePicker';
 import { CurveChart, type CurveSeries } from '../components/charts';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
-import { BREAK_DAYS, breakNames, makeTimeline, type Gap } from '../lib/timeline';
+import { breakNames, makeTimeline, type Gap } from '../lib/timeline';
 import { Link, useNavigate } from 'react-router-dom';
 
 type Kind = 'power' | 'np' | 'hr' | 'speed' | 'vam';
@@ -112,7 +112,7 @@ function ProfileCard({ curve, weight, ftp }: { curve: Agg | undefined; weight: n
   }
   return (
     <Card title="Power profile" subtitle={`Coggan benchmarks in W/kg · ${weight} kg`} actions={<span className="text-xs text-ink-2">Profile: <b className="text-ink">{type}</b></span>}>
-      <div className="space-y-3">
+      <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
         {rows.map((r) => (
           <div key={r.label}>
             <div className="mb-1 flex items-baseline justify-between text-xs">
@@ -143,7 +143,7 @@ function DurabilityCard({ range, fresh }: { range: { from: string; to: string };
   const curves = [c1.data, c2.data, c3.data];
   if (!fresh) return null;
   const series: CurveSeries[] = [
-    { name: 'Fresh', color: t.series[0], durations: CURVE_DURATIONS, values: fresh.values, width: 2.5 },
+    { name: 'Fresh', color: t.series[0], durations: CURVE_DURATIONS, values: fresh.values, width: 2.5, area: true },
     ...levels.map((kj, i) => ({ name: `After ${kj / 1000}k kJ`, color: t.series[i + 1], durations: CURVE_DURATIONS, values: curves[i]?.values ?? [] })),
   ].filter((s) => s.values.some((v) => v != null));
   const at = (c: Agg | undefined, d: number) => c?.values[CURVE_DURATIONS.indexOf(d)] ?? null;
@@ -245,32 +245,33 @@ function PeaksTable({ kind }: { kind: Kind }) {
   );
 }
 
-type ModelPoint = { date: string; cp: number; wPrime: number; pmax: number | null; ftp: number };
+type ModelPoint = { date: string; cp: number; wPrime: number; pmax: number | null; ftp: number; gapBefore: boolean };
 
 function ModelHistory() {
   const t = useTokens();
   const today = iso(new Date());
-  const { data } = useApi<ModelPoint[]>(`/model/history${qs({ from: iso(subDays(new Date(), 364)), to: today })}`);
+  const q = useApi<{ points: ModelPoint[]; gaps: Gap[] }>(`/model/history${qs({ from: iso(subDays(new Date(), 364)), to: today })}`);
+  const data = q.data?.points;
   const option = useMemo(() => {
     if (!data?.length) return null;
-    // weeks without a model are weeks without riding: break the lines there, and squeeze
-    // breaks of 3+ months like every other time chart
-    const gaps: Gap[] = [];
-    for (let i = 1; i < data.length; i++) {
-      const days = differenceInCalendarDays(parseISO(data[i].date), parseISO(data[i - 1].date));
-      if (days >= BREAK_DAYS) gaps.push({ from: iso(addDays(parseISO(data[i - 1].date), 1)), to: iso(subDays(parseISO(data[i].date), 1)), days: days - 1 });
-    }
-    const tl = makeTimeline(gaps);
+    // a point holds until the next, so the lines step; they break only where there was no
+    // estimate at all, and breaks of 3+ months in riding are squeezed like every other time chart
+    const tl = makeTimeline(q.data?.gaps ?? []);
     const x = data.map((d) => tl.toX(parseISO(d.date).getTime()));
     const line = (v: (d: ModelPoint) => number | null) => {
       const out: (number | null)[][] = [];
       data.forEach((d, i) => {
-        if (i && differenceInCalendarDays(parseISO(d.date), parseISO(data[i - 1].date)) > 7) out.push([(x[i - 1] + x[i]) / 2, null]);
+        if (i && (d.gapBefore || tl.breakBetween(data[i - 1].date, d.date))) out.push([(x[i - 1] + x[i]) / 2, null]);
         out.push([x[i], v(d)]);
       });
+      // the last value holds to today
+      const last = data[data.length - 1];
+      const end = tl.toX(parseISO(today).getTime());
+      if (end > x[x.length - 1]) out.push([end, v(last)]);
       return out;
     };
     const byX = new Map(x.map((v, i) => [v, data[i]]));
+    const at = (v: number) => byX.get(v) ?? [...data].reverse().find((d) => tl.toX(parseISO(d.date).getTime()) <= v);
     const grids = [
       { left: 48, right: 12, top: 34, height: 150 },
       { left: 48, right: 12, top: 222, height: 70 },
@@ -285,12 +286,12 @@ function ModelHistory() {
         trigger: 'axis',
         ...tooltipStyle(t),
         formatter: (ps: any) => {
-          const d = byX.get(ps[0]?.value?.[0]);
+          const d = at(ps[0]?.value?.[0]);
           if (!d) return '';
           return `<b>From ${fmtDate(d.date)}</b><div style="opacity:.6;font-size:10px">6 months of best efforts, to that day</div>${tipRow(t.power, 'Critical power', `${d.cp} W`)}${tipRow(t.muted, 'FTP in use', `${d.ftp} W`)}${tipRow(t.series[2], "W′", `${(d.wPrime / 1000).toFixed(1)} kJ`)}${d.pmax ? tipRow(t.series[1], 'Pmax', `${d.pmax} W`) : ''}`;
         },
       },
-      xAxis: grids.map((_, i) => ({ type: 'value', gridIndex: i, min: x[0], max: x[x.length - 1], ...axisStyle(t, { grid: false }), axisLabel: { show: i === 2, color: t.muted, fontSize: 10, hideOverlap: true, formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), 'd MMM yy')) } })),
+      xAxis: grids.map((_, i) => ({ type: 'value', gridIndex: i, min: x[0], max: Math.max(x[x.length - 1], tl.toX(parseISO(today).getTime())), ...axisStyle(t, { grid: false }), axisLabel: { show: i === 2, color: t.muted, fontSize: 10, hideOverlap: true, formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), 'd MMM yy')) } })),
       yAxis: [
         valueAxis(t, { gridIndex: 0, min: (v: { min: number }) => Math.floor((v.min - 10) / 10) * 10, name: 'W', nameTextStyle: { color: t.muted, fontSize: 10 } }),
         valueAxis(t, { gridIndex: 1, name: "W′ kJ", min: (v: { min: number }) => Math.floor(v.min / 1000) * 1000, axisLabel: { color: t.muted, fontSize: 10, formatter: (v: number) => (v / 1000).toFixed(0) }, nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -36] } }),
@@ -323,7 +324,7 @@ function ModelHistory() {
         { type: 'line', name: 'Pmax', xAxisIndex: 2, yAxisIndex: 2, showSymbol: false, step: 'end', connectNulls: false, data: line((d) => d.pmax ?? null), lineStyle: { color: t.series[1], width: 1.5 }, itemStyle: { color: t.series[1] } },
       ],
     };
-  }, [data, t, today]);
+  }, [data, q.data?.gaps, t, today]);
   return (
     <Card title="Model history" subtitle="Your daily estimates over the last year — critical power, W′ and FTP, the same as on Thresholds — with sprint power (Pmax)">
       {option ? <Chart option={option} height={420} /> : <Spinner />}
@@ -380,6 +381,7 @@ export function Performance() {
       />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
         <Card
+          fill
           title={`${KIND_LABEL[kind]} curve`}
           subtitle={
             kind === 'np'
@@ -410,17 +412,19 @@ export function Performance() {
           {main.isLoading ? (
             <Spinner />
           ) : (
-            <CurveChart
-              series={series}
-              unit={unit}
-              format={format}
-              minDuration={minD}
-              height={440}
-              onPointClick={(si, di) => {
-                const id = series[si].meta?.ids?.[di];
-                if (id) nav(`/activities/${id}`);
-              }}
-            />
+            <FillBox min={400}>
+              <CurveChart
+                series={series}
+                unit={unit}
+                format={format}
+                minDuration={minD}
+                height="100%"
+                onPointClick={(si, di) => {
+                  const id = series[si].meta?.ids?.[di];
+                  if (id) nav(`/activities/${id}`);
+                }}
+              />
+            </FillBox>
           )}
         </Card>
         <div className="flex flex-col gap-4">
@@ -435,14 +439,18 @@ export function Performance() {
               </p>
             </Card>
           )}
-          {kind === 'power' && <ProfileCard curve={main.data} weight={weight} ftp={th.data?.current.ftp ?? null} />}
         </div>
       </div>
       {kind === 'power' && (
-        <div className="mt-4 grid gap-4 xl:grid-cols-2">
-          <DurabilityCard range={range} fresh={main.data} />
-          <ModelHistory />
-        </div>
+        <>
+          <div className="mt-4">
+            <ProfileCard curve={main.data} weight={weight} ftp={th.data?.current.ftp ?? null} />
+          </div>
+          <div className="mt-4 grid gap-4 xl:grid-cols-2">
+            <DurabilityCard range={range} fresh={main.data} />
+            <ModelHistory />
+          </div>
+        </>
       )}
       <div className="mt-4">
         <PeaksTable kind={kind} />
