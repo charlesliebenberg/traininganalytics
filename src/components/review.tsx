@@ -460,8 +460,8 @@ export function WeekCard() {
       title="This week"
       subtitle={`${fmtDate(data.from, 'd MMM')} – ${fmtDate(data.to, 'd MMM')}`}
       actions={
-        <button onClick={() => nav('/trends')} className="text-xs text-accent hover:underline">
-          Review →
+        <button onClick={() => nav(`/journal?week=${data.from}`)} className="text-xs text-accent hover:underline">
+          Journal →
         </button>
       }
     >

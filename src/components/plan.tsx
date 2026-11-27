@@ -199,6 +199,9 @@ export function UnplannedNote({ o }: { o: PlanOutlook }) {
               against CTL {Math.round(rd.ctl)}, {signedForm(rd.tsb)} ({rd.form.label.toLowerCase()}) if they stay empty
             </span>
           </div>
+          <Link to="/forecast?s=filled" className="mt-2 inline-flex items-center gap-1 text-accent hover:underline">
+            Compare paths in the forecast <ArrowRight className="h-3 w-3" />
+          </Link>
         </div>
       )}
     </div>
@@ -231,8 +234,8 @@ export function PlanCard({ o, ctlNow }: { o: PlanOutlook; ctlNow: number | null 
         )
       }
       actions={
-        <Link to="/calendar" className="flex items-center gap-1 text-xs text-accent hover:underline">
-          Calendar <ArrowRight className="h-3 w-3" />
+        <Link to="/forecast" className="flex items-center gap-1 text-xs text-accent hover:underline">
+          Forecast <ArrowRight className="h-3 w-3" />
         </Link>
       }
     >

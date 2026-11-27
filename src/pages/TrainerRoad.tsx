@@ -136,7 +136,15 @@ function FtpCard({ f, ai, outlook }: { f: NonNullable<Insights['ftp']>; ai: Insi
     </tr>
   );
   return (
-    <Card title="FTP: TrainerRoad’s and this app’s" subtitle="TrainerRoad’s FTP as you, a test or AI FTP Detection set it, what AI FTP Detection found and predicts, against this app’s own daily estimate from your power (Thresholds)">
+    <Card
+      title="FTP: TrainerRoad’s and this app’s"
+      subtitle="TrainerRoad’s FTP as you, a test or AI FTP Detection set it, what AI FTP Detection found and predicts, against this app’s own daily estimate from your power (Thresholds)"
+      actions={
+        <Link to="/forecast" className="flex items-center gap-1 text-xs text-accent hover:underline">
+          Race-day forecast <ArrowRight className="h-3 w-3" />
+        </Link>
+      }
+    >
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="TrainerRoad" value={f.trainerRoad ?? '–'} unit="W" sub="in use there" />
         {ai?.detected != null || !f.forecasts.length ? (

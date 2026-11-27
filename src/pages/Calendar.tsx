@@ -618,6 +618,11 @@ export function Calendar() {
                       })}
                       <div className="border-b border-line bg-surface-2/50 p-2.5 text-[11px]">
                         <WeekSummary w={w} />
+                        {!w.future && (
+                          <Link to={`/journal?week=${w.start}`} className="mt-1.5 inline-block text-accent hover:underline">
+                            Review →
+                          </Link>
+                        )}
                       </div>
                     </div>
                   );

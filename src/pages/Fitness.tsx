@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ArrowRight } from 'lucide-react';
 import { addDays, differenceInCalendarDays, parseISO, startOfWeek } from 'date-fns';
 import type { PmcPoint, RaceEvent } from '../../shared/types';
 import { monotonyStrain, formZone, dailyTssForCtl, acwr } from '../../shared/analytics/pmc';
@@ -258,7 +260,14 @@ export function Fitness() {
               : ' · dashed = what happens if you rest: nothing is planned yet'
             : ''
         }${points && gapsInDaily(points.filter((p) => !p.projected), (p) => p.tss === 0).length ? ' · breaks of 3+ months are squeezed' : ''}`}
-        actions={<FormLegend />}
+        actions={
+          <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+            <FormLegend />
+            <Link to="/forecast" className="flex items-center gap-1 text-xs text-accent hover:underline">
+              Forecast race day <ArrowRight className="h-3 w-3" />
+            </Link>
+          </div>
+        }
       >
         {isLoading || !points ? <Spinner /> : <PmcChart points={points} events={visibleEvents} phases={projection ? outlook.data?.plan?.phases : undefined} height={520} />}
       </Card>

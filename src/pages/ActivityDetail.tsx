@@ -151,6 +151,10 @@ export function ActivityDetail() {
             </Link>
             <span>/</span>
             <span>{fmtDate(a.startTime, 'EEEE d MMMM yyyy · HH:mm')}</span>
+            <span>·</span>
+            <Link to={`/journal?week=${a.localDate}`} className="hover:text-ink" title="The week this was part of, in the journal">
+              Its week
+            </Link>
           </div>
           <div className="flex items-center gap-2.5">
             <SportIcon sport={a.sport} className="h-6 w-6" />
