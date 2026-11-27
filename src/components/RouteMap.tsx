@@ -6,12 +6,26 @@ export interface RouteMapHandle {
   setHover: (index: number | null) => void;
 }
 
-export function tileLayer(dark: boolean) {
-  return L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? 'dark_all' : 'light_all'}/{z}/{x}/{y}{r}.png`, {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    subdomains: 'abcd',
-    maxZoom: 19,
-  });
+const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas';
+const ESRI_ATTRIBUTION = 'Tiles &copy; <a href="https://www.esri.com">Esri</a> — Esri, HERE, Garmin, &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+
+/**
+ * The basemap under every route: a muted grey canvas (with place names on top) that keeps the
+ * routes the brightest thing on the map, in the theme's light or dark. Esri's Canvas tiles need
+ * no key. To use another provider, set VITE_MAP_TILES_LIGHT / VITE_MAP_TILES_DARK (Leaflet URL
+ * templates, e.g. with your own key) and VITE_MAP_ATTRIBUTION at build time.
+ */
+export function tileLayer(dark: boolean): L.Layer {
+  const env = import.meta.env;
+  const custom = dark ? env.VITE_MAP_TILES_DARK : env.VITE_MAP_TILES_LIGHT;
+  if (custom) return L.tileLayer(custom, { attribution: env.VITE_MAP_ATTRIBUTION ?? '', maxZoom: 19, detectRetina: true });
+  const name = dark ? 'Dark' : 'Light';
+  // the canvas has data to zoom 16; beyond that its tiles are scaled up
+  const opts = { maxZoom: 19, maxNativeZoom: 16 };
+  return L.layerGroup([
+    L.tileLayer(`${ESRI}/World_${name}_Gray_Base/MapServer/tile/{z}/{y}/{x}`, { ...opts, attribution: ESRI_ATTRIBUTION }),
+    L.tileLayer(`${ESRI}/World_${name}_Gray_Reference/MapServer/tile/{z}/{y}/{x}`, { ...opts, zIndex: 2 }),
+  ]);
 }
 
 /** Route map with a hover marker and a highlighted sub-range, driven imperatively for smooth hover sync. */
@@ -22,7 +36,7 @@ export const RouteMap = forwardRef<RouteMapHandle, { lat: (number | null)[]; lng
     const map = useRef<L.Map | null>(null);
     const marker = useRef<L.CircleMarker | null>(null);
     const hl = useRef<L.Polyline | null>(null);
-    const tiles = useRef<L.TileLayer | null>(null);
+    const tiles = useRef<L.Layer | null>(null);
 
     const pointAt = (i: number): L.LatLngExpression | null => {
       for (let k = i; k >= 0 && k > i - 30; k--) if (lat[k] != null && lng[k] != null) return [lat[k]!, lng[k]!];
@@ -59,7 +73,6 @@ export const RouteMap = forwardRef<RouteMapHandle, { lat: (number | null)[]; lng
       if (!m || !tiles.current) return;
       tiles.current.remove();
       tiles.current = tileLayer(t.dark).addTo(m);
-      tiles.current.bringToBack();
     }, [t.dark]);
 
     useEffect(() => {
