@@ -9,6 +9,7 @@ import { ALL_PAGES } from '../lib/nav';
 import { useTheme } from '../lib/theme';
 import { fmtDate, fmtDistance, fmtDuration } from '../lib/format';
 import { SportIcon } from './ui';
+import { activityTitle, sessionBrief } from '../lib/session';
 
 interface Item {
   id: string;
@@ -82,8 +83,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const activities: Item[] = (acts.data?.items ?? []).map((a) => ({
       id: `activity:${a.id}`,
       group: dq.length >= 2 ? 'Activities' : 'Recent activities',
-      label: a.name,
-      hint: `${fmtDate(a.localDate, 'EEE d MMM yyyy')} · ${fmtDuration(a.movingTime, { short: true })}${a.distance ? ` · ${fmtDistance(a.distance, 1, a.sport)}` : ''}`,
+      label: activityTitle(a),
+      hint: `${fmtDate(a.localDate, 'EEE d MMM yyyy')} · ${sessionBrief(a) ?? `${fmtDuration(a.movingTime, { short: true })}${a.distance ? ` · ${fmtDistance(a.distance, 1, a.sport)}` : ''}`}`,
       icon: <SportIcon sport={a.sport} />,
       run: go(`/activities/${a.id}`),
     }));

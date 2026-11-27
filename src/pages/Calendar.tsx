@@ -14,6 +14,7 @@ import { MiniProfile, WorkoutProfile, formColor } from '../components/charts';
 import { formZone } from '../../shared/analytics/pmc';
 import { TrChip, usePlanOutlook } from '../components/plan';
 import { isTyping } from '../lib/hooks';
+import { activityTitle, sessionBrief } from '../lib/session';
 
 interface CalendarData {
   activities: Activity[];
@@ -258,10 +259,16 @@ function DayItems({ e, actById, onOpen }: { e: DayEntry | undefined; actById: Ma
         const p = e.planned.find((pp) => pp.activityId === a.id);
         const c = p ? compliance(p, a) : null;
         return (
-          <Link key={a.id} to={`/activities/${a.id}`} className="block rounded-md border border-line bg-surface-2 px-1.5 py-1 hover:border-line-strong" style={{ borderLeft: `3px solid ${c ? c.color : `var(--sport-${a.sport})`}` }} title={c ? `${c.label}${c.ratio != null ? ` · ${Math.round(c.ratio * 100)}% of planned` : ''}` : 'Not planned'}>
+          <Link
+            key={a.id}
+            to={`/activities/${a.id}`}
+            className="block rounded-md border border-line bg-surface-2 px-1.5 py-1 hover:border-line-strong"
+            style={{ borderLeft: `3px solid ${c ? c.color : `var(--sport-${a.sport})`}` }}
+            title={[activityTitle(a) !== a.name ? a.name : null, sessionBrief(a), c ? `${c.label}${c.ratio != null ? ` · ${Math.round(c.ratio * 100)}% of planned` : ''}` : 'Not planned'].filter(Boolean).join('\n')}
+          >
             <div className="flex items-center gap-1">
               <SportIcon sport={a.sport} className="h-3 w-3" />
-              <span className="truncate text-[11px] font-medium">{a.name}</span>
+              <span className="truncate text-[11px] font-medium">{activityTitle(a)}</span>
             </div>
             <div className="tnum truncate text-[10px] text-muted">
               {fmtDuration(a.movingTime, { short: true })} · {fmtNum(a.tss)} TSS{a.distance ? ` · ${fmtDistance(a.distance, 0, a.sport)}` : ''}

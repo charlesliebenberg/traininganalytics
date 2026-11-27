@@ -243,7 +243,8 @@ api.get('/activities', (c) => {
   if (from) where.push('local_date >= ?') && params.push(from);
   if (to) where.push('local_date <= ?') && params.push(to);
   if (sport) where.push('sport = ?') && params.push(sport);
-  if (search) where.push('(name LIKE ? OR description LIKE ?)') && params.push(`%${search}%`, `%${search}%`);
+  // the planned workout's name too: a ride Strava called "Afternoon Ride" is found as "Septeret"
+  if (search) where.push('(name LIKE ? OR description LIKE ? OR planned_id IN (SELECT id FROM planned_workouts WHERE title LIKE ?))') && params.push(`%${search}%`, `%${search}%`, `%${search}%`);
   const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const order = `${SORTS[sort] ?? 'start_time'} ${dir === 'asc' ? 'ASC' : 'DESC'} NULLS LAST, start_time DESC`;
   const rows = q.all(`SELECT ${ACTIVITY_LIST_COLUMNS} FROM activities ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, Number(limit), Number(offset));

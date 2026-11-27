@@ -17,6 +17,7 @@ import { WeekCard } from '../components/review';
 import { InsightPanel, type ActivityInsights } from '../components/insights';
 import { LastNightCard } from '../components/sleep';
 import { PlanCard, usePlanOutlook } from '../components/plan';
+import { activityTitle, sessionBrief } from '../lib/session';
 import type { SleepRead } from '../../shared/analytics/sleep';
 
 interface DashboardData {
@@ -44,7 +45,7 @@ function LatestCard({ latest, activity }: { latest: NonNullable<DashboardData['l
   return (
     <Card
       title={`Your latest ${activity?.sport === 'run' ? 'run' : 'ride'}`}
-      subtitle={activity ? `${activity.name} · ${fmtDate(activity.localDate, 'EEE d MMM')}` : undefined}
+      subtitle={activity ? `${activityTitle(activity)} · ${fmtDate(activity.localDate, 'EEE d MMM')}` : undefined}
       actions={
         <Link to={`/activities/${latest.id}`} className="flex items-center gap-1 text-xs text-accent hover:underline">
           Analysis <ArrowRight className="h-3 w-3" />
@@ -202,9 +203,12 @@ export function Dashboard() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <SportIcon sport={a.sport} className="h-3.5 w-3.5" />
-                      <span className="truncate text-[13px] font-medium">{a.name}</span>
+                      <span className="truncate text-[13px] font-medium">{activityTitle(a)}</span>
                     </div>
-                    <div className="text-[11px] text-muted">{fmtDate(a.startTime, 'EEE d MMM · HH:mm')}</div>
+                    <div className="truncate text-[11px] text-muted">
+                      {fmtDate(a.startTime, 'EEE d MMM · HH:mm')}
+                      {sessionBrief(a) ? ` · ${sessionBrief(a)}` : ''}
+                    </div>
                   </div>
                   {/* fixed columns so rows line up; pace for runs, normalized power for rides */}
                   <div className="hidden grid-cols-[72px_80px_76px_44px] gap-4 text-right sm:grid">

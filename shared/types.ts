@@ -151,6 +151,10 @@ export interface Activity {
   /** its kind, and whether it was long for the sport (lists too) */
   sessionType?: SessionType | null;
   sessionLong?: boolean;
+  /** the main set, in brief: "4 × 5 min at 378 W" (lists too) */
+  mainSet?: { kind: 'reps' | 'ladder' | 'single'; reps: number; dur: number; out: number } | null;
+  /** the planned workout it was matched to, by name (lists too) */
+  plannedTitle?: string | null;
 }
 
 export interface ActivityDetail extends Activity {
