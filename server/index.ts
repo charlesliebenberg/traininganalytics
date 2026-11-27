@@ -34,9 +34,20 @@ app.all('/api/*', (c) => c.json({ error: 'Not found' }, 404));
 // When the frontend has been built (single-service deploys, `npm start` locally), serve it too.
 const dist = resolve(process.cwd(), 'dist');
 if (existsSync(dist)) {
+  // built files carry a content hash in their names, so they can be cached for good; the page
+  // itself is checked every time, so a deploy reaches open browsers on their next load
+  app.use('/assets/*', async (c, next) => {
+    await next();
+    if (c.res.ok) c.header('Cache-Control', 'public, max-age=31536000, immutable');
+  });
   app.use('/*', serveStatic({ root: './dist' }));
+  // a built file that isn't there (an old chunk, after a deploy) is missing, not the app's page
+  app.all('/assets/*', (c) => c.text('Not found', 404));
   const index = readFileSync(resolve(dist, 'index.html'), 'utf8');
-  app.get('*', (c) => c.html(index));
+  app.get('*', (c) => {
+    c.header('Cache-Control', 'no-cache');
+    return c.html(index);
+  });
 }
 
 serve({ fetch: app.fetch, port: config.port }, (info) => {
