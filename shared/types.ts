@@ -61,10 +61,14 @@ export interface Thresholds {
   /** kg */
   weight: number;
   /** Where ftp / runThresholdSpeed / swimCss came from for this date */
-  sources?: { ftp: ThresholdSource; run: ThresholdSource; swim: ThresholdSource; hr?: ThresholdSource };
+  sources?: { ftp: ThresholdSource; run: ThresholdSource; swim: ThresholdSource; hr?: ThresholdSource; weight?: WeightSource };
+  /** the day the weight in use was recorded: a settings entry, or a weigh-in elsewhere */
+  weightDate?: string;
 }
 
 export type ThresholdSource = 'auto' | 'manual' | 'default';
+/** A weight entered here, the default, or the latest weigh-in TrainerRoad has (when newer). */
+export type WeightSource = 'manual' | 'default' | 'trainerroad';
 
 export interface Lap {
   name: string;

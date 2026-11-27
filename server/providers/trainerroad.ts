@@ -16,7 +16,7 @@ import { addDays, format, subDays } from 'date-fns';
 import type { EventPriority, Sport, WorkoutStructure } from '../../shared/types';
 import { structureFromProfile, type ProfilePoint } from '../../shared/analytics/trainerroad';
 import { config, trainerRoadMode } from '../config';
-import { log, q } from '../db';
+import { invalidateWeighIns, log, q } from '../db';
 import { today } from '../aggregate';
 import { applyExternalPlan, type ExternalPlan, type ExternalRace, type ExternalWorkout, type PlanChanges } from '../external-plan';
 
@@ -381,8 +381,11 @@ async function readAccount(from: string, to: string): Promise<ExternalPlan> {
   return { from, to, workouts, races };
 }
 
-const keep = (key: string, data: unknown) =>
+const keep = (key: string, data: unknown) => {
   q.run("INSERT INTO trainerroad_data(key, data, fetched_at) VALUES(?, ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET data = excluded.data, fetched_at = excluded.fetched_at", key, JSON.stringify(data ?? null));
+  // a new weigh-in changes the weight every W/kg uses
+  if (key === 'weight') invalidateWeighIns();
+};
 
 /**
  * Everything else TrainerRoad keeps about the athlete, kept as it gives it (read by

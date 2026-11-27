@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { subDays } from 'date-fns';
 import { CheckCircle2, AlertTriangle, RefreshCw, Unplug, Webhook, Trash2, Sparkles, Calculator } from 'lucide-react';
 import type { Preferences, Thresholds } from '../../shared/types';
 import { HR_ZONES, PACE_ZONES, POWER_ZONES, zoneBounds } from '../../shared/analytics/zones';
@@ -324,8 +325,10 @@ function AthleteTab() {
   const [css, setCss] = useState('');
   useEffect(() => {
     if (data && !form) {
-      const { sources: _s, ...m } = data.manual;
-      setForm({ ...m, date: iso(new Date()) });
+      const { sources: _s, weightDate: _w, ...m } = data.manual;
+      // the weight in use, which may be a newer weigh-in than the last entry here: saving
+      // must not put an old weight back
+      setForm({ ...m, weight: data.current.weight, date: iso(new Date()) });
       setRunPace(paceToText(m.runThresholdSpeed, 1000));
       setCss(paceToText(m.swimCss, 100));
     }
@@ -349,7 +352,7 @@ function AthleteTab() {
           <Field label="W′ (J)" hint={autoHint(cur.wPrime !== data.manual.wPrime ? cur.sources?.ftp : undefined, `${(cur.wPrime / 1000).toFixed(1)} kJ`) ?? 'anaerobic capacity'}>
             <Input type="number" value={form.wPrime} onChange={num('wPrime')} />
           </Field>
-          <Field label="Weight (kg)">
+          <Field label="Weight (kg)" hint={cur.sources?.weight === 'trainerroad' && cur.weightDate ? <>TrainerRoad: <b className="text-ink-2">{cur.weight} kg</b> on {fmtDate(cur.weightDate, 'd MMM yyyy')}</> : cur.weightDate && cur.weightDate < iso(subDays(new Date(), 180)) ? `Set ${fmtDate(cur.weightDate, 'd MMM yyyy')}: still right? W/kg uses it` : undefined}>
             <Input type="number" step={0.1} value={form.weight} onChange={num('weight')} />
           </Field>
           <Field label="LTHR bike (bpm)" hint={autoHint(cur.sources?.hr, `${cur.lthr} bpm`)}>

@@ -292,6 +292,31 @@ export function estimateAt(sport: string, date: string, allowBackfill: boolean):
   return prev ?? (allowBackfill ? list[0] : null);
 }
 
+/**
+ * Weigh-ins recorded elsewhere — TrainerRoad's weight history — oldest first. Weight changes
+ * more often than thresholds are entered, so a newer weigh-in there wins over an older entry
+ * here (W/kg, the power profile and calories all use it).
+ */
+let weighIns: { date: string; kg: number }[] | null = null;
+export const invalidateWeighIns = () => (weighIns = null);
+function listWeighIns(): { date: string; kg: number }[] {
+  if (weighIns) return weighIns;
+  const out: { date: string; kg: number }[] = [];
+  try {
+    const row = q.get("SELECT data FROM trainerroad_data WHERE key = 'weight'");
+    const all = row ? JSON.parse(row.data as string) : null;
+    for (const w of Array.isArray(all) ? all : []) {
+      const v = Number(w?.value);
+      const date = typeof w?.date === 'string' ? w.date.slice(0, 10) : null;
+      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !(v > 0)) continue;
+      // TrainerRoad's units: 0 metric, 1 imperial
+      const kg = w.units === 1 ? v * 0.45359237 : v;
+      if (kg >= 30 && kg <= 200) out.push({ date, kg: Math.round(kg * 10) / 10 });
+    }
+  } catch {}
+  return (weighIns = out.sort((a, b) => a.date.localeCompare(b.date)));
+}
+
 export function manualThresholds(date: string): Thresholds | null {
   const all = listThresholds();
   if (!all.length) return null;
@@ -308,7 +333,15 @@ export function thresholdsFor(date: string): Thresholds {
   const manual = manualThresholds(date);
   const base: Thresholds = { ...(manual ?? DEFAULT_THRESHOLDS) };
   const src = manual ? 'manual' : 'default';
-  const sources: NonNullable<Thresholds['sources']> = { ftp: src, run: src, swim: src, hr: src };
+  const sources: NonNullable<Thresholds['sources']> = { ftp: src, run: src, swim: src, hr: src, weight: src };
+  if (manual?.date) base.weightDate = manual.date;
+  // the latest weigh-in on or before the day, if it's newer than the entry here
+  const weighIn = listWeighIns().filter((w) => w.date <= date).pop();
+  if (weighIn && (!manual?.date || weighIn.date > manual.date)) {
+    base.weight = weighIn.kg;
+    base.weightDate = weighIn.date;
+    sources.weight = 'trainerroad';
+  }
   const auto = getPreferences().autoThresholds;
   // if the athlete entered values themselves, use them before the first estimate exists
   const backfill = !manual;
