@@ -10,7 +10,7 @@ import { fillForRace, formZone } from '../shared/analytics/pmc';
 import type { PmcPoint } from '../shared/types';
 import { compareFtp, valueOn, type FtpPoint } from '../shared/analytics/trainerroad';
 import { getPreferences, q, rowToEvent } from './db';
-import { dailyLoads, pmc, today } from './aggregate';
+import { dailyLoads, planProjection, pmc, today } from './aggregate';
 import { storedSeries } from './estimates';
 import { capacityPath } from './comeback';
 import { trainerRoadFtp, trainerRoadPlan } from './trainerroad-insights';
@@ -153,7 +153,9 @@ export function planOutlook() {
   // ---------- stretches of four days or more with nothing planned, before the race ----------
   const unplanned: { from: string; to: string; days: number }[] = [];
   if (race && span?.last) {
+    // a day is planned if a workout is, or the season plan gives it a load (targets kept from the forecast)
     const busy = new Set(q.all<{ date: string }>('SELECT DISTINCT date FROM planned_workouts WHERE date > ? AND date < ?', t, race.date).map((r) => r.date));
+    for (const [d, load] of planProjection(race.date)) if (load > 0) busy.add(d);
     let run: string | null = null;
     for (let d = iso(addDays(parseISO(t), 1)); d <= race.date; d = iso(addDays(parseISO(d), 1))) {
       if (d < race.date && !busy.has(d)) run ??= d;

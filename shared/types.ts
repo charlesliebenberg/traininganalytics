@@ -328,6 +328,11 @@ export interface SeasonWeek {
   tsb: number;
   recovery: boolean;
   event: string | null;
+  /**
+   * The load day by day, from weekStart (a plan kept from the forecast): projections use each
+   * day's where nothing is scheduled that day, instead of spreading the week's total evenly.
+   */
+  days?: (number | null)[];
 }
 
 export interface SeasonPlan {

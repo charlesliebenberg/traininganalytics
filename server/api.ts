@@ -30,6 +30,8 @@ import { importFile } from './importers/files';
 import { clearDemo, isDemo, loadDemo } from './demo';
 import { syncNow, syncStatus } from './sync';
 import * as comeback from './comeback';
+import { forecast, saveScenario, type ForecastRequest } from './forecast';
+import { journal } from './journal';
 import { activityInsights, aerobicTrend, latestInsights } from './aerobic';
 import { keySets, trainingReview } from './sessions';
 import { topEfforts, type EffortMetric } from './efforts';
@@ -731,6 +733,20 @@ api.get('/trainerroad/status', (c) => c.json(trainerRoadStatus()));
 // its FTP (applied, AI FTP Detection, predicted) against this app's, its levels, plan and ride ratings
 api.get('/trainerroad/insights', (c) => c.json(trainerRoadInsights()));
 api.get('/plan/outlook', (c) => c.json(planOutlook()));
+/** Race-day forecast: the plan as it stands, its gaps filled, the best path, and a scenario of your own. */
+api.get('/forecast', (c) => c.json(forecast({ eventId: Number(c.req.query('event')) || null })));
+api.post('/forecast', async (c) => c.json(forecast((await c.req.json().catch(() => ({}))) as ForecastRequest)));
+api.post('/forecast/save', async (c) => {
+  const b = (await c.req.json().catch(() => ({}))) as Parameters<typeof saveScenario>[0];
+  if (!['planned', 'filled', 'best', 'custom'].includes(b.scenario)) return c.json({ error: 'Which scenario?' }, 400);
+  const saved = saveScenario(b);
+  return saved ? c.json(saved) : c.json({ error: 'Nothing to save: no forecast for this race' }, 400);
+});
+/** The training week by week, newest first: `before` a week to page back from. */
+api.get('/journal', (c) => {
+  const before = c.req.query('before');
+  return c.json(journal(before && /^\d{4}-\d{2}-\d{2}$/.test(before) ? before : null, Math.min(12, Math.max(1, Number(c.req.query('weeks')) || 6))));
+});
 api.post('/trainerroad/sync', (c) => {
   if (!trainerRoadMode()) return c.json({ error: 'TrainerRoad is not set up: set TRAINERROAD_USERNAME and TRAINERROAD_PASSWORD, or TRAINERROAD_CALENDAR_URL' }, 400);
   void syncTrainerRoad();

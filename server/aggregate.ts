@@ -137,10 +137,20 @@ export function planProjection(to: string): Map<string, number> {
   const row = q.get('SELECT weeks FROM season_plans ORDER BY id DESC LIMIT 1');
   if (!row) return out;
   const t = today();
-  const weeks = JSON.parse(row.weeks) as { weekStart: string; tss: number }[];
+  const weeks = JSON.parse(row.weeks) as { weekStart: string; tss: number; days?: (number | null)[] }[];
   for (const w of weeks) {
     const end = iso(addDays(parseISO(w.weekStart), 6));
     if (end <= t || w.weekStart > to) continue;
+    if (w.days) {
+      // a plan with its days (kept from the forecast): each day's load where nothing is scheduled
+      const busy = new Set(q.all('SELECT DISTINCT date FROM planned_workouts WHERE date BETWEEN ? AND ?', w.weekStart, end).map((r) => r.date as string));
+      for (let i = 0; i < 7; i++) {
+        const d = iso(addDays(parseISO(w.weekStart), i));
+        if (d > t && !busy.has(d) && w.days[i] != null) out.set(d, w.days[i]!);
+      }
+      continue;
+    }
+    // a week's total: spread evenly, and only over weeks with nothing scheduled
     const planned = q.get('SELECT COUNT(*) AS n FROM planned_workouts WHERE date BETWEEN ? AND ?', w.weekStart, end);
     if (Number(planned?.n) > 0) continue;
     for (let i = 0; i < 7; i++) {
