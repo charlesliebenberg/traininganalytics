@@ -263,8 +263,15 @@ export function InsightPanel({ insights, compact = false }: { insights: Activity
         {!compact && a && (
           <p className="mt-3 text-[11px] leading-relaxed text-muted">
             <Flame className="mr-1 inline h-3 w-3" />
-            Learned from your {a.model.activities} {noun(a.sport)}s: heat {a.model.heat.toFixed(1)} bpm per °C, fatigue {(a.model.fatigue * 10).toFixed(1)} bpm per 10 points of TSB
-            {a.model.indoor ? `, indoors ${signed(a.model.indoor)} bpm` : ''}. Day-to-day noise is about ±{a.model.dayNoise} bpm, so one {noun(a.sport)} is evidence, not proof.
+            Learned from your {a.model.activities} {noun(a.sport)}s:{' '}
+            {[
+              a.model.heat >= 0.05 ? `heat +${a.model.heat.toFixed(1)} bpm per °C` : 'no heat effect',
+              a.model.fatigue * 10 >= 0.05 ? `fatigue −${(a.model.fatigue * 10).toFixed(1)} bpm per 10 points of TSB` : 'no fatigue effect',
+              Math.abs(a.model.indoor) >= 0.5 ? `indoors ${signed(a.model.indoor)} bpm` : null,
+            ]
+              .filter(Boolean)
+              .join(', ')}
+            . Day-to-day noise is about ±{a.model.dayNoise} bpm, so one {noun(a.sport)} is evidence, not proof.
           </p>
         )}
       </div>
@@ -352,7 +359,7 @@ export function AerobicChart({ sport, points, highlight, height = 300, compact =
         splitNumber: compact ? 4 : 8,
         axisLabel: { color: t.muted, fontSize: 10, hideOverlap: true, formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), span > 200 * DAY ? "MMM ''yy" : 'd MMM')) },
       },
-      yAxis: valueAxis(t, { scale: true, axisLabel: { color: t.muted, fontSize: 10, formatter: axisFmt } }),
+      yAxis: valueAxis(t, { scale: true, minInterval: sport === 'ride' ? 1 : undefined, axisLabel: { color: t.muted, fontSize: 10, formatter: axisFmt } }),
       series: [
         // ±1 sd band: a transparent base plus the band's height, stacked
         { type: 'line', name: 'band-base', stack: 'band', silent: true, showSymbol: false, connectNulls: false, data: line((p) => p.lo), lineStyle: { opacity: 0 }, tooltip: { show: false } },

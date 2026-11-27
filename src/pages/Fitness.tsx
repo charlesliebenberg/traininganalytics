@@ -191,8 +191,8 @@ function AerobicFitnessCard() {
               sub={ch ? `±${Math.max(1, Math.round(ch.sdPct))}% · since ${fmtDate(ch.from, 'd MMM')}` : 'needs 3+ weeks of data'}
               title={ch ? `From ${outText(sport, ch.fromValue)} on ${fmtDate(ch.from, 'd MMM yyyy')}` : undefined}
             />
-            <Stat label="Heat" value={`${m.heat.toFixed(1)} bpm`} sub="more per °C, from you" title="How much each degree raises your heart rate at the same output, learned from your rides" />
-            <Stat label="Fatigue" value={`${(m.fatigue * 10).toFixed(1)} bpm`} sub="less per 10 TSB below 0" title={`How much carried fatigue holds your heart rate down, learned from your data${m.indoor && sport === 'ride' ? `; indoors your heart rate reads ${Math.abs(m.indoor).toFixed(0)} bpm ${m.indoor < 0 ? 'lower' : 'higher'}` : ''}`} />
+            <Stat label="Heat" value={m.heat >= 0.05 ? `+${m.heat.toFixed(1)} bpm` : 'No effect'} sub={m.heat >= 0.05 ? 'per °C warmer, learned from you' : 'found in your data yet'} title="How much each degree raises your heart rate at the same output, learned from your rides" />
+            <Stat label="Fatigue" value={m.fatigue * 10 >= 0.05 ? `−${(m.fatigue * 10).toFixed(1)} bpm` : 'No effect'} sub={m.fatigue * 10 >= 0.05 ? 'per 10 TSB below 0' : 'found in your data yet'} title={`How much carried fatigue holds your heart rate down, learned from your data${m.indoor && sport === 'ride' ? `; indoors your heart rate reads ${Math.abs(m.indoor).toFixed(0)} bpm ${m.indoor < 0 ? 'lower' : 'higher'}` : ''}`} />
           </div>
           <AerobicChart sport={sport} points={data.points} height={300} />
         </>
@@ -299,9 +299,14 @@ function PlanAheadCard({ o }: { o: PlanOutlook }) {
         <PlanWeeksChart weeks={weeks} height={190} />
         <div className="space-y-3">
           {rd && o.race && (
-            <div className="grid grid-cols-2 gap-3 rounded-lg bg-surface-2 p-3">
-              <Stat label={`${o.race.name} · CTL`} accent={t.ctl} value={fmtNum(rd.ctl, 0)} sub={rd.ctlNow != null ? `${rd.ctl - rd.ctlNow >= 0 ? '+' : ''}${fmtNum(rd.ctl - rd.ctlNow, 0)} on today` : undefined} />
-              <Stat label="Race-day TSB" accent={formColor(t, rd.form.id)} value={fmtNum(rd.tsb, 0)} sub={rd.form.label} title={rd.form.hint} />
+            <div className="rounded-lg bg-surface-2 p-3">
+              <div className="mb-2 truncate text-xs font-medium text-ink" title={o.race.name}>
+                {o.race.name} · {fmtDate(o.race.date, 'd MMM')}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Stat label="Race-day CTL" accent={t.ctl} value={fmtNum(rd.ctl, 0)} sub={rd.ctlNow != null ? `${rd.ctl - rd.ctlNow >= 0 ? '+' : ''}${fmtNum(rd.ctl - rd.ctlNow, 0)} on today` : undefined} />
+                <Stat label="Race-day TSB" accent={formColor(t, rd.form.id)} value={fmtNum(rd.tsb, 0)} sub={rd.form.label} title={rd.form.hint} />
+              </div>
             </div>
           )}
           <UnplannedNote o={o} />

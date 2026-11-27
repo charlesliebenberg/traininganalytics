@@ -42,6 +42,13 @@ Requires Node.js ≥ 22.13. SQLite is built in (`node:sqlite`), so there is noth
 | **Workout Builder** | Structured steps, repeats and ramps with power (% FTP), pace (% threshold) or HR (% LTHR) targets and cadence · live profile and TSS / IF / kJ / time-in-zone · save to library · schedule · export **Zwift .zwo**, **.erg**, **.mrc**, JSON · 21 built-in workouts (sweet spot, threshold, over-unders, VO2max, 30/30s, anaerobic, sprints, FTP & ramp tests, run sessions) |
 | **Season Planner** | Annual-training-plan style periodisation working back from your A race (Prep → Base → Build → Peak → Taper → Race) with 2:1 / 3:1 / 4:1 loading, a max ramp rate, weekly-hours cap and a taper · live preview of weekly TSS and the CTL/ATL/TSB it produces · **"Fill calendar"** generates phase-appropriate structured workouts sized to each week's TSS · the active plan drives calendar targets and long-range PMC projection · A/B/C event management |
 
+### Getting around
+
+- **Search: ⌘K / Ctrl+K** (or **/**) from any page jumps to a page, finds an activity by name or note, and runs common actions (sync, import, new workout, theme).
+- **← / →** step to the previous or next activity on an activity, and page through months on the calendar.
+- Lists keep their place: the activity list's search, sport and sort live in the URL, the calendar's month too, and Back returns you to where you were scrolled.
+- On a phone, activities become a compact list and the calendar becomes a week-by-week agenda.
+
 ---
 
 ## Data sources
@@ -190,6 +197,8 @@ Per-activity metrics, mean-max curves (power, NP, HR, speed, VAM, fatigue-state 
 | `DATA_DIR` | `./data` | Where `training.db` lives |
 | `APP_PASSWORD` | | Password-protects the app (login screen). Set it for any public deployment |
 | `API_URL`, `CORS_ORIGINS` | | Only for a frontend calling the API cross-origin without a proxy |
+| `VITE_MAP_TILES_LIGHT`, `VITE_MAP_TILES_DARK` | Esri grey canvas | Build time: Leaflet tile URL templates for the maps in each theme, e.g. a provider you have a key for. The default needs no key |
+| `VITE_MAP_ATTRIBUTION` | | Build time: the attribution your tile provider requires |
 
 ## Testing against real data
 

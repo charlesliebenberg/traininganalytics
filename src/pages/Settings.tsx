@@ -5,7 +5,7 @@ import type { Preferences, Thresholds } from '../../shared/types';
 import { HR_ZONES, PACE_ZONES, POWER_ZONES, zoneBounds } from '../../shared/analytics/zones';
 import { apiUrl, http, useAction, useApi } from '../lib/api';
 import { fmtDate, fmtPaceSec, iso } from '../lib/format';
-import { Badge, Button, Card, Field, Input, PageHeader, Segmented, Select, Tabs } from '../components/ui';
+import { Badge, Button, Card, Field, Input, PageHeader, Segmented, Select, Tabs, buttonClass } from '../components/ui';
 import { ImportDropzone } from '../components/Import';
 import { useStatus } from '../components/Layout';
 
@@ -22,9 +22,9 @@ function StravaCard() {
   const provider = 'strava';
   const { data: status } = useStatus();
   const c = status?.connections.find((x) => x.provider === provider);
-  const sync = useAction(() => http('/sync', { method: 'POST' }));
-  const disconnect = useAction(() => http(`/auth/${provider}/disconnect`, { method: 'POST' }));
-  const webhook = useAction(() => http('/webhooks/strava/subscribe', { method: 'POST' }));
+  const sync = useAction(() => http('/sync', { method: 'POST' }), { success: 'Sync started' });
+  const disconnect = useAction(() => http(`/auth/${provider}/disconnect`, { method: 'POST' }), { success: 'Strava disconnected' });
+  const webhook = useAction(() => http('/webhooks/strava/subscribe', { method: 'POST' }), { quietErrors: true, success: 'Webhook enabled: new activities arrive as soon as Strava has them' });
   const name = 'Strava';
   const brand = '#fc4c02';
   if (!c) return null;
@@ -86,10 +86,8 @@ function StravaCard() {
           <p className="mb-3 text-xs text-ink-2">
             Authorise read access to your activities. History is backfilled newest-first within Strava’s rate limits (≈200 activities/hour), then new activities sync automatically.
           </p>
-          <a href={apiUrl(`/auth/${provider}/start`)}>
-            <Button variant="primary" style={{ background: brand }}>
-              Connect {name}
-            </Button>
+          <a href={apiUrl(`/auth/${provider}/start`)} className={buttonClass('primary')} style={{ background: brand }}>
+            Connect {name}
           </a>
         </>
       ) : (
@@ -126,7 +124,7 @@ interface SleepStatus {
 
 function EightSleepCard() {
   const { data: s } = useApi<SleepStatus>('/sleep/status', { refetchInterval: (q) => (q.state.data?.syncing ? 3000 : 30000) });
-  const sync = useAction((full: boolean) => http('/sleep/sync', { method: 'POST', json: { full } }));
+  const sync = useAction((full: boolean) => http('/sleep/sync', { method: 'POST', json: { full } }), { quietErrors: true });
   if (!s) return null;
   const code = (x: string) => <code className="rounded bg-surface-3 px-1">{x}</code>;
   const badge = s.syncing ? <Badge>Syncing…</Badge> : !s.configured ? <Badge color="var(--warning)">Not configured</Badge> : s.lastError ? <Badge color="var(--warning)">Sync failed</Badge> : s.connected ? <Badge color="var(--good)">Connected</Badge> : <Badge>Not synced yet</Badge>;
@@ -214,7 +212,7 @@ interface TrainerRoadStatus {
 
 function TrainerRoadCard() {
   const { data: s } = useApi<TrainerRoadStatus>('/trainerroad/status', { refetchInterval: (q) => (q.state.data?.syncing ? 3000 : 60000) });
-  const sync = useAction(() => http('/trainerroad/sync', { method: 'POST' }));
+  const sync = useAction(() => http('/trainerroad/sync', { method: 'POST' }), { quietErrors: true });
   if (!s) return null;
   const code = (x: string) => <code className="rounded bg-surface-3 px-1">{x}</code>;
   const badge = s.syncing ? <Badge>Syncing…</Badge> : !s.mode ? <Badge color="var(--warning)">Not configured</Badge> : s.lastError ? <Badge color="var(--warning)">Sync failed</Badge> : s.lastSyncAt ? <Badge color="var(--good)">Connected</Badge> : <Badge>Not synced yet</Badge>;
@@ -332,9 +330,9 @@ function AthleteTab() {
       setCss(paceToText(m.swimCss, 100));
     }
   }, [data, form]);
-  const save = useAction(() => http('/thresholds', { method: 'PUT', json: { ...form, runThresholdSpeed: textToSpeed(runPace, 1000) ?? form!.runThresholdSpeed, swimCss: textToSpeed(css, 100) ?? form!.swimCss } }));
-  const del = useAction((date: string) => http(`/thresholds/${date}`, { method: 'DELETE' }));
-  const recalc = useAction(() => http('/recalculate', { method: 'POST', json: {} }));
+  const save = useAction(() => http('/thresholds', { method: 'PUT', json: { ...form, runThresholdSpeed: textToSpeed(runPace, 1000) ?? form!.runThresholdSpeed, swimCss: textToSpeed(css, 100) ?? form!.swimCss } }), { success: 'Thresholds saved' });
+  const del = useAction((date: string) => http(`/thresholds/${date}`, { method: 'DELETE' }), { success: 'Entry removed' });
+  const recalc = useAction(() => http('/recalculate', { method: 'POST', json: {} }), { success: 'Recalculating every activity…' });
   if (!form || !data) return null;
   const num = (k: keyof Thresholds) => (e: React.ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: Number(e.target.value) });
   const cur = data.current;
@@ -403,7 +401,7 @@ function AthleteTab() {
                   <td>{paceToText(h.runThresholdSpeed, 1000)}/km</td>
                   <td>{h.weight} kg</td>
                   <td className="text-right">
-                    <button onClick={() => del.mutate(h.date)} className="rounded p-1 text-muted hover:text-critical" aria-label="Delete">
+                    <button onClick={() => confirm(`Remove the thresholds set from ${fmtDate(h.date)}? Activities from then on use the entry before it once you recalculate.`) && del.mutate(h.date)} className="rounded p-1 text-muted hover:text-critical" aria-label={`Remove the entry from ${fmtDate(h.date)}`} title="Remove this entry">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </td>
@@ -448,7 +446,7 @@ function ZoneTable({ title, rows }: { title: string; rows: string[][] }) {
 
 function PreferencesTab() {
   const { data } = useApi<Preferences>('/preferences');
-  const save = useAction((p: Partial<Preferences>) => http('/preferences', { method: 'PUT', json: p }));
+  const save = useAction((p: Partial<Preferences>) => http('/preferences', { method: 'PUT', json: p }), { success: 'Preferences saved' });
   if (!data) return null;
   return (
     <Card title="Preferences" className="max-w-2xl">
@@ -481,9 +479,9 @@ function PreferencesTab() {
 
 function DataTab() {
   const { data: status } = useStatus();
-  const load = useAction(() => http('/demo', { method: 'POST' }));
-  const clear = useAction(() => http('/demo', { method: 'DELETE' }));
-  const recalc = useAction(() => http('/recalculate', { method: 'POST', json: {} }));
+  const load = useAction(() => http('/demo', { method: 'POST' }), { success: 'Generating the demo athlete…' });
+  const clear = useAction(() => http('/demo', { method: 'DELETE' }), { success: 'Demo data removed' });
+  const recalc = useAction(() => http('/recalculate', { method: 'POST', json: {} }), { success: 'Recalculating every activity…' });
   return (
     <div className="grid max-w-4xl gap-4 md:grid-cols-2">
       <Card title="Demo athlete" subtitle="18 months of simulated training for exploring the app">
@@ -511,7 +509,9 @@ function DataTab() {
 
 export function Settings() {
   const [params, setParams] = useSearchParams();
-  const [tab, setTab] = useState<Tab>((params.get('tab') as Tab) || 'connections');
+  // the tab lives in the URL, so a link can open one and back/forward moves between them
+  const tab: Tab = (['connections', 'athlete', 'import', 'preferences', 'data'] as Tab[]).find((t) => t === params.get('tab')) ?? 'connections';
+  const setTab = (t: Tab) => setParams({ tab: t }, { replace: true });
   const connected = params.get('connected');
   const error = params.get('error');
   return (
@@ -521,7 +521,7 @@ export function Settings() {
         <div className={`card mb-4 flex items-center gap-2 px-4 py-3 text-[13px] ${error ? 'text-critical' : ''}`}>
           {error ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4 text-good" />}
           {error ? `Connection failed: ${error}` : 'Connected to Strava — your history is syncing in the background.'}
-          <button className="ml-auto text-xs text-muted hover:text-ink" onClick={() => setParams({})}>
+          <button className="ml-auto text-xs text-muted hover:text-ink" onClick={() => setParams({ tab }, { replace: true })}>
             Dismiss
           </button>
         </div>

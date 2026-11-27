@@ -12,7 +12,7 @@ import { peakName, type Compare, type HrCompareResponse, type PeakCard } from '.
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 /** Durations in prose: "your sprint", "20 minutes". */
-const durWords: Record<number, string> = { 5: 'sprint (5 s)', 60: '1-minute power', 300: '5-minute power', 1200: '20-minute power', 3600: 'hour' };
+const durWords: Record<number, string> = { 5: 'sprint (5 s)', 60: '1-minute power', 300: '5-minute power', 1200: '20-minute power', 3600: 'hour power' };
 
 /** Best power by duration (then vs the last 90 days), deep into a ride, and steady power at the same heart rate. */
 export function Gap({ peak, hr }: { peak: PeakCard; hr: HrCompareResponse | undefined }) {
@@ -43,7 +43,7 @@ export function Gap({ peak, hr }: { peak: PeakCard; hr: HrCompareResponse | unde
         },
       },
       xAxis: { type: 'value', min: Math.floor(Math.min(...all.map((p) => p.hr)) / 5) * 5 - 5, max: Math.ceil(Math.max(...all.map((p) => p.hr)) / 5) * 5 + 5, name: 'Heart rate (bpm)', nameLocation: 'middle', nameGap: 26, ...axisStyle(t, { grid: false }) },
-      yAxis: valueAxis(t, { scale: true, name: 'Steady power (W)', nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -40] } }),
+      yAxis: valueAxis(t, { scale: true, minInterval: 1, name: 'Steady power (W)', nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -40] } }),
       series: [
         { type: 'line', name, data: line(hr.then), symbol: 'circle', symbolSize: 8, lineStyle: { color: t.muted, width: 2 }, itemStyle: { color: t.muted, borderColor: t.surface, borderWidth: 2 } },
         { type: 'line', name: 'Last 4 months', data: line(hr.now), symbol: 'circle', symbolSize: 8, lineStyle: { color: t.accent, width: 2 }, itemStyle: { color: t.accent, borderColor: t.surface, borderWidth: 2 } },
@@ -98,7 +98,10 @@ export function Gap({ peak, hr }: { peak: PeakCard; hr: HrCompareResponse | unde
               </table>
               {best && worst && best !== worst && (
                 <p className="mt-2 text-xs leading-relaxed text-muted">
-                  {best.kept >= 0.98 ? `Your ${durWords[best.t]} is back (${pct(best.kept)})` : `Closest is your ${durWords[best.t]} (${pct(best.kept)})`}; the gap is widest at {durWords[worst.t]} ({pct(worst.kept)}). Best efforts actually ridden at each length, {fmtDate(data.from, 'd MMM')} – {fmtDate(data.to, 'd MMM yyyy')} against the last 90 days.
+                  {worst.kept >= 0.98
+                    ? `Every length is back: your ${durWords[worst.t]} is the closest to its old level (${pct(worst.kept)}), your ${durWords[best.t]} the furthest past it (${pct(best.kept)}).`
+                    : `${best.kept >= 0.98 ? `Your ${durWords[best.t]} is back (${pct(best.kept)})` : `Closest is your ${durWords[best.t]} (${pct(best.kept)})`}; the gap is widest in your ${durWords[worst.t]} (${pct(worst.kept)}).`}{' '}
+                  Best efforts actually ridden at each length, {fmtDate(data.from, 'd MMM')} – {fmtDate(data.to, 'd MMM yyyy')}, against the last 90 days.
                 </p>
               )}
 

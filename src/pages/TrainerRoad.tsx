@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { parseISO } from 'date-fns';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, ArrowRight } from 'lucide-react';
 import { FTP_SOURCES, valueOn, type FtpAgreement, type FtpEvent, type FtpPoint, type ZoneLevel } from '../../shared/analytics/trainerroad';
 import { useApi } from '../lib/api';
 import { alpha, useTokens } from '../lib/theme';
@@ -103,7 +103,7 @@ function FtpChart({ f, path }: { f: NonNullable<Insights['ftp']>; path: FtpPath[
         },
       },
       xAxis: { type: 'time', ...axisStyle(t, { grid: false }), axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => fmtDate(new Date(v), 'd MMM') } },
-      yAxis: valueAxis(t, { scale: true, name: 'FTP (W)', nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -40] } }),
+      yAxis: valueAxis(t, { scale: true, minInterval: 1, name: 'FTP (W)', nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -40] } }),
       series,
     };
   }, [f, path, t]);
@@ -354,33 +354,56 @@ export function TrainerRoad() {
   const header = <PageHeader title="TrainerRoad" subtitle="TrainerRoad’s view of you beside this app’s: FTP and AI FTP Detection against this app’s model, progression levels, your plan, and how your rides felt" />;
   if (isLoading || !d) return <>{header}<Spinner /></>;
   const s = d.status;
-  if (!d.read)
+  if (!d.read) {
+    const message = !s.mode
+      ? 'TrainerRoad isn’t set up yet. Connect it to see its view of you next to this app’s.'
+      : s.mode === 'calendar'
+        ? 'TrainerRoad is read from its calendar export, which carries the plan only. FTP, AI FTP Detection, progression levels and ride ratings need the TrainerRoad login.'
+        : s.lastError
+          ? `TrainerRoad couldn’t be read: ${s.lastError}.`
+          : 'TrainerRoad hasn’t been read yet. The first sync runs within the hour.';
+    const features = [
+      ['FTP, side by side', 'TrainerRoad’s FTP and AI FTP Detection against this app’s daily estimate, and how closely they agree'],
+      ['Its forecast and ours', 'Where TrainerRoad predicts your FTP by a date, beside this app’s capacity model riding the same plan'],
+      ['Progression levels', 'Your levels by zone, where the plan expects them, and what accepting a detected FTP would do'],
+      ['How rides felt', 'TrainerRoad’s TSS beside this app’s, with your post-ride survey on each activity'],
+    ];
     return (
       <>
         {header}
         <Card>
-          <p className="text-[13px] text-ink-2">
-            {!s.mode
-              ? 'TrainerRoad isn’t set up yet: '
-              : s.mode === 'calendar'
-                ? 'TrainerRoad is read from its calendar export, which carries the plan only. FTP, AI FTP Detection, progression levels and ride ratings need the TrainerRoad login: '
-                : s.lastError
-                  ? `TrainerRoad couldn’t be read: ${s.lastError}. `
-                  : 'TrainerRoad hasn’t been read yet: it will be within the hour. '}
-            <Link to="/settings" className="text-accent hover:underline">
-              Settings → TrainerRoad
-            </Link>
-            .
-          </p>
+          <div className="flex flex-col gap-5 md:flex-row md:items-start">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-surface-2 text-[13px] font-bold text-ink">TR</div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-start gap-2">
+                {s.lastError && <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />}
+                <p className="text-[14px] font-medium text-ink">{message}</p>
+              </div>
+              {(!s.mode || s.mode === 'calendar') && (
+                <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {features.map(([title, text]) => (
+                    <li key={title} className="rounded-lg bg-surface-2 p-3">
+                      <div className="text-[13px] font-medium text-ink">{title}</div>
+                      <div className="mt-0.5 text-xs text-muted">{text}</div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <Link to="/settings?tab=connections" className="mt-4 inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-[13px] font-medium text-white hover:brightness-110">
+                {s.mode ? 'Open TrainerRoad settings' : 'Set up TrainerRoad'} <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </div>
         </Card>
       </>
     );
+  }
   return (
     <>
       {header}
       {s.mode !== 'account' && (
         <p className="mb-4 rounded-lg bg-surface-2 p-2.5 text-xs text-ink-2">
-          Showing saved TrainerRoad data. <Link to="/settings" className="text-accent hover:underline">Connect your account in Settings</Link> to resume updates.
+          Showing saved TrainerRoad data. <Link to="/settings?tab=connections" className="text-accent hover:underline">Connect your account in Settings</Link> to resume updates.
         </p>
       )}
       {s.lastError && (

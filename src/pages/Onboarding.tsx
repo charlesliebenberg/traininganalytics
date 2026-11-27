@@ -1,12 +1,12 @@
 import { Activity, Sparkles, Link2, Upload } from 'lucide-react';
 import { apiUrl, http, useAction } from '../lib/api';
-import { Button, Card } from '../components/ui';
+import { Button, Card, buttonClass } from '../components/ui';
 import { ImportDropzone } from '../components/Import';
 import { useStatus } from '../components/Layout';
 
 export function Onboarding() {
   const { data: status } = useStatus();
-  const demo = useAction(() => http('/demo', { method: 'POST' }));
+  const demo = useAction(() => http('/demo', { method: 'POST' }), { success: 'Generating the demo athlete…' });
   const strava = status?.connections.find((c) => c.provider === 'strava');
   const job = status?.job;
   return (
@@ -21,13 +21,11 @@ export function Onboarding() {
           realistic demo athlete.
         </p>
       </div>
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Card title={<span className="flex items-center gap-2"><Link2 className="h-4 w-4 text-accent" />Connect Strava</span>} subtitle="Automatic sync via webhooks + background polling">
           {strava?.configured ? (
-            <a href={apiUrl('/auth/strava/start')}>
-              <Button variant="primary" className="w-full" style={{ background: '#fc4c02' }}>
-                Connect with Strava
-              </Button>
+            <a href={apiUrl('/auth/strava/start')} className={buttonClass('primary', 'md', 'w-full')} style={{ background: '#fc4c02' }}>
+              Connect with Strava
             </a>
           ) : (
             <p className="text-xs text-muted">

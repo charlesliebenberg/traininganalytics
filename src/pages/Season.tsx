@@ -10,23 +10,27 @@ import { Badge, Button, Card, Field, Input, PageHeader, Segmented, Select, Spinn
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
 
 const PHASES = ['Prep', 'Base', 'Build', 'Peak', 'Taper', 'Race', 'Recovery'];
+/**
+ * Phase colours: base → build → peak as a rising ramp of one hue (purple, which none of the
+ * fitness, fatigue and form lines below use), taper and race set apart, prep and recovery quiet.
+ */
 export function phaseColor(t: Tokens, phase: string): string {
   const p = phase.split(' ')[0];
   switch (p) {
     case 'Prep':
-      return alpha(t.ink2, 0.5);
+      return alpha(t.ink2, 0.35);
     case 'Base':
-      return t.series[0];
+      return alpha(t.power, 0.45);
     case 'Build':
-      return t.series[1];
+      return alpha(t.power, 0.72);
     case 'Peak':
-      return t.series[4];
+      return t.power;
     case 'Taper':
       return t.series[2];
     case 'Race':
-      return t.series[7];
+      return t.critical;
     default:
-      return alpha(t.muted, 0.55);
+      return alpha(t.muted, 0.45);
   }
 }
 
@@ -66,7 +70,7 @@ export function PlanChart({ weeks }: { weeks: SeasonWeek[] }) {
           markLine: {
             symbol: 'none',
             silent: true,
-            data: weeks.filter((w) => w.event).map((w) => ({ xAxis: fmtDate(w.weekStart, 'd MMM'), label: { formatter: w.event!, color: t.ink2, fontSize: 10, position: 'insideEndTop' }, lineStyle: { color: t.critical, type: 'solid', width: 1 } })),
+            data: weeks.filter((w) => w.event).map((w) => ({ xAxis: fmtDate(w.weekStart, 'd MMM'), label: { formatter: w.event!, color: t.ink2, fontSize: 10, position: 'insideEndTop', width: 140, overflow: 'truncate' }, lineStyle: { color: t.critical, type: 'solid', width: 1 } })),
           },
         },
         { type: 'line', name: 'Fitness (CTL)', xAxisIndex: 1, yAxisIndex: 1, showSymbol: false, smooth: 0.3, data: weeks.map((w) => w.ctl), lineStyle: { color: t.ctl, width: 2.5 }, itemStyle: { color: t.ctl } },
@@ -83,8 +87,8 @@ function EventsCard({ events }: { events: RaceEvent[] }) {
   const [date, setDate] = useState(iso(new Date()));
   const [priority, setPriority] = useState<'A' | 'B' | 'C'>('A');
   const [sport, setSport] = useState<Sport>('ride');
-  const add = useAction(() => http('/events', { method: 'POST', json: { name, date, priority, sport } }), { onSuccess: () => setName('') });
-  const del = useAction((id: number) => http(`/events/${id}`, { method: 'DELETE' }));
+  const add = useAction(() => http('/events', { method: 'POST', json: { name, date, priority, sport } }), { onSuccess: () => setName(''), success: 'Event added' });
+  const del = useAction((id: number) => http(`/events/${id}`, { method: 'DELETE' }), { success: 'Event removed' });
   const upcoming = events.filter((e) => e.date >= iso(new Date()));
   const color = { A: 'var(--critical)', B: 'var(--serious)', C: 'var(--muted)' } as const;
   return (
@@ -101,7 +105,7 @@ function EventsCard({ events }: { events: RaceEvent[] }) {
               </div>
             </div>
             <Badge>{e.priority}</Badge>
-            <button onClick={() => del.mutate(e.id)} className="rounded p-1 text-muted hover:text-critical" aria-label="Delete">
+            <button onClick={() => confirm(`Remove “${e.name}”?`) && del.mutate(e.id)} className="rounded p-1 text-muted hover:text-critical" aria-label={`Remove ${e.name}`} title="Remove event">
               <Trash2 className="h-3.5 w-3.5" />
             </button>
           </div>
@@ -153,9 +157,9 @@ export function Season() {
     const h = setTimeout(() => http<{ weeks: SeasonWeek[]; reach: PlanReach | null }>('/plans/preview', { method: 'POST', json: cfg }).then(setResult).catch(() => setResult(null)), 200);
     return () => clearTimeout(h);
   }, [cfg]);
-  const save = useAction(() => http<SeasonPlan>('/plans', { method: 'POST', json: { name, config: cfg, eventId } }));
-  const del = useAction((id: number) => http(`/plans/${id}`, { method: 'DELETE' }));
-  const apply = useAction((id: number) => http<{ created: number }>(`/plans/${id}/apply`, { method: 'POST', json: { weeks: applyWeeks } }), { onSuccess: (r) => alert(`Added ${r.created} workouts to your calendar.`) });
+  const save = useAction(() => http<SeasonPlan>('/plans', { method: 'POST', json: { name, config: cfg, eventId } }), { success: 'Plan saved: it now drives your calendar targets' });
+  const del = useAction((id: number) => http(`/plans/${id}`, { method: 'DELETE' }), { success: 'Plan deleted' });
+  const apply = useAction((id: number) => http<{ created: number }>(`/plans/${id}/apply`, { method: 'POST', json: { weeks: applyWeeks } }), { success: (r) => `Added ${r.created} workouts to your calendar` });
 
   if (!cfg) return <Spinner />;
   const set = <K extends keyof SeasonPlanConfig>(k: K, v: SeasonPlanConfig[K]) => setCfg({ ...cfg, [k]: v });
@@ -324,7 +328,7 @@ export function Season() {
                     <Button size="sm" variant="primary" icon={<Wand2 className="h-3.5 w-3.5" />} loading={apply.isPending} onClick={() => (!following || confirm(`This adds its own workouts beside ${following}’s, doubling the load the calendar and projections count. Fill anyway?`)) && apply.mutate(p.id)}>
                       Fill calendar
                     </Button>
-                    <Button size="sm" variant="danger" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => del.mutate(p.id)} />
+                    <Button size="sm" variant="danger" icon={<Trash2 className="h-3.5 w-3.5" />} onClick={() => confirm(`Delete the plan “${p.name}”? The workouts it added to your calendar go with it, except those you've already ridden.`) && del.mutate(p.id)} aria-label={`Delete plan ${p.name}`} title="Delete plan" />
                   </div>
                 ))}
                 <p className="text-[11px] text-muted">“Fill calendar” generates structured workouts per phase (e.g. sweet spot in base, threshold + VO2 in build, openers in race week) sized to each week's TSS. Existing generated workouts in that window are replaced.</p>
