@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import clsx from 'clsx';
 import { parseISO } from 'date-fns';
 import { AlertTriangle, ArrowRight } from 'lucide-react';
 import { FTP_SOURCES, valueOn, type FtpAgreement, type FtpEvent, type FtpPoint, type ZoneLevel } from '../../shared/analytics/trainerroad';
@@ -8,7 +9,7 @@ import { alpha, useTokens } from '../lib/theme';
 import { fmtDate, fmtDuration, fmtNum, iso } from '../lib/format';
 import { Card, PageHeader, SportIcon, Spinner, Stat } from '../components/ui';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
-import { surveyText, type TrainerRoadRide } from '../components/trainerroad';
+import { surveyFailed, surveyText, type TrainerRoadRide } from '../components/trainerroad';
 import { PlanWeeksChart, UnplannedNote, complianceText, usePlanOutlook, type FtpPath, type PlanOutlook } from '../components/plan';
 
 interface Forecast {
@@ -336,7 +337,7 @@ function RidesCard({ rides }: { rides: TrainerRoadRide[] }) {
                   {fmtNum(r.tss)}
                 </td>
                 <td className="text-right">{r.activity ? fmtNum(r.activity.tss) : '–'}</td>
-                <td className="pl-4 text-ink-2">{r.survey ? surveyText(r.survey) : <span className="text-muted">not answered</span>}</td>
+                <td className={clsx('pl-4', r.survey && surveyFailed(r.survey) ? 'font-medium text-critical' : 'text-ink-2')}>{r.survey ? surveyText(r.survey) : <span className="text-muted">not answered</span>}</td>
               </tr>
             ))}
           </tbody>

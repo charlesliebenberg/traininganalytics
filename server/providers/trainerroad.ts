@@ -453,21 +453,39 @@ export interface SurveyAnswer {
   text: string | null;
 }
 
-/** The athlete's answer to TrainerRoad's post-ride survey, in words; null when not answered. */
+/** An option's words without TrainerRoad's number in front: "3 - Hard" → "Hard". */
+const words = (t: unknown): string | null => (typeof t === 'string' && t.trim() ? t.trim().replace(/^\d+(\.\d+)?\s*[-–:]\s*/, '') : null);
+
+/**
+ * The athlete's answer to TrainerRoad's post-ride survey, in words; null when not answered.
+ * Records come in two shapes: ids into the survey's options (`rpeSurveyElementId`, the reasons'
+ * ids), or the answer's own words (`translatedElementName`, under `translatedParentElementName`
+ * when it is a reason: "I Did Not Pass" → "Heat").
+ */
 export function surveyAnswer(options: unknown, response: unknown): SurveyAnswer | null {
   const r = response as Json;
   if (!r || typeof r !== 'object') return null;
   const byElement = new Map<unknown, Json>((Array.isArray(options) ? options : []).map((o: Json) => [o?.elementId, o]));
   const root = byElement.get(r.rpeSurveyElementId);
   const ids: unknown[] = Array.isArray(r.struggleReasonSurveyElementIds) && r.struggleReasonSurveyElementIds.length ? r.struggleReasonSurveyElementIds : r.struggleReasonSurveyElementId != null ? [r.struggleReasonSurveyElementId] : [];
-  const rating = root?.text ?? r.translatedDisplayName ?? null;
-  const level = num(root?.kind);
-  const rpe = num(r.rpe);
+  const own = words(r.translatedElementName);
+  const parent = words(r.translatedParentElementName);
+  // a reason chosen under an answer: the answer is the parent, the reason this element
+  const rating = words(root?.text) ?? words(r.translatedDisplayName) ?? parent ?? own;
+  const kind = num(root?.kind) ?? (parent == null ? num(r.elementKind) : null);
+  const level = kind != null && kind >= 1 && kind <= 5 ? kind : null;
+  // the newer shape repeats the level as `rpe`; under a reason it is that reason's id, not an RPE
+  const rpe = parent != null || (level != null && num(r.rpe) === level) ? null : num(r.rpe);
+  const reasons = [
+    ...ids.map((id) => words(byElement.get(id)?.text)),
+    ...(parent != null ? [own] : []),
+    ...(Array.isArray(r.reasons) ? r.reasons.map((x: unknown) => words(typeof x === 'string' ? x : (x as Json)?.translatedElementName ?? (x as Json)?.text)) : []),
+  ].filter((t, i, all): t is string => t != null && all.indexOf(t) === i);
   if (!rating && level == null && rpe == null) return null;
   return {
-    rating: rating ? String(rating) : null,
-    level: level != null && level >= 1 && level <= 5 ? level : null,
-    reasons: ids.map((id) => byElement.get(id)?.text).filter((t): t is string => typeof t === 'string' && t.trim() !== ''),
+    rating,
+    level,
+    reasons,
     rpe,
     text: typeof r.text === 'string' && r.text.trim() ? r.text.trim() : null,
   };

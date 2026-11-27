@@ -28,8 +28,17 @@ export interface TrainerRoadRide {
 }
 
 /** "Hard (my legs were heavy) · RPE 3.25" */
-export const surveyText = (s: SurveyAnswer) =>
-  [s.rating ? `${s.rating}${s.reasons.length ? ` (${s.reasons.join(', ')})` : ''}` : null, s.rpe != null ? `RPE ${s.rpe}` : null, s.text ? `“${s.text}”` : null].filter(Boolean).join(' · ');
+/** A workout the athlete said they didn't get through ("I Did Not Pass", "Didn't finish"). */
+export const surveyFailed = (s: SurveyAnswer) => !!s.rating && /\b(not|n't)\s+(pass|finish|complete)/i.test(s.rating);
+
+/**
+ * How the athlete said a ride felt, in TrainerRoad's words and on its 1–5 scale — "Hard (3/5)",
+ * "Didn't pass · Heat" — not as an RPE, which runs 1–10 and would read a 1 as no effort at all.
+ */
+export const surveyText = (s: SurveyAnswer) => {
+  const said = surveyFailed(s) ? "Didn't pass" : s.rating ? `${s.rating}${s.level != null ? ` (${s.level}/5)` : ''}` : s.rpe != null ? `${s.rpe}/5` : null;
+  return [said, s.reasons.length ? s.reasons.join(', ') : null, s.text ? `“${s.text}”` : null].filter(Boolean).join(' · ');
+};
 
 /** On an activity: TrainerRoad's record of the same ride, and how you said it felt. */
 export function TrainerRoadRideStrip({ ride }: { ride: TrainerRoadRide }) {
