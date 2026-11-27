@@ -1,7 +1,7 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useMemo } from 'react';
 import { differenceInCalendarDays, parseISO } from 'date-fns';
-import { ArrowRight, CalendarPlus, Flag, Zap } from 'lucide-react';
+import { ArrowRight, BookOpen, Flag, Telescope } from 'lucide-react';
 import type { Activity, PlannedWorkout, PmcPoint, RaceEvent, Thresholds } from '../../shared/types';
 import { ftpBasisText, type FtpEstimate } from '../../shared/analytics/thresholds';
 import { useApi } from '../lib/api';
@@ -10,12 +10,12 @@ import { PmcChart, FormLegend, formColor, MiniProfile } from '../components/char
 import { RouteThumb } from '../components/RouteThumb';
 import { Chart, axisStyle, legendStyle, tooltipStyle, valueAxis, tipRow } from '../components/Chart';
 import { useTokens } from '../lib/theme';
-import { fmtDate, fmtDistance, fmtDuration, fmtNum, fmtPace, iso, SPORT_LABEL } from '../lib/format';
+import { fmtDate, fmtDistance, fmtDuration, fmtNum, fmtPace, SPORT_LABEL } from '../lib/format';
 import { useStatus } from '../components/Layout';
 import { Onboarding } from './Onboarding';
 import { WeekCard } from '../components/review';
 import { InsightPanel, type ActivityInsights } from '../components/insights';
-import { LastNightCard } from '../components/sleep';
+import { TodayHero } from '../components/today';
 import { PlanCard, usePlanOutlook } from '../components/plan';
 import { activityTitle, sessionBrief } from '../lib/session';
 import type { SleepRead } from '../../shared/analytics/sleep';
@@ -128,34 +128,36 @@ export function Dashboard() {
         subtitle={fmtDate(new Date(), 'EEEE d MMMM yyyy')}
         actions={
           <>
-            <Button icon={<CalendarPlus className="h-4 w-4" />} onClick={() => nav('/calendar')}>
-              Plan training
+            <Button icon={<BookOpen className="h-4 w-4" />} onClick={() => nav('/journal')}>
+              Journal
             </Button>
-            <Button variant="primary" icon={<Zap className="h-4 w-4" />} onClick={() => nav('/performance')}>
-              Performance
+            <Button variant="primary" icon={<Telescope className="h-4 w-4" />} onClick={() => nav('/forecast')}>
+              Forecast
             </Button>
           </>
         }
       />
 
+      <TodayHero today={today} sleep={data.sleep} upcoming={data.upcoming} recent={data.recent} ftp={thresholds.ftp || null} />
+
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <div className="card p-4">
+        <Link to="/fitness" className="card p-4 transition-colors hover:border-line-strong" aria-label="Fitness & Form">
           <Stat label="Fitness · CTL" accent={t.ctl} value={fmtNum(today?.ctl, 0)} sub={`${today && today.ramp >= 0 ? '+' : ''}${fmtNum(today?.ramp, 1)} / week ramp`} />
-        </div>
-        <div className="card p-4">
+        </Link>
+        <Link to="/fitness" className="card p-4 transition-colors hover:border-line-strong" aria-label="Fitness & Form">
           <Stat label="Fatigue · ATL" accent={t.atl} value={fmtNum(today?.atl, 0)} sub={`ACWR ${today && today.ctl > 1 ? (today.atl / today.ctl).toFixed(2) : '–'}`} />
-        </div>
-        <div className="card p-4">
+        </Link>
+        <Link to="/fitness" className="card p-4 transition-colors hover:border-line-strong" aria-label="Fitness & Form">
           <Stat label="Form · TSB" accent={formC} value={fmtNum(today?.tsb, 0)} sub={<span title={form?.hint}>{form?.label}</span>} />
-        </div>
-        <div className="card p-4">
+        </Link>
+        <Link to="/journal" className="card p-4 transition-colors hover:border-line-strong" aria-label="This week in the journal">
           <Stat label="This week · TSS" value={fmtNum(week.tss ?? 0, 0)} unit={week.planned?.tss ? `/ ${Math.round(week.planned.tss)} planned` : undefined} />
           <Progress value={week.tss ?? 0} max={week.planned?.tss || week.tss || 1} color={t.accent} />
-        </div>
-        <div className="card p-4">
+        </Link>
+        <Link to="/journal" className="card p-4 transition-colors hover:border-line-strong" aria-label="This week in the journal">
           <Stat label="This week · time" value={fmtDuration(week.time ?? 0, { short: true })} sub={`${week.n ?? 0} activities · ${fmtDistance(week.distance ?? 0, 0)}`} />
-        </div>
-        <div className="card p-4">
+        </Link>
+        <Link to="/thresholds" className="card p-4 transition-colors hover:border-line-strong" aria-label="How FTP is estimated">
           <Stat
             label="FTP"
             accent={t.power}
@@ -164,7 +166,7 @@ export function Dashboard() {
             sub={`${wkg ? `${wkg.toFixed(2)} W/kg · ` : ''}${auto ? 'auto' : 'manual'}`}
             title={`The FTP every zone and TSS uses — ${auto ? `estimated automatically, set by ${basis}` : basis}.${thresholds.cp ? ` Critical power ${thresholds.cp} W, W′ ${(thresholds.wPrime / 1000).toFixed(1)} kJ.` : ''}`}
           />
-        </div>
+        </Link>
       </div>
 
       {/* two independent columns on a wide screen, so neither leaves a gap beside a taller
@@ -230,7 +232,6 @@ export function Dashboard() {
           </Card>
         </div>
         <div className="order-2 flex min-w-0 flex-col gap-4 xl:order-none">
-          {data.sleep && <LastNightCard read={data.sleep} tsb={today?.tsb ?? null} planned={data.upcoming.filter((p) => p.date === iso(new Date()))} />}
           {data.latest && (data.latest.aerobic || data.latest.efforts.length > 0 || data.latest.fitness || data.latest.session) && (
             <LatestCard latest={data.latest} activity={data.recent.find((a) => a.id === data.latest!.id)} />
           )}

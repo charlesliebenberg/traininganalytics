@@ -207,7 +207,7 @@ export function sleepAdvice(read: SleepRead, tsb: number | null, planned: Planne
   if (form != null && form <= -20)
     return { title: 'Absorbing the load', detail: `Form is ${form}, but your HRV is holding in its normal range: you're absorbing the training. Train as planned.${plan}${short}`, tone: 'good' };
   if (form != null && form >= -10)
-    return { title: 'Ready to go', detail: `Your HRV is in its normal range${hrv?.status === 'high' ? ' or above' : ''} and you're fresh (form ${form}): a good day for a hard session.${plan}${short}`, tone: 'good' };
+    return { title: 'Ready to go', detail: `Your HRV is in its normal range${hrv?.status === 'high' ? ' or above' : ''} and ${form > 0 ? `you're fresh (form +${form})` : `training fatigue is light (form ${form})`}: a good day for a hard session.${plan}${short}`, tone: 'good' };
   return { title: 'Train as planned', detail: `Your HRV and heart rate asleep are within your normal range.${plan}${short}`, tone: 'good' };
 }
 
