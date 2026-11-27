@@ -10,6 +10,7 @@ import { alpha, useTokens } from '../lib/theme';
 import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
 import { GROUP_LABEL, GROUP_OF, SESSION_GROUPS, TYPE_LABEL, TYPE_SHORT, activityTitle, groupColor, outText, sessionBrief, setLabel, typeColor, type SessionGroup } from '../lib/session';
 import { toast } from '../lib/toast';
+import { copyText } from '../lib/clipboard';
 import { surveyText, type SurveyAnswer } from './trainerroad';
 import { effortSentence } from './insights';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from './Chart';
@@ -199,7 +200,7 @@ function ToneIcon({ tone }: { tone: ReviewNote['tone'] | 'none' }) {
   return <Minus className="h-4 w-4 text-muted" />;
 }
 
-function NoteList({ notes, r, weeks, limit }: { notes: ReviewNote[]; r: Review; weeks: number; limit?: number }) {
+export function NoteList({ notes, r, weeks, limit }: { notes: ReviewNote[]; r: Review; weeks: number; limit?: number }) {
   return (
     <ul className="space-y-2.5">
       {notes.slice(0, limit).map((n, i) => (
@@ -319,7 +320,7 @@ function periodText(d: TrainingReviewData) {
  * The review as plain text, to paste into a message to a coach: the headline and figures, the
  * signs of fitness and notes as the page words them, and (for a week) each day's sessions.
  */
-function reviewText(d: TrainingReviewData, el: HTMLElement | null): string {
+export function reviewText(d: TrainingReviewData, el: HTMLElement | null): string {
   const r = d.review;
   const s = r.stats;
   const b = d.baseline;
@@ -359,22 +360,6 @@ function reviewText(d: TrainingReviewData, el: HTMLElement | null): string {
       );
   }
   return out.join('\n');
-}
-
-async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    // no clipboard API (an http address other than localhost): the old way
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    ta.remove();
-  }
 }
 
 export function ReviewCard() {

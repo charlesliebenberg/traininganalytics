@@ -29,6 +29,8 @@ const Settings = page('Settings', () => import('./pages/Settings'));
 const Thresholds = page('Thresholds', () => import('./pages/Thresholds'));
 const Comeback = page('Comeback', () => import('./pages/Comeback'));
 const TrainerRoad = page('TrainerRoad', () => import('./pages/TrainerRoad'));
+const Forecast = page('Forecast', () => import('./pages/Forecast'));
+const Journal = page('Journal', () => import('./pages/Journal'));
 
 setUnauthorizedHandler(() => queryClient.invalidateQueries({ queryKey: ['/session'] }));
 
@@ -84,6 +86,7 @@ function Root() {
               <Routes>
                 <Route element={<Layout />}>
                   <Route index element={<Dashboard />} />
+                  <Route path="journal" element={<Journal />} />
                   <Route path="activities" element={<Activities />} />
                   <Route path="activities/:id" element={<ActivityDetail />} />
                   <Route path="fitness" element={<Fitness />} />
@@ -91,6 +94,7 @@ function Root() {
                   <Route path="trends" element={<Trends />} />
                   <Route path="records" element={<Records />} />
                   <Route path="thresholds" element={<Thresholds />} />
+                  <Route path="forecast" element={<Forecast />} />
                   <Route path="comeback" element={<Comeback />} />
                   <Route path="trainerroad" element={<TrainerRoad />} />
                   <Route path="map" element={<Heatmap />} />

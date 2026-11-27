@@ -13,6 +13,8 @@ import {
   Mountain,
   Bike,
   Settings,
+  Telescope,
+  BookOpen,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -29,6 +31,7 @@ export const NAV: { group: string | null; items: NavItem[] }[] = [
   {
     group: 'Analyze',
     items: [
+      { to: '/journal', label: 'Journal', icon: BookOpen, keywords: 'weeks review diary log history season timeline sleep missed' },
       { to: '/activities', label: 'Activities', icon: ListOrdered, keywords: 'rides runs swims list' },
       { to: '/fitness', label: 'Fitness & Form', icon: TrendingUp, keywords: 'pmc ctl atl tsb fatigue aerobic sleep hrv' },
       { to: '/performance', label: 'Power & Performance', icon: Zap, keywords: 'power curve cp w prime durability profile' },
@@ -41,6 +44,7 @@ export const NAV: { group: string | null; items: NavItem[] }[] = [
   {
     group: 'Plan',
     items: [
+      { to: '/forecast', label: 'Forecast', icon: Telescope, keywords: 'race day predict projection scenario what if taper ftp future best path' },
       { to: '/comeback', label: 'Comeback', icon: Mountain, keywords: 'peak capacity return' },
       { to: '/calendar', label: 'Calendar', icon: CalendarDays, keywords: 'schedule planned workouts week' },
       { to: '/trainerroad', label: 'TrainerRoad', icon: Bike, keywords: 'tr ai ftp detection progression levels' },
