@@ -9,6 +9,7 @@ import { APP_NAME } from '../lib/hooks';
 import { NAV, SETTINGS_ITEM, pageTitle } from '../lib/nav';
 import { Button, Empty, Spinner } from './ui';
 import { CommandPalette, usePaletteShortcut } from './CommandPalette';
+import { TimezoneNotice } from './TimezoneNotice';
 import type { SyncStatus } from '../../shared/types';
 
 export type Status = SyncStatus & { job: { kind: string; message: string | null; progress: number } | null; demo: boolean; publicUrl: string; apiUrl: string };
@@ -273,6 +274,7 @@ export function Layout() {
           </button>
         </div>
         <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
+          <TimezoneNotice />
           <PageErrorBoundary resetKey={loc.pathname}>
             <Suspense fallback={<Spinner />}>
               <Outlet />

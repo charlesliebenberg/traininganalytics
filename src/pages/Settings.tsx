@@ -447,6 +447,16 @@ function ZoneTable({ title, rows }: { title: string; rows: string[][] }) {
   );
 }
 
+/** Every IANA time zone the browser knows, with the one set first if it's somehow not among them. */
+function zones(current?: string): string[] {
+  let all: string[] = [];
+  try {
+    all = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.('timeZone') ?? [];
+  } catch {}
+  const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return [...new Set([...(current ? [current] : []), ...(all.length ? all : [here, 'UTC'])])];
+}
+
 function PreferencesTab() {
   const { data } = useApi<Preferences>('/preferences');
   const save = useAction((p: Partial<Preferences>) => http('/preferences', { method: 'PUT', json: p }), { success: 'Preferences saved' });
@@ -455,16 +465,16 @@ function PreferencesTab() {
     <Card title="Preferences" className="max-w-2xl">
       <div className="grid grid-cols-2 gap-4">
         <Field label="Name">
-          <Input defaultValue={data.athleteName} onBlur={(e) => save.mutate({ athleteName: e.target.value })} />
+          <Input defaultValue={data.athleteName} onBlur={(e) => e.target.value !== data.athleteName && save.mutate({ athleteName: e.target.value })} />
         </Field>
         <Field label="Units">
           <Segmented value={data.units} onChange={(units) => save.mutate({ units })} options={[{ value: 'metric', label: 'Metric' }, { value: 'imperial', label: 'Imperial' }]} />
         </Field>
         <Field label="Fitness (CTL) time constant" hint="days — 42 is the TrainingPeaks default">
-          <Input type="number" defaultValue={data.ctlDays} onBlur={(e) => save.mutate({ ctlDays: Number(e.target.value) })} />
+          <Input type="number" min={7} max={120} defaultValue={data.ctlDays} onBlur={(e) => Number(e.target.value) !== data.ctlDays && Number(e.target.value) > 0 && save.mutate({ ctlDays: Number(e.target.value) })} />
         </Field>
         <Field label="Fatigue (ATL) time constant" hint="days — 7 is standard">
-          <Input type="number" defaultValue={data.atlDays} onBlur={(e) => save.mutate({ atlDays: Number(e.target.value) })} />
+          <Input type="number" min={2} max={30} defaultValue={data.atlDays} onBlur={(e) => Number(e.target.value) !== data.atlDays && Number(e.target.value) > 0 && save.mutate({ atlDays: Number(e.target.value) })} />
         </Field>
         <Field label="Week starts on">
           <Select value={data.weekStart} onChange={(e) => save.mutate({ weekStart: Number(e.target.value) as 0 | 1 })}>
@@ -473,7 +483,17 @@ function PreferencesTab() {
           </Select>
         </Field>
         <Field label="Crank length (mm)" hint="used for quadrant analysis">
-          <Input type="number" step={0.5} defaultValue={data.crankLength} onBlur={(e) => save.mutate({ crankLength: Number(e.target.value) })} />
+          <Input type="number" step={0.5} defaultValue={data.crankLength} onBlur={(e) => Number(e.target.value) !== data.crankLength && Number(e.target.value) > 0 && save.mutate({ crankLength: Number(e.target.value) })} />
+        </Field>
+        <Field label="Time zone" hint="Your training days follow it: today, weeks and the dates of imported files" className="col-span-2">
+          <Select value={data.timezone ?? ''} onChange={(e) => e.target.value && save.mutate({ timezone: e.target.value })}>
+            {!data.timezone && <option value="">Where you last rode</option>}
+            {zones(data.timezone).map((z) => (
+              <option key={z} value={z}>
+                {z.replace(/_/g, ' ')}
+              </option>
+            ))}
+          </Select>
         </Field>
       </div>
     </Card>

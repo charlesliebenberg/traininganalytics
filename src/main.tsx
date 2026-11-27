@@ -49,10 +49,12 @@ function Prefs({ children }: { children: ReactNode }) {
       queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] !== '/preferences' });
     }
   }, [data?.units]);
-  // the server's "today" follows your time zone, so its pages and the browser's agree
+  // the server's "today" follows the athlete's time zone. A first visit sets it from the browser;
+  // after that a browser elsewhere (travel, a coach, a work machine on UTC) only offers to change
+  // it (TimezoneNotice), rather than moving everyone's day boundaries without a word
   useEffect(() => {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (data && tz && data.timezone !== tz)
+    if (data && tz && !data.timezone)
       http('/preferences', { method: 'PUT', json: { timezone: tz } })
         .then(() => queryClient.invalidateQueries())
         .catch(() => {});
