@@ -12,8 +12,21 @@
   status = 200
   force = true
 
+# A built file that isn't there (an old chunk, after a deploy) is missing, not the app's page.
+# Like every rule here, it only applies when no file exists at the path.
+[[redirects]]
+  from = "/assets/*"
+  to = "/index.html"
+  status = 404
+
 # Single-page app fallback
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
+
+# Built files have a content hash in their names, so they never change: cache them for good
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

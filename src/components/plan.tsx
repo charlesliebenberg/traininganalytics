@@ -18,6 +18,13 @@ export interface PlanOutlook {
   race: { id: number; name: string; date: string; priority: string } | null;
   raceDay: { date: string; days: number; ctl: number; atl: number; tsb: number; form: { id: string; label: string; hint: string }; ctlNow: number | null } | null;
   unplanned: { from: string; to: string; days: number }[];
+  /** what to ride on the unplanned days to arrive fresh, when the plan as it stands doesn't */
+  readiness: {
+    stretches: { from: string; to: string; days: number; daily: number; hours: number | null; taper: boolean }[];
+    ctl: number;
+    tsb: number;
+    form: { id: string; label: string; hint: string };
+  } | null;
   weeks: OutlookWeek[];
   compliance: { weeks: number; since: string; plannedTss: number; doneTss: number; workouts: number; completed: number; missed: number } | null;
   ftp: {
@@ -143,16 +150,61 @@ export function PlanWeeksChart({ weeks, height = 150 }: { weeks: OutlookWeek[]; 
 }
 
 /** "Nothing planned 2–11 Jan: the projection counts it as rest." */
+const span = (from: string, to: string) => (from === to ? fmtDate(from, 'd MMM') : `${fmtDate(from, 'd')}–${fmtDate(to, 'd MMM')}`);
+const hoursText = (h: number) => (h < 1 ? `${Math.round(h * 60)} min` : `${Math.floor(h)}${h % 1 >= 0.75 ? '¾' : h % 1 >= 0.5 ? '½' : h % 1 >= 0.25 ? '¼' : ''} h`);
+const signedForm = (v: number) => (Math.round(v) > 0 ? `+${Math.round(v)}` : `${Math.round(v)}`);
+
+/**
+ * Days with nothing planned before the race count as rest in every projection — and when that
+ * leaves race day short of fresh, what riding them would take to arrive fresh and fit.
+ */
 export function UnplannedNote({ o }: { o: PlanOutlook }) {
+  const t = useTokens();
   if (!o.unplanned.length || !o.race) return null;
+  const r = o.readiness;
+  const rd = o.raceDay;
   return (
-    <p className="flex items-start gap-1.5 text-xs text-ink-2">
-      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
-      <span>
-        Nothing planned {o.unplanned.map((g) => `${fmtDate(g.from, 'd MMM')}–${fmtDate(g.to, 'd MMM')}`).join(', ')} before {o.race.name}: the projections count {o.unplanned.length > 1 ? 'those days' : 'it'} as rest
-        {o.source === 'trainerroad' ? ', until TrainerRoad fills it in' : ''}.
-      </span>
-    </p>
+    <div className="space-y-2">
+      <p className="flex items-start gap-1.5 text-xs text-ink-2">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
+        <span>
+          Nothing planned {o.unplanned.map((g) => `${fmtDate(g.from, 'd MMM')}–${fmtDate(g.to, 'd MMM')}`).join(', ')} before {o.race.name}: the projections count {o.unplanned.length > 1 ? 'those days' : 'it'} as rest
+          {o.source === 'trainerroad' ? ', until TrainerRoad fills it in' : ''}.
+        </span>
+      </p>
+      {r && rd && (
+        <div className="rounded-lg border border-line bg-surface-2/60 p-3 text-xs">
+          <div className="mb-1.5 font-medium text-ink">To arrive fresh, ride them</div>
+          <ul className="space-y-1 text-ink-2">
+            {r.stretches.map((s) => (
+              <li key={s.from} className="flex justify-between gap-3">
+                <span>
+                  {span(s.from, s.to)}
+                  {s.taper ? <span className="text-muted"> · race week, a taper</span> : null}
+                </span>
+                <span className="tnum shrink-0 text-ink">
+                  ~{s.daily} TSS a day{s.hours ? <span className="text-muted"> · {hoursText(s.hours)}</span> : null}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2 flex flex-wrap items-center gap-x-1.5 border-t border-line pt-2 text-ink-2">
+            <span>Race day:</span>
+            <span className="inline-flex items-center gap-1 font-medium text-ink">
+              CTL {Math.round(r.ctl)}, form {signedForm(r.tsb)}
+              <span className="h-2 w-2 rounded-sm" style={{ background: formColor(t, r.form.id) }} />
+              {r.form.label.toLowerCase()}
+            </span>
+            <span className="text-muted">
+              against CTL {Math.round(rd.ctl)}, {signedForm(rd.tsb)} ({rd.form.label.toLowerCase()}) if they stay empty
+            </span>
+          </div>
+          <Link to="/forecast?s=filled" className="mt-2 inline-flex items-center gap-1 text-accent hover:underline">
+            Compare paths in the forecast <ArrowRight className="h-3 w-3" />
+          </Link>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -182,8 +234,8 @@ export function PlanCard({ o, ctlNow }: { o: PlanOutlook; ctlNow: number | null 
         )
       }
       actions={
-        <Link to="/calendar" className="flex items-center gap-1 text-xs text-accent hover:underline">
-          Calendar <ArrowRight className="h-3 w-3" />
+        <Link to="/forecast" className="flex items-center gap-1 text-xs text-accent hover:underline">
+          Forecast <ArrowRight className="h-3 w-3" />
         </Link>
       }
     >

@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
-import { startOfYear, subDays, subYears, endOfYear } from 'date-fns';
+import { startOfYear, subDays, subYears, endOfYear, format, parseISO, isValid } from 'date-fns';
 import { iso } from './format';
 
 export type RangePreset = '7d' | '28d' | '42d' | '90d' | '180d' | '365d' | '730d' | 'ytd' | 'lastyear' | 'all' | 'custom';
@@ -23,6 +23,15 @@ export const PRESETS: { value: RangePreset; label: string }[] = [
   { value: 'lastyear', label: 'Last year' },
   { value: 'all', label: 'All time' },
 ];
+
+/** "3 Mar – 20 Apr 2026", or with both years when they differ. */
+function customLabel(from: string, to: string): string {
+  const a = parseISO(from);
+  const b = parseISO(to);
+  if (!isValid(a) || !isValid(b)) return 'Custom range';
+  const sameYear = a.getFullYear() === b.getFullYear();
+  return `${format(a, sameYear ? 'd MMM' : 'd MMM yyyy')} – ${format(b, 'd MMM yyyy')}`;
+}
 
 export function resolvePreset(preset: RangePreset, custom?: { from: string; to: string }): DateRange {
   const now = new Date();
@@ -51,8 +60,11 @@ export function resolvePreset(preset: RangePreset, custom?: { from: string; to: 
     }
     case 'all':
       return { preset, from: '2000-01-01', to: t, label };
-    default:
-      return { preset: 'custom', from: custom?.from ?? iso(subDays(now, 89)), to: custom?.to ?? t, label: `${custom?.from} → ${custom?.to}` };
+    default: {
+      const from = custom?.from ?? iso(subDays(now, 89));
+      const to = custom?.to ?? t;
+      return { preset: 'custom', from, to, label: customLabel(from, to) };
+    }
   }
 }
 

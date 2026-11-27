@@ -1052,3 +1052,27 @@ describe('sleep against your normal', () => {
     expect(morningAfter(nights, () => null).every((r) => r.nights === 0)).toBe(true);
   });
 });
+
+describe('fillForRace', async () => {
+  const { fillForRace, computePmc } = await import('./pmc');
+  const days = (n: number, free: (i: number) => boolean, planned = 0) => Array.from({ length: n }, (_, i) => ({ date: `d${i}`, planned, free: free(i) }));
+  it('loads empty days just enough to arrive fresh, halved in race week', () => {
+    const r = fillForRace({ ctl: 90, atl: 90, days: days(21, () => true) })!;
+    expect(r.daily).toBeGreaterThan(40);
+    expect(r.tsb / r.ctl).toBeCloseTo(0.12, 2);
+    // the last week before the race is a taper, race day itself is left to the plan
+    expect(r.load[18]).toBeCloseTo(r.daily / 2, 6);
+    expect(r.load[5]).toBeCloseTo(r.daily, 6);
+    expect(r.load[20]).toBe(0);
+    // the same days, ridden through the PMC, agree
+    const pts = computePmc(r.load.map((tss, i) => ({ date: `d${i}`, tss })), { startCtl: 90, startAtl: 90 });
+    expect(pts[20].tsb).toBeCloseTo(r.tsb, 6);
+    // and arriving that way keeps far more fitness than resting
+    const rest = computePmc(days(21, () => true).map((d) => ({ date: d.date, tss: 0 })), { startCtl: 90, startAtl: 90 });
+    expect(r.ctl).toBeGreaterThan(rest[20].ctl + 15);
+  });
+  it('adds nothing when the plan already leaves you short of fresh, and nothing without free days', () => {
+    expect(fillForRace({ ctl: 60, atl: 100, days: days(5, (i) => i < 4, 150) })!.daily).toBe(0);
+    expect(fillForRace({ ctl: 60, atl: 60, days: days(5, () => false) })).toBeNull();
+  });
+});

@@ -373,7 +373,7 @@ export function Thresholds() {
 }
 
 function RecomputeButton({ running }: { running: boolean }) {
-  const refresh = useAction(() => http('/estimates/refresh', { method: 'POST' }));
+  const refresh = useAction(() => http('/estimates/refresh', { method: 'POST' }), { success: 'Recomputing your estimates…' });
   return (
     <Button icon={<RefreshCw className={`h-4 w-4 ${running ? 'animate-spin' : ''}`} />} loading={refresh.isPending} onClick={() => refresh.mutate(undefined)} title="Recompute all estimates and recalculate activities">
       Recompute
@@ -525,7 +525,8 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
                 </Card>
               </div>
               <Card className="mt-4" title="Efforts used" pad={false}>
-                <table className="tnum w-full text-[13px]">
+                <div className="overflow-x-auto">
+                <table className="tnum w-full min-w-[560px] text-[13px] whitespace-nowrap">
                   <thead>
                     <tr className="border-b border-line text-left text-[11px] tracking-wide text-muted uppercase">
                       <th className="py-2 pl-5 font-medium">Band</th>
@@ -557,6 +558,7 @@ function SportThresholds({ sport, tabs }: { sport: ThresholdSport; tabs: ReactNo
                     ))}
                   </tbody>
                 </table>
+                </div>
               </Card>
             </>
           ) : (
@@ -665,7 +667,7 @@ function HrHistoryChart({ series, timeline }: { series: HrWeek[]; timeline: Time
         splitNumber: 8,
         axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, formatter: (v: number) => (timeline.inBreak(v) ? '' : fmtDate(new Date(timeline.fromX(v)), "MMM ''yy")) },
       },
-      yAxis: valueAxis(t, { scale: true, name: 'bpm', nameTextStyle: { color: t.muted, fontSize: 10 }, axisLabel: { color: t.muted, fontSize: 11 } }),
+      yAxis: valueAxis(t, { scale: true, minInterval: 1, name: 'bpm', nameTextStyle: { color: t.muted, fontSize: 10 }, axisLabel: { color: t.muted, fontSize: 11 } }),
       series: [
         ...HR_LINES.map((l, i) => ({
           type: 'line',

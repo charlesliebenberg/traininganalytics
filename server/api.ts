@@ -30,6 +30,8 @@ import { importFile } from './importers/files';
 import { clearDemo, isDemo, loadDemo } from './demo';
 import { syncNow, syncStatus } from './sync';
 import * as comeback from './comeback';
+import { forecast, saveScenario, type ForecastRequest } from './forecast';
+import { journal } from './journal';
 import { activityInsights, aerobicTrend, latestInsights } from './aerobic';
 import { keySets, trainingReview } from './sessions';
 import { topEfforts, type EffortMetric } from './efforts';
@@ -243,7 +245,8 @@ api.get('/activities', (c) => {
   if (from) where.push('local_date >= ?') && params.push(from);
   if (to) where.push('local_date <= ?') && params.push(to);
   if (sport) where.push('sport = ?') && params.push(sport);
-  if (search) where.push('(name LIKE ? OR description LIKE ?)') && params.push(`%${search}%`, `%${search}%`);
+  // the planned workout's name too: a ride Strava called "Afternoon Ride" is found as "Septeret"
+  if (search) where.push('(name LIKE ? OR description LIKE ? OR planned_id IN (SELECT id FROM planned_workouts WHERE title LIKE ?))') && params.push(`%${search}%`, `%${search}%`, `%${search}%`);
   const w = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const order = `${SORTS[sort] ?? 'start_time'} ${dir === 'asc' ? 'ASC' : 'DESC'} NULLS LAST, start_time DESC`;
   const rows = q.all(`SELECT ${ACTIVITY_LIST_COLUMNS} FROM activities ${w} ORDER BY ${order} LIMIT ? OFFSET ?`, ...params, Number(limit), Number(offset));
@@ -358,15 +361,31 @@ api.get('/model', (c) => {
   return c.json({ estimate: now, model: now ? estimateModel(now) : null, weight: th.weight, ftp: th.ftp });
 });
 
-/** The daily bike estimates over a range, cut to the days they change, with each one's Pmax. */
+/**
+ * The daily bike estimates over a range, cut to the days they change, with each one's Pmax.
+ * A value holds until the next point, so a long stretch between points is an estimate that
+ * didn't change, not a break: `gapBefore` marks the points that follow days with no estimate
+ * at all, and `gaps` are the real breaks in riding (90+ days), for the chart to squeeze.
+ */
 api.get('/model/history', (c) => {
   const { from, to } = range(c, 365);
-  return c.json(
-    changes(
-      storedSeries('ride').filter((e) => e.date >= from && e.date <= to),
-      estimateKey,
-    ).map((e) => ({ date: e.date, cp: Math.round(e.cp), wPrime: Math.round(e.wPrime), pmax: Math.round(estimateModel(e)?.pmax ?? 0) || null, ftp: thresholdsFor(e.date).ftp })),
-  );
+  const daily = storedSeries('ride').filter((e) => e.date >= from && e.date <= to);
+  const index = new Map(daily.map((e, i) => [e.date, i]));
+  const dates = q.all('SELECT DISTINCT local_date AS d FROM activities WHERE sport = ? AND local_date BETWEEN ? AND ? ORDER BY local_date', 'ride', from, to).map((r) => r.d as string);
+  return c.json({
+    points: changes(daily, estimateKey).map((e) => {
+      const prev = daily[(index.get(e.date) ?? 0) - 1];
+      return {
+        date: e.date,
+        cp: Math.round(e.cp),
+        wPrime: Math.round(e.wPrime),
+        pmax: Math.round(estimateModel(e)?.pmax ?? 0) || null,
+        ftp: thresholdsFor(e.date).ftp,
+        gapBefore: !!prev && differenceInCalendarDays(parseISO(e.date), parseISO(prev.date)) > 1,
+      };
+    }),
+    gaps: dateGaps(dates),
+  });
 });
 
 api.get('/trends', (c) => {
@@ -714,6 +733,20 @@ api.get('/trainerroad/status', (c) => c.json(trainerRoadStatus()));
 // its FTP (applied, AI FTP Detection, predicted) against this app's, its levels, plan and ride ratings
 api.get('/trainerroad/insights', (c) => c.json(trainerRoadInsights()));
 api.get('/plan/outlook', (c) => c.json(planOutlook()));
+/** Race-day forecast: the plan as it stands, its gaps filled, the best path, and a scenario of your own. */
+api.get('/forecast', (c) => c.json(forecast({ eventId: Number(c.req.query('event')) || null })));
+api.post('/forecast', async (c) => c.json(forecast((await c.req.json().catch(() => ({}))) as ForecastRequest)));
+api.post('/forecast/save', async (c) => {
+  const b = (await c.req.json().catch(() => ({}))) as Parameters<typeof saveScenario>[0];
+  if (!['planned', 'filled', 'best', 'custom'].includes(b.scenario)) return c.json({ error: 'Which scenario?' }, 400);
+  const saved = saveScenario(b);
+  return saved ? c.json(saved) : c.json({ error: 'Nothing to save: no forecast for this race' }, 400);
+});
+/** The training week by week, newest first: `before` a week to page back from. */
+api.get('/journal', (c) => {
+  const before = c.req.query('before');
+  return c.json(journal(before && /^\d{4}-\d{2}-\d{2}$/.test(before) ? before : null, Math.min(12, Math.max(1, Number(c.req.query('weeks')) || 6))));
+});
 api.post('/trainerroad/sync', (c) => {
   if (!trainerRoadMode()) return c.json({ error: 'TrainerRoad is not set up: set TRAINERROAD_USERNAME and TRAINERROAD_PASSWORD, or TRAINERROAD_CALENDAR_URL' }, 400);
   void syncTrainerRoad();

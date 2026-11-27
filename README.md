@@ -18,7 +18,8 @@ Requires Node.js ≥ 22.13. SQLite is built in (`node:sqlite`), so there is noth
 
 | Area | Features |
 |---|---|
-| **Dashboard** | Fitness / fatigue / form tiles, ramp rate & ACWR, week-to-date TSS vs plan, FTP, **what your latest ride says about your fitness**, **this week so far** (the headline of its training review), **last night** (Eight Sleep: sleep, HRV and heart rate asleep against your normal, and with your form and today's planned workout, what that means for today's training), next goal event with projected race-day CTL/TSB, compact PMC, upcoming workouts, recent activities with route thumbnails, 16-week volume |
+| **Dashboard** | **Today's call**: last night's recovery against your normal and your form made into one call for the day, today's session with its key set in watts at today's FTP (or what you've already done), and the race ahead with where the plan and the best path take you · fitness / fatigue / form tiles that open where each is explained, ramp rate & ACWR, week-to-date TSS vs plan, FTP, **what your latest ride says about your fitness**, **this week so far** (the headline of its training review), **last night** (Eight Sleep: sleep, HRV and heart rate asleep against your normal, and with your form and today's planned workout, what that means for today's training), next goal event with projected race-day CTL/TSB, compact PMC, upcoming workouts, recent activities with route thumbnails, 16-week volume |
+| **Journal** | Your training **week by week**, newest first and back to your first ride, everything about a week in one place: each day's sessions by name and what they were (a VO2max set at 378 W, a long endurance ride), how TrainerRoad's survey says they felt (a failed workout in red), planned workouts missed or still to come, load against the plan and your usual, fitness and form across it, FTP changes, and how you slept (hours, HRV against your normal) · the week's signs of fitness and what to watch, with its full review a click away and a copy for your coach · the last six months at a glance: each week's load against the load that holds your fitness, and FTP · long breaks fold into one line · every activity and calendar week opens its week here |
 | **Activity analysis** | **What this ride says**: what the session was (threshold intervals, a long endurance ride, a group ride…) and its main set rep by rep — how evenly it went, how heart rate answered and recovered — against the last time you did the same workout; a verdict from the heart rate the ride cost against your fitness and recent condition (heat, fatigue and indoor riding taken out); and efforts in context — close to or above your 90-day best, best power deep into a long ride, more than your current model allows — with the set's progress over the year and the ride among your last 8 weeks. Detected intervals are labelled by set |
 | | Stacked stream charts (power, HR, pace/speed, grade-adjusted pace, cadence, **W′ balance**, elevation, temperature) with a shared crosshair that moves a marker on the map · drag to select any range → full stats (NP, IF, kJ, W/kg, W′ used, Pw:HR…) · time/distance x-axis · 1/5/10/30 s smoothing · zoom |
 | | Laps, **auto-detected intervals**, and per-km / per-5 km splits (hover to highlight on chart + map, click to select) |
@@ -36,11 +37,19 @@ Requires Node.js ≥ 22.13. SQLite is built in (`node:sqlite`), so there is noth
 
 | Area | Features |
 |---|---|
+| **Forecast** | **Race day under every way of getting there**, side by side: the plan as it stands, the plan with its empty days ridden just enough to arrive fresh, the **best path** within your limits (the build, recovery weeks and taper the capacity model expects to give the most race-day power while arriving fresh), and **your own** plan, week by week · for each: race-day FTP with its likely range, 5, 20 and 60-minute power, fitness and form, hours, the biggest week and steepest ramp, and what to watch (steep ramps, weeks over your hours, load spikes, arriving tired or detrained) · fitness-and-form and FTP charts with every path overlaid and TrainerRoad's own FTP and prediction for reference · limits you set (CTL a week, hours a week, race-morning form) · keep any path as your **weekly targets**: the Calendar shows them and every projection rides them on days with nothing scheduled, planned workouts (TrainerRoad's too) staying in charge |
 | **TrainerRoad** | TrainerRoad's view of you beside this app's (with the TrainerRoad login): **its FTP against this app's**, as applied, as found by AI FTP Detection (including one waiting for you to accept it), and as predicted for a coming date, each set against this app's own estimate that day, with how closely the two have agreed day by day · **its prediction beside this app's forecast** for the same day, from the capacity model and the load planned in the calendar · AI FTP Detection's status and next run · **progression levels** by zone, where TrainerRoad expects them by the plan's end, and what accepting AI FTP Detection's FTP would do to them · the plan and its phases · **your rides as TrainerRoad saw them**: its TSS beside this app's, and how you said each felt in its post-ride survey, which also shows on the activity |
 | **Comeback** | Your best seasons — each dated to the effort that set its FTP and described by its own weeks — against where you are now. **What your data says**: the gap in 20-minute power, how fast it's closing since you came back, your aerobic engine at the same heart rate (heat, fatigue, indoor riding and age taken out), the long-term load behind it and the way back at your current load, then what to change for where you are: building up after time off, or the make-up of your training once riding is settled · your whole riding history with long breaks squeezed · best power by duration, **deep into a ride** (best 20 minutes after 1 000–3 000 kJ, with how many rides went that deep) and at the same heart rate · the year and the weeks before a peak, and what your peaks had in common · when a steady load gets you back, beside the path the model predicted for your comeback before it began, the load it takes by a date against the most you've ever sustained, and a plan to do it that fills your calendar |
 | **Calendar** | Month grid with completed activities (colour-coded compliance), planned workouts (with mini profiles), races, missed sessions · **your TrainerRoad plan**, workouts with their intervals and the races it's built around, kept in step as TrainerRoad adapts it · drag to reschedule · drag workouts from the library onto a day · weekly summary column (actual vs planned vs season-plan target TSS, hours, distance, end-of-week CTL/TSB) · workout detail with profile and exports |
 | **Workout Builder** | Structured steps, repeats and ramps with power (% FTP), pace (% threshold) or HR (% LTHR) targets and cadence · live profile and TSS / IF / kJ / time-in-zone · save to library · schedule · export **Zwift .zwo**, **.erg**, **.mrc**, JSON · 21 built-in workouts (sweet spot, threshold, over-unders, VO2max, 30/30s, anaerobic, sprints, FTP & ramp tests, run sessions) |
 | **Season Planner** | Annual-training-plan style periodisation working back from your A race (Prep → Base → Build → Peak → Taper → Race) with 2:1 / 3:1 / 4:1 loading, a max ramp rate, weekly-hours cap and a taper · live preview of weekly TSS and the CTL/ATL/TSB it produces · **"Fill calendar"** generates phase-appropriate structured workouts sized to each week's TSS · the active plan drives calendar targets and long-range PMC projection · A/B/C event management |
+
+### Getting around
+
+- **Search: ⌘K / Ctrl+K** (or **/**) from any page jumps to a page, finds an activity by name or note, and runs common actions (sync, import, new workout, theme).
+- **← / →** step to the previous or next activity on an activity, and page through months on the calendar.
+- Lists keep their place: the activity list's search, sport and sort live in the URL, the calendar's month too, and Back returns you to where you were scrolled.
+- On a phone, activities become a compact list and the calendar becomes a week-by-week agenda.
 
 ---
 
@@ -139,6 +148,7 @@ All analytics live in [`shared/analytics`](shared/analytics) and are covered by 
 - **Sleep and recovery** ([`sleep.ts`](shared/analytics/sleep.ts)): HRV-guided training as in Plews et al. (2012) and Javaloyes et al. (2019). The 7-night average of ln HRV is set against your normal: the mean ± 0.5 SD of the 60 nights before, once there are 14 of them. Heart rate asleep is compared the same way, with ± 1 SD. HRV below its range, or heart rate above its range, says keep today easy. Form then says whether training is the likely cause (TSB −20 or lower) or something else is. **How training shows in the night after it** compares each night with the nights a month either side of it, so a change in fitness doesn't tilt every row. It groups the nights by the day before's training load (every sport) in five bands, from rest days to over 180 TSS, and shows medians.
 - **Temperature** from a sensor stuck on one value (some head units report −7 °C throughout) is ignored.
 - **Polarization index** follows Treff et al. (2019) on the Seiler 3-zone distribution.
+- **Forecast** ([`forecast.ts`](shared/analytics/forecast.ts), [`server/forecast.ts`](server/forecast.ts)): each scenario is a load for every day from tomorrow to race day, ridden through the PMC (fitness, fatigue, form) and through every plausible fit of the capacity model (long-term load → 20-minute power), whose spread is the range given. Weekly loads become days in your own rhythm (your share of a week's load by weekday over the last six weeks), and hours at your own TSS per hour. *Fill the gaps* solves one daily load for the runs of 4+ empty days, halved in the race's last week, that brings race-morning form to the target (12 % of CTL by default). The *best path* searches build rates from holding fitness to your ramp limit and tapers of 0–2 weeks before race week: each week is solved to climb exactly its share of the ramp in your rhythm, a recovery week at 60 % every fourth, no week over your hours, the taper's depth solved for the form target; of the candidates arriving fresh, the one with the most race-day capacity (within 0.3 %, the least load). Race-day FTP, 5, 20 and 60-minute power are today's power-duration model with CP, W′ and the long-duration decay moved by the change in capacity; Pmax is left as it is. Kept as targets, a scenario stores its days, and the PMC projection uses each day's load where nothing is scheduled.
 - **Season plan**: phases are laid out backwards from race day. The build's CTL ramp is solved by simulation so race-day CTL lands on the target after the taper (capped by the max ramp and weekly hours); when it can't, the planner says whether hours or ramp is the limit and what would reach it. Recovery weeks run at 60 % load and the taper at 55–75 %. Hours use your own TSS per hour.
 
 ---
@@ -147,7 +157,7 @@ All analytics live in [`shared/analytics`](shared/analytics) and are covered by 
 
 ```
 shared/            Pure TypeScript used by both server and browser
-  analytics/       NP, curves, models, PMC, zones, running, workouts, season plan (+ tests)
+  analytics/       NP, curves, models, PMC, zones, running, workouts, season plan, forecast (+ tests)
   library.ts       Built-in structured workouts
 server/            Hono API on Node, SQLite via node:sqlite
   providers/       Strava OAuth, webhooks and sync; Eight Sleep and TrainerRoad sync
@@ -156,6 +166,8 @@ server/            Hono API on Node, SQLite via node:sqlite
   queue.ts         Persistent, rate-limit-aware job queue
   ingest.ts        Metrics computation & storage (streams gzipped)
   aggregate.ts     PMC, curve aggregation, trends, records
+  forecast.ts      Race-day scenarios from the calendar, the PMC and the capacity model
+  journal.ts       The training week by week: reviews, plan vs ridden, sleep, fitness
   demo.ts          Synthetic athlete generator
 src/               React + Vite + Tailwind front end, ECharts, Leaflet
 ```
@@ -190,6 +202,8 @@ Per-activity metrics, mean-max curves (power, NP, HR, speed, VAM, fatigue-state 
 | `DATA_DIR` | `./data` | Where `training.db` lives |
 | `APP_PASSWORD` | | Password-protects the app (login screen). Set it for any public deployment |
 | `API_URL`, `CORS_ORIGINS` | | Only for a frontend calling the API cross-origin without a proxy |
+| `VITE_MAP_TILES_LIGHT`, `VITE_MAP_TILES_DARK` | Esri grey canvas | Build time: Leaflet tile URL templates for the maps in each theme, e.g. a provider you have a key for. The default needs no key |
+| `VITE_MAP_ATTRIBUTION` | | Build time: the attribution your tile provider requires |
 
 ## Testing against real data
 

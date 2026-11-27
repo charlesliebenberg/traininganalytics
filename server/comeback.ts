@@ -160,6 +160,27 @@ export function capacityChange(to: string, plannedLoad: (date: string) => number
 }
 
 /**
+ * The capacity model as the forecast rides it: each plausible fit with the long-term load it
+ * carries out of today, the chosen one marked. Null without a model, or with one load barely moves.
+ */
+export function capacityFits(): { tau: number; a: number; b: number; ltl0: number; best: boolean }[] | null {
+  const h = history();
+  const m = h.model;
+  if (!m || !h.days.length || !informative(m)) return null;
+  const i = h.days.length - 1;
+  const fits = m.fits.filter((f) => f.plausible).map((f) => ({ tau: f.tau, a: f.a, b: f.b, ltl0: h.ltl(f.tau)[i], best: f.tau === m.tau }));
+  if (!fits.some((f) => f.best)) fits.unshift({ tau: m.tau, a: m.a, b: m.b, ltl0: h.ltl(m.tau)[i], best: true });
+  return fits;
+}
+
+/** The capacity model's validation and time constants, for saying how far to trust a forecast. */
+export function capacitySummary() {
+  const m = history().model;
+  if (!m) return null;
+  return { tau: m.tau, taus: m.fits.filter((f) => f.plausible).map((f) => f.tau), quantile: m.quantile, observations: m.observations, validation: m.validation ? { from: m.validation.from, mae: m.validation.mae, maeCtl: m.validation.maeCtl } : null, informative: informative(m) };
+}
+
+/**
  * The capacity model's 20-minute power day by day to `to`, riding the load planned until then:
  * each day's as a share of today's, by the best model and the range of the plausible ones (each
  * against its own today). Null as for capacityChange.

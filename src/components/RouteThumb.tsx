@@ -1,8 +1,9 @@
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { decodePolyline } from '../../shared/polyline';
 
 /** Tiny SVG rendering of an encoded polyline (equirectangular projection). */
-export function RouteThumb({ polyline, size = 44, color = 'var(--accent)', className }: { polyline: string | null; size?: number; color?: string; className?: string }) {
+/** Without a route (indoors, a pool), `fallback` sits in a tile of the same size, so rows still line up. */
+export function RouteThumb({ polyline, size = 44, color = 'var(--accent)', className, fallback }: { polyline: string | null; size?: number; color?: string; className?: string; fallback?: ReactNode }) {
   const path = useMemo(() => {
     if (!polyline) return null;
     const pts = decodePolyline(polyline);
@@ -22,9 +23,14 @@ export function RouteThumb({ polyline, size = 44, color = 'var(--accent)', class
     const oy = pad + (size - pad * 2 - (maxY - minY) * s) / 2;
     return xs.map((x, i) => `${i ? 'L' : 'M'}${(ox + (x - minX) * s).toFixed(1)},${(oy + (ys[i] - minY) * s).toFixed(1)}`).join('');
   }, [polyline, size]);
-  if (!path) return <div className={className} style={{ width: size, height: size }} />;
+  if (!path)
+    return (
+      <div className={`flex shrink-0 items-center justify-center rounded-lg ${fallback ? 'bg-surface-2' : ''} ${className ?? ''}`} style={{ width: size, height: size }}>
+        {fallback}
+      </div>
+    );
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className={className} aria-hidden>
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className={`shrink-0 ${className ?? ''}`} aria-hidden>
       <path d={path} fill="none" stroke={color} strokeWidth={1.6} strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   );

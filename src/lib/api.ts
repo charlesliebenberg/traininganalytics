@@ -1,4 +1,5 @@
 import { QueryClient, useMutation, useQuery, useQueryClient, type UseQueryOptions } from '@tanstack/react-query';
+import { toast } from './toast';
 
 export const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: 1 } },
@@ -51,14 +52,23 @@ export function useApi<T>(path: string | null, opts?: Partial<UseQueryOptions<T>
   });
 }
 
-/** Mutation that invalidates everything afterwards (data is highly interlinked). */
-export function useAction<TArgs, TRes = unknown>(fn: (args: TArgs) => Promise<TRes>, opts?: { onSuccess?: (r: TRes) => void }) {
+/**
+ * Mutation that invalidates everything afterwards (data is highly interlinked). A failure shows
+ * as a toast unless the caller shows it itself (`quietErrors`); `success` confirms one that
+ * otherwise leaves no visible trace.
+ */
+export function useAction<TArgs, TRes = unknown>(fn: (args: TArgs) => Promise<TRes>, opts?: { onSuccess?: (r: TRes) => void; success?: string | ((r: TRes) => string | null); quietErrors?: boolean }) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: fn,
     onSuccess: (r) => {
       qc.invalidateQueries();
+      const msg = typeof opts?.success === 'function' ? opts.success(r) : opts?.success;
+      if (msg) toast(msg);
       opts?.onSuccess?.(r);
+    },
+    onError: (e) => {
+      if (!opts?.quietErrors) toast(e instanceof Error ? e.message : String(e), 'error');
     },
   });
 }

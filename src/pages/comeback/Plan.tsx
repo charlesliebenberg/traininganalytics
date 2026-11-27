@@ -68,7 +68,7 @@ export function PlanSection({ o, peak, weeklyTss, setWeeklyTss, mix, buildTssPer
         },
       },
       xAxis: { type: 'category', data: cats, ...axisStyle(t, { grid: false }), axisLabel: { color: t.muted, fontSize: 10, hideOverlap: true } },
-      yAxis: valueAxis(t, { scale: true }),
+      yAxis: valueAxis(t, { scale: true, minInterval: 1 }),
       series: [
         { type: 'line', stack: 'band', silent: true, showSymbol: false, data: ws.map((w) => w.low), lineStyle: { opacity: 0 }, tooltip: { show: false } },
         { type: 'line', stack: 'band', silent: true, showSymbol: false, data: ws.map((w) => (w.high ?? 0) - (w.low ?? 0)), lineStyle: { opacity: 0 }, areaStyle: { color: alpha(t.accent, 0.12) }, tooltip: { show: false } },

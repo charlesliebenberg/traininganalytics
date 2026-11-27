@@ -28,7 +28,7 @@ export function Heatmap() {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
-  const tiles = useRef<L.TileLayer | null>(null);
+  const tiles = useRef<L.Layer | null>(null);
   const allBounds = useRef<L.LatLngBounds | null>(null);
   const [elsewhere, setElsewhere] = useState(0);
 
@@ -52,7 +52,6 @@ export function Heatmap() {
     if (!map.current || !tiles.current) return;
     tiles.current.remove();
     tiles.current = tileLayer(t.dark).addTo(map.current);
-    tiles.current.bringToBack();
   }, [t.dark]);
 
   useEffect(() => {

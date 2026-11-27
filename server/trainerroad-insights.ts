@@ -11,7 +11,7 @@ import { q } from './db';
 import { storedSeries } from './estimates';
 import { dailyLoads, today } from './aggregate';
 import { capacityChange } from './comeback';
-import { trDate, trainerRoadStatus, type SurveyAnswer } from './providers/trainerroad';
+import { surveyAnswer, trDate, trainerRoadStatus, type SurveyAnswer } from './providers/trainerroad';
 
 /** what TrainerRoad's private API gave: read field by field, defensively */
 type Json = any;
@@ -178,7 +178,8 @@ function readRide(r: Json): TrainerRoadRide {
     tss: num(d.tss ?? d.Tss),
     if: intensity == null ? null : intensity > 2 ? intensity / 100 : intensity,
     kj: num(d.kj ?? d.kilojoules ?? d.work),
-    survey: survey ? { rating: survey.rating ?? null, level: survey.level ?? null, reasons: survey.reasons ?? [], rpe: survey.rpe ?? null, text: survey.text ?? null } : null,
+    // read again from TrainerRoad's own record where it was kept, so a better reading applies to old rides too
+    survey: survey ? ((survey.raw?.response ? surveyAnswer(survey.raw.options ?? null, survey.raw.response) : null) ?? { rating: survey.rating ?? null, level: survey.level ?? null, reasons: survey.reasons ?? [], rpe: survey.rpe ?? null, text: survey.text ?? null }) : null,
     activity: sameRide(r.started ?? null),
   };
 }

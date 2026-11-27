@@ -64,12 +64,12 @@ export function Comeback() {
             Peaks come from your daily FTP estimates, which need rides with power. If your history is still syncing from Strava, check back once it finishes (Settings → Connections), or pin a date you know you were flying below.
           </Empty>
           <div className="flex justify-center pb-6">
-            <PinForm />
+            <PinForm startOpen />
           </div>
         </Card>
       ) : (
         <>
-          <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs text-muted">Your peaks: the best of each season, at least 4 months apart, dated to the effort that set them. Pick one to compare with.</div>
             <PinForm />
           </div>

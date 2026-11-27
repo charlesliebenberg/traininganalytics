@@ -7,7 +7,7 @@ import { describe, step as mkStep, uid, workoutMetrics } from '../../shared/anal
 import { POWER_ZONES } from '../../shared/analytics/zones';
 import { http, useAction, useApi } from '../lib/api';
 import { useTokens, alpha } from '../lib/theme';
-import { fmtDuration, fmtNum, fmtPace, iso, SPORT_LABEL } from '../lib/format';
+import { fmtDate, fmtDuration, fmtNum, fmtPace, iso, SPORT_LABEL } from '../lib/format';
 import { exportWorkout } from '../lib/download';
 import { Button, Card, Field, Input, PageHeader, Select, SportIcon, Stat, Modal } from '../components/ui';
 import { MiniProfile, WorkoutProfile } from '../components/charts';
@@ -29,14 +29,15 @@ function DurationInput({ value, onChange }: { value: number; onChange: (v: numbe
     if (secs > 0) onChange(secs);
     else setText(fmtDuration(value));
   };
-  return <Input value={text} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} className="h-8 w-20 px-2 text-center" title="mm:ss or h:mm:ss" />;
+  return <Input value={text} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} className="h-8 w-20 px-2 text-center" title="mm:ss or h:mm:ss" aria-label="Duration" />;
 }
 
-function PctInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+function PctInput({ value, onChange, label }: { value: number; onChange: (v: number) => void; label: string }) {
   return (
     <div className="relative">
-      <Input type="number" value={Math.round(value * 100)} onChange={(e) => onChange(Number(e.target.value) / 100)} className="h-8 w-[68px] pr-5 pl-2 text-right" />
-      <span className="pointer-events-none absolute top-1.5 right-1.5 text-[11px] text-muted">%</span>
+      {/* no spinner arrows: they sat under the % sign; arrow keys still step it */}
+      <Input type="number" inputMode="numeric" min={0} max={400} value={Math.round(value * 100)} onChange={(e) => onChange(Math.max(0, Number(e.target.value)) / 100)} className="h-8 w-[64px] [appearance:textfield] pr-6 pl-2 text-right [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none" aria-label={label} />
+      <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 text-[11px] text-muted">%</span>
     </div>
   );
 }
@@ -55,7 +56,7 @@ function StepRow({ s, onChange, onRemove, onMove, onDup, target, th }: { s: Work
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface px-2 py-1.5">
       <span className="h-8 w-1.5 shrink-0 rounded-full" style={{ background: alpha(t.power, 0.3 + (0.7 * Math.max(0, zoneIdx)) / 6) }} />
-      <Select value={s.intent} onChange={(e) => onChange({ ...s, intent: e.target.value as WorkoutIntent })} className="h-8 w-28 text-xs">
+      <Select value={s.intent} onChange={(e) => onChange({ ...s, intent: e.target.value as WorkoutIntent })} className="h-8 w-28 text-xs" aria-label="Step type">
         {INTENTS.map((i) => (
           <option key={i.value} value={i.value}>
             {i.label}
@@ -63,16 +64,17 @@ function StepRow({ s, onChange, onRemove, onMove, onDup, target, th }: { s: Work
         ))}
       </Select>
       <DurationInput value={s.duration} onChange={(duration) => onChange({ ...s, duration })} />
-      <PctInput value={s.low} onChange={(low) => onChange({ ...s, low, high: s.low === s.high && !s.ramp ? low : s.high })} />
+      <PctInput label={s.ramp ? "Start target" : "Low target"} value={s.low} onChange={(low) => onChange({ ...s, low, high: s.low === s.high && !s.ramp ? low : s.high })} />
       <span className="text-muted">–</span>
-      <PctInput value={s.high} onChange={(high) => onChange({ ...s, high })} />
+      <PctInput label={s.ramp ? "End target" : "High target"} value={s.high} onChange={(high) => onChange({ ...s, high })} />
       <label className="flex items-center gap-1 text-[11px] text-ink-2" title="Ramp linearly from low to high">
         <input type="checkbox" checked={!!s.ramp} onChange={(e) => onChange({ ...s, ramp: e.target.checked })} />
         Ramp
       </label>
-      <Input value={s.cadence ?? ''} onChange={(e) => onChange({ ...s, cadence: e.target.value ? Number(e.target.value) : null })} placeholder="rpm" className="h-8 w-14 px-2 text-center text-xs" title="Target cadence" />
-      <Input value={s.label ?? ''} onChange={(e) => onChange({ ...s, label: e.target.value || undefined })} placeholder="Label" className="h-8 w-28 min-w-0 flex-1 px-2 text-xs" />
-      <span className="tnum w-24 text-right text-[11px] text-muted">{hint}</span>
+      <Input value={s.cadence ?? ''} onChange={(e) => onChange({ ...s, cadence: e.target.value ? Number(e.target.value) : null })} placeholder="rpm" inputMode="numeric" className="h-8 w-14 px-2 text-center text-xs" title="Target cadence" aria-label="Target cadence" />
+      <Input value={s.label ?? ''} onChange={(e) => onChange({ ...s, label: e.target.value || undefined })} placeholder="Label" className="h-8 w-28 min-w-16 flex-1 px-2 text-xs" aria-label="Step label" />
+      <div className="ml-auto flex items-center gap-2">
+      <span className="tnum text-right text-[11px] whitespace-nowrap text-muted">{hint}</span>
       <div className="flex">
         <button onClick={() => onMove(-1)} className="rounded p-1 text-muted hover:bg-surface-2 hover:text-ink" aria-label="Move up">
           <ArrowUp className="h-3.5 w-3.5" />
@@ -86,6 +88,7 @@ function StepRow({ s, onChange, onRemove, onMove, onDup, target, th }: { s: Work
         <button onClick={onRemove} className="rounded p-1 text-muted hover:bg-surface-2 hover:text-critical" aria-label="Remove">
           <Trash2 className="h-3.5 w-3.5" />
         </button>
+      </div>
       </div>
     </div>
   );
@@ -113,6 +116,9 @@ interface Draft {
   builtin: boolean;
 }
 
+/** The parts of a draft you edit, to tell whether it has changed since it was loaded or saved. */
+const snap = (d: Draft) => JSON.stringify([d.name, d.sport, d.category, d.description, d.structure]);
+
 const EMPTY: Draft = {
   id: null,
   plannedId: null,
@@ -138,10 +144,27 @@ export function Workouts() {
   const [scheduling, setScheduling] = useState(false);
   const [schedDate, setSchedDate] = useState(iso(new Date()));
   const [highlight, setHighlight] = useState<string | null>(null);
+  // what was last loaded or saved: anything else is an edit you'd lose by switching workouts
+  const [baseline, setBaseline] = useState(() => snap(EMPTY));
+  const dirty = snap(draft) !== baseline;
+  const load = (d: Draft) => {
+    if (dirty && !confirm(`Discard your changes to “${draft.name}”?`)) return;
+    setDraft(d);
+    setBaseline(snap(d));
+  };
+  useEffect(() => {
+    if (!dirty) return;
+    const h = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [dirty]);
 
   useEffect(() => {
     const p = planned.data?.find((x) => x.id === Number(plannedId));
-    if (p?.structure) setDraft({ id: null, plannedId: p.id, name: p.title, sport: p.sport, category: 'Planned', description: p.description ?? '', structure: p.structure, builtin: false });
+    if (!p?.structure) return;
+    const d: Draft = { id: null, plannedId: p.id, name: p.title, sport: p.sport, category: 'Planned', description: p.description ?? '', structure: p.structure, builtin: false };
+    setDraft(d);
+    setBaseline(snap(d));
   }, [planned.data, plannedId]);
 
   const ftp = th.data?.current.ftp;
@@ -157,14 +180,21 @@ export function Workouts() {
       if (draft.id && !draft.builtin) return http<WorkoutTemplate>(`/templates/${draft.id}`, { method: 'PUT', json: body });
       return http<WorkoutTemplate>('/templates', { method: 'POST', json: body });
     },
-    { onSuccess: (r: any) => r?.id && !draft.plannedId && setDraft((d) => ({ ...d, id: r.id, builtin: false })) },
+    {
+      onSuccess: (r: any) => {
+        setBaseline(snap(draft));
+        if (r?.id && !draft.plannedId) setDraft((d) => ({ ...d, id: r.id, builtin: false }));
+      },
+      success: () => (draft.plannedId ? 'Planned workout saved' : draft.id && !draft.builtin ? `Saved “${draft.name}”` : `“${draft.name}” added to your library`),
+    },
   );
-  const del = useAction(() => http(`/templates/${draft.id}`, { method: 'DELETE' }), { onSuccess: () => setDraft(EMPTY) });
+  const del = useAction(() => http(`/templates/${draft.id}`, { method: 'DELETE' }), { onSuccess: () => (setDraft(EMPTY), setBaseline(snap(EMPTY))), success: 'Workout deleted' });
   const schedule = useAction(() => http('/planned', { method: 'POST', json: { date: schedDate, sport: draft.sport, title: draft.name, description: draft.description, structure: draft.structure } }), {
     onSuccess: () => {
       setScheduling(false);
-      nav('/calendar');
+      nav(`/calendar?m=${schedDate.slice(0, 7)}`);
     },
+    success: () => `Scheduled “${draft.name}” for ${fmtDate(schedDate, 'EEE d MMM')}`,
   });
 
   const list = (templates.data ?? []).filter((w) => (!filter || w.sport === filter) && (w.name.toLowerCase().includes(search.toLowerCase()) || w.category.toLowerCase().includes(search.toLowerCase())));
@@ -178,7 +208,8 @@ export function Workouts() {
         subtitle={draft.plannedId ? 'Editing a planned workout' : 'Design structured workouts, save them to your library, schedule and export to Zwift / TrainerRoad / Wahoo'}
         actions={
           <>
-            <Button icon={<Plus className="h-4 w-4" />} onClick={() => setDraft({ ...EMPTY, structure: JSON.parse(JSON.stringify(EMPTY.structure)) })}>
+            {dirty && <span className="text-xs text-muted">Unsaved changes</span>}
+            <Button icon={<Plus className="h-4 w-4" />} onClick={() => load({ ...EMPTY, structure: JSON.parse(JSON.stringify(EMPTY.structure)) })}>
               New
             </Button>
             <Button icon={<CalendarPlus className="h-4 w-4" />} onClick={() => setScheduling(true)}>
@@ -209,7 +240,7 @@ export function Workouts() {
                   return (
                     <button
                       key={w.id}
-                      onClick={() => setDraft({ id: w.id, plannedId: null, name: w.name, sport: w.sport, category: w.category, description: w.description, structure: JSON.parse(JSON.stringify(w.structure)), builtin: w.builtin })}
+                      onClick={() => load({ id: w.id, plannedId: null, name: w.name, sport: w.sport, category: w.category, description: w.description, structure: JSON.parse(JSON.stringify(w.structure)), builtin: w.builtin })}
                       className={clsx('mb-0.5 block w-full rounded-lg px-2 py-1.5 text-left hover:bg-surface-2', draft.id === w.id && 'bg-accent-soft')}
                     >
                       <div className="flex items-center gap-1.5">

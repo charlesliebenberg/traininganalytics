@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, ExternalLink, Pencil, Trash2, Check } from '
 import type { ActivityDetail as Detail, PlannedWorkout, Sport } from '../../shared/types';
 import { http, useAction, useApi } from '../lib/api';
 import { useTokens } from '../lib/theme';
-import { Badge, Button, Card, Input, Segmented, Spinner, SportIcon, Stat, Empty, Select } from '../components/ui';
+import { Badge, Button, Card, FillBox, Input, Segmented, Spinner, SportIcon, Stat, Empty, Select, buttonClass } from '../components/ui';
 import { RouteMap, type RouteMapHandle } from '../components/RouteMap';
 import { MiniProfile } from '../components/charts';
 import { InsightPanel, type ActivityInsights } from '../components/insights';
@@ -14,6 +14,7 @@ import type { SleepRead } from '../../shared/analytics/sleep';
 import { StreamsChart, buildChannels, isPaceSport, type ChannelKey } from './activity/StreamsChart';
 import { ActivityCurveCard, BestEffortsCard, DecouplingCard, DistributionCard, QuadrantCard, SegmentsCard, SelectionStats, ZonesCard, findBest } from './activity/panels';
 import { fmtDate, fmtDistance, fmtDuration, fmtElevation, fmtNum, fmtPace, fmtSpeed, fmtTemp, SPORT_LABEL, TSS_METHOD_LABEL } from '../lib/format';
+import { isTyping, useDocumentTitle } from '../lib/hooks';
 
 type DetailResponse = Detail & { nav: { prev: number | null; next: number | null }; planned: PlannedWorkout | null; sleep: SleepRead | null; trainerRoad: TrainerRoadRide | null };
 
@@ -87,8 +88,22 @@ export function ActivityDetail() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [a?.id, hasStreams, sel]);
 
-  const update = useAction((b: Record<string, unknown>) => http(`/activities/${id}`, { method: 'PATCH', json: b }));
-  const del = useAction(() => http(`/activities/${id}`, { method: 'DELETE' }), { onSuccess: () => nav('/activities') });
+  useDocumentTitle(a ? `${a.name} · ${fmtDate(a.localDate, 'd MMM yyyy')}` : null);
+  // ← and → step through your activities
+  const prevId = a?.nav.prev;
+  const nextId = a?.nav.next;
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (isTyping(e) || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      const to = e.key === 'ArrowLeft' ? prevId : e.key === 'ArrowRight' ? nextId : null;
+      if (to) nav(`/activities/${to}`);
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [prevId, nextId, nav]);
+
+  const update = useAction((b: Record<string, unknown>) => http(`/activities/${id}`, { method: 'PATCH', json: b }).then(() => b), { success: (b) => ('sport' in b ? 'Sport changed: metrics recalculated' : 'name' in b ? 'Renamed' : 'Saved') });
+  const del = useAction(() => http(`/activities/${id}`, { method: 'DELETE' }), { onSuccess: () => nav('/activities'), success: 'Activity deleted' });
 
   const allChannels = useMemo(() => (a?.streams ? buildChannels(a.streams, a.sport, a.thresholds, t, smooth) : []), [a, t, smooth]);
   const channels = useMemo(() => allChannels.filter((c) => !hidden.has(c.key)), [allChannels, hidden]);
@@ -101,7 +116,7 @@ export function ActivityDetail() {
   const pace = isPaceSport(a.sport);
   const s = a.streams;
   const hasGps = !!(s?.lat && s.lat.some((v) => v != null));
-  const wkg = a.avgPower ? a.avgPower / th.weight : null;
+  const wkg = a.avgPower && th.weight ? a.avgPower / th.weight : null;
   const pick = (r: [number, number]) => {
     setSelection(r);
     setZoom(null);
@@ -136,20 +151,24 @@ export function ActivityDetail() {
             </Link>
             <span>/</span>
             <span>{fmtDate(a.startTime, 'EEEE d MMMM yyyy · HH:mm')}</span>
+            <span>·</span>
+            <Link to={`/journal?week=${a.localDate}`} className="hover:text-ink" title="The week this was part of, in the journal">
+              Its week
+            </Link>
           </div>
           <div className="flex items-center gap-2.5">
             <SportIcon sport={a.sport} className="h-6 w-6" />
             {editing ? (
               <form
-                className="flex gap-2"
+                className="flex min-w-0 gap-2"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  update.mutate({ name });
+                  if (name.trim() && name.trim() !== a.name) update.mutate({ name: name.trim() });
                   setEditing(false);
                 }}
               >
-                <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus className="w-80" />
-                <Button type="submit" variant="primary" icon={<Check className="h-4 w-4" />} />
+                <Input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setEditing(false)} autoFocus className="w-full max-w-80 min-w-0" aria-label="Activity name" />
+                <Button type="submit" variant="primary" icon={<Check className="h-4 w-4" />} aria-label="Save name" />
               </form>
             ) : (
               <h1 className="truncate text-[22px] font-semibold tracking-tight">{a.name}</h1>
@@ -178,7 +197,7 @@ export function ActivityDetail() {
             {!a.detailed && <Badge color={t.warning}>Summary only — streams pending</Badge>}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Select value={a.rpe ?? ''} onChange={(e) => update.mutate({ rpe: e.target.value ? Number(e.target.value) : null })} title="Rate of perceived exertion">
             <option value="">RPE –</option>
             {Array.from({ length: 10 }, (_, i) => (
@@ -195,14 +214,15 @@ export function ActivityDetail() {
             ))}
           </Select>
           {a.source === 'strava' && a.externalId && (
-            <a href={`https://www.strava.com/activities/${a.externalId}`} target="_blank" rel="noreferrer">
-              <Button icon={<ExternalLink className="h-4 w-4" />}>Strava</Button>
+            <a href={`https://www.strava.com/activities/${a.externalId}`} target="_blank" rel="noreferrer" className={buttonClass()}>
+              <ExternalLink className="h-4 w-4" />
+              Strava
             </a>
           )}
-          <Button variant="danger" icon={<Trash2 className="h-4 w-4" />} onClick={() => confirm('Delete this activity?') && del.mutate(undefined)} />
+          <Button variant="danger" icon={<Trash2 className="h-4 w-4" />} onClick={() => confirm(`Delete “${a.name}”? This can't be undone.`) && del.mutate(undefined)} title="Delete activity" aria-label="Delete activity" />
           <div className="flex">
-            <Button variant="ghost" disabled={!a.nav.prev} onClick={() => nav(`/activities/${a.nav.prev}`)} icon={<ChevronLeft className="h-4 w-4" />} title="Previous" />
-            <Button variant="ghost" disabled={!a.nav.next} onClick={() => nav(`/activities/${a.nav.next}`)} icon={<ChevronRight className="h-4 w-4" />} title="Next" />
+            <Button variant="ghost" disabled={!a.nav.prev} onClick={() => nav(`/activities/${a.nav.prev}`)} icon={<ChevronLeft className="h-4 w-4" />} title="Previous activity (←)" aria-label="Previous activity" />
+            <Button variant="ghost" disabled={!a.nav.next} onClick={() => nav(`/activities/${a.nav.next}`)} icon={<ChevronRight className="h-4 w-4" />} title="Next activity (→)" aria-label="Next activity" />
           </div>
         </div>
       </div>
@@ -271,9 +291,12 @@ export function ActivityDetail() {
               </div>
             </Card>
             {hasGps && (
-              <div className="flex flex-col gap-4">
-                <div className="card overflow-hidden p-1.5">
-                  <RouteMap ref={mapRef} lat={s.lat!} lng={s.lng!} highlight={highlight} height={selection ? 300 : 420} color={`var(--sport-${a.sport})`} />
+              <div className="flex min-w-0 flex-col gap-4">
+                {/* the map takes whatever height the streams leave it */}
+                <div className="card flex flex-1 flex-col overflow-hidden p-1.5">
+                  <FillBox min={selection ? 280 : 360}>
+                    <RouteMap ref={mapRef} lat={s.lat!} lng={s.lng!} highlight={highlight} height="100%" color={`var(--sport-${a.sport})`} />
+                  </FillBox>
                 </div>
                 {selection && <SelectionStats streams={s} range={selection} sport={a.sport} th={th} onClear={() => setSelection(null)} onZoom={() => setZoom(selection)} />}
               </div>
@@ -315,8 +338,8 @@ export function ActivityDetail() {
           {a.tss != null && (a.tssMethod === 'power' || a.tssMethod === 'pace') && a.intensity != null && (
             <p className="mt-4 text-xs text-muted">
               {a.tssMethod === 'power'
-                ? `TSS ${fmtNum(a.tss)} = ${fmtDuration(a.movingTime)} moving × IF² (${fmtNum(a.intensity, 3)}) × 100 at FTP ${th.ftp} W`
-                : `rTSS ${fmtNum(a.tss)} = ${fmtDuration(a.movingTime)} moving × IF² (${fmtNum(a.intensity, 3)}) × 100, where IF = normalized grade-adjusted pace ÷ threshold pace ${fmtPace(th.runThresholdSpeed, 'run')}`}
+                ? `TSS ${fmtNum(a.tss)} = ${fmtDuration(a.movingTime)} moving × IF ${fmtNum(a.intensity, 3)}² × 100, at FTP ${a.ftpUsed ?? th.ftp} W`
+                : `rTSS ${fmtNum(a.tss)} = ${fmtDuration(a.movingTime)} moving × IF ${fmtNum(a.intensity, 3)}² × 100, where IF = normalized grade-adjusted pace ÷ threshold pace ${fmtPace(th.runThresholdSpeed, 'run')}`}
               {a.elapsedTime - a.movingTime >= 300 ? ` · stops of 20 s or more (${fmtDuration(a.elapsedTime - a.movingTime)} in all) don't count` : ''}.
             </p>
           )}

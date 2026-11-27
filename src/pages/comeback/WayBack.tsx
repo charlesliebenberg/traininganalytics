@@ -106,7 +106,7 @@ export function WayBack({ o, peak, months, weeklyTss, setWeeklyTss, planLoad }: 
         },
       },
       xAxis: { type: 'time', min: past.length ? mid(past[0]) - 7 * DAY : today.getTime(), max: weeks[weeks.length - 1], ...axisStyle(t, { grid: false }), axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, formatter: (x: number) => fmtDate(new Date(x), "MMM ''yy") } },
-      yAxis: valueAxis(t, { scale: true, name: '20-min power (W)', nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -40] } }),
+      yAxis: valueAxis(t, { scale: true, minInterval: 1, name: '20-min power (W)', nameTextStyle: { color: t.ink2, fontSize: 11, align: 'left', padding: [0, 0, 0, -40] } }),
       series: [
         { type: 'scatter', name: 'Best 20 min of the week', symbolSize: 8, data: past.filter((w) => w.best).map((w) => [mid(w), w.best]), itemStyle: { color: alpha(t.muted, 0.55), borderColor: t.surface, borderWidth: 1 } },
         { type: 'line', name: 'Capacity', showSymbol: false, data: past.map((w) => [mid(w), w.capacity]), lineStyle: { color: t.accent, width: 2 }, itemStyle: { color: t.accent } },

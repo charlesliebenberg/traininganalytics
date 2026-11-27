@@ -176,3 +176,30 @@ export function halvesText(h: [number, number]): string {
 }
 
 export { setLabel };
+
+/** Strava's name for an activity nobody renamed: "Afternoon Ride", "Lunch Run", "Evening Virtual Ride". */
+const GENERIC_NAME = /^(morning|lunch|afternoon|evening|night)\s+(virtual\s+|mountain\s+bike\s+|gravel\s+|e-bike\s+|trail\s+)?(ride|run|walk|hike|swim|workout|weight\s+training)$/i;
+export const isGenericName = (name: string) => GENERIC_NAME.test(name.trim());
+
+/**
+ * The name to show for an activity: the athlete's own, or — when Strava named it by the time of
+ * day — the planned workout it was matched to ("Septeret" rather than "Afternoon Ride").
+ */
+export function activityTitle(a: { name: string; plannedTitle?: string | null }): string {
+  const planned = a.plannedTitle?.trim();
+  return planned && isGenericName(a.name) ? planned : a.name;
+}
+
+/**
+ * What the session was, in a few words, from its analysis: "VO2max · 4 × 5 min · 378 W",
+ * "Long endurance", "Group ride / race". Null when it wasn't analysed (no power or pace).
+ */
+export function sessionBrief(a: { sport: string; sessionType?: SessionType | null; sessionLong?: boolean; mainSet?: { kind: WorkSet['kind']; reps: number; dur: number; out: number } | null }): string | null {
+  const t = a.sessionType;
+  if (!t) return null;
+  const label = t === 'endurance' && a.sessionLong ? (a.sport === 'run' ? 'Long run' : 'Long endurance') : t === 'race' ? (a.sport === 'run' ? 'Race' : 'Group ride / race') : TYPE_LABEL[t];
+  const m = a.mainSet;
+  if (!m || t === 'endurance' || t === 'recovery' || t === 'race') return label;
+  const out = a.sport === 'run' ? fmtPace(m.out, 'run') : `${Math.round(m.out)} W`;
+  return `${label} · ${setLabel({ kind: m.kind, reps: m.reps, dur: m.dur })} · ${out}`;
+}

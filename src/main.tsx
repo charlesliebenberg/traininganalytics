@@ -10,6 +10,7 @@ import { RangeProvider } from './lib/range';
 import { setUnits } from './lib/format';
 import { Layout } from './components/Layout';
 import { Button, Empty, Spinner } from './components/ui';
+import { Toaster } from './lib/toast';
 import type { Preferences } from '../shared/types';
 
 const page = <K extends string>(name: K, loader: () => Promise<Record<K, React.ComponentType>>) => lazy(() => loader().then((m) => ({ default: m[name] })));
@@ -28,6 +29,8 @@ const Settings = page('Settings', () => import('./pages/Settings'));
 const Thresholds = page('Thresholds', () => import('./pages/Thresholds'));
 const Comeback = page('Comeback', () => import('./pages/Comeback'));
 const TrainerRoad = page('TrainerRoad', () => import('./pages/TrainerRoad'));
+const Forecast = page('Forecast', () => import('./pages/Forecast'));
+const Journal = page('Journal', () => import('./pages/Journal'));
 
 setUnauthorizedHandler(() => queryClient.invalidateQueries({ queryKey: ['/session'] }));
 
@@ -48,10 +51,12 @@ function Prefs({ children }: { children: ReactNode }) {
       queryClient.invalidateQueries({ predicate: (q) => q.queryKey[0] !== '/preferences' });
     }
   }, [data?.units]);
-  // the server's "today" follows your time zone, so its pages and the browser's agree
+  // the server's "today" follows the athlete's time zone. A first visit sets it from the browser;
+  // after that a browser elsewhere (travel, a coach, a work machine on UTC) only offers to change
+  // it (TimezoneNotice), rather than moving everyone's day boundaries without a word
   useEffect(() => {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    if (data && tz && data.timezone !== tz)
+    if (data && tz && !data.timezone)
       http('/preferences', { method: 'PUT', json: { timezone: tz } })
         .then(() => queryClient.invalidateQueries())
         .catch(() => {});
@@ -81,6 +86,7 @@ function Root() {
               <Routes>
                 <Route element={<Layout />}>
                   <Route index element={<Dashboard />} />
+                  <Route path="journal" element={<Journal />} />
                   <Route path="activities" element={<Activities />} />
                   <Route path="activities/:id" element={<ActivityDetail />} />
                   <Route path="fitness" element={<Fitness />} />
@@ -88,6 +94,7 @@ function Root() {
                   <Route path="trends" element={<Trends />} />
                   <Route path="records" element={<Records />} />
                   <Route path="thresholds" element={<Thresholds />} />
+                  <Route path="forecast" element={<Forecast />} />
                   <Route path="comeback" element={<Comeback />} />
                   <Route path="trainerroad" element={<TrainerRoad />} />
                   <Route path="map" element={<Heatmap />} />
@@ -101,6 +108,7 @@ function Root() {
             </Prefs>
             </AuthGate>
           </BrowserRouter>
+          <Toaster />
         </RangeProvider>
       </QueryClientProvider>
     </ThemeContext.Provider>

@@ -75,7 +75,7 @@ export function SetProgressChart({ p, sport, height = 150 }: { p: SetProgress; s
         },
       },
       xAxis: { type: 'time' as const, ...axisStyle(t, { grid: false }), axisLabel: { color: t.muted, fontSize: 10, hideOverlap: true, formatter: (v: number) => fmtDate(new Date(v), 'd MMM') } },
-      yAxis: valueAxis(t, { scale: true, splitNumber: 3, axisLabel: { color: t.muted, fontSize: 10, formatter: (v: number) => (run ? fmtPace(v, 'run', false) : `${Math.round(v)}`) } }),
+      yAxis: valueAxis(t, { scale: true, splitNumber: 3, minInterval: run ? undefined : 1, axisLabel: { color: t.muted, fontSize: 10, formatter: (v: number) => (run ? fmtPace(v, 'run', false) : `${Math.round(v)}`) } }),
       series: [
         {
           type: 'line' as const,
@@ -167,7 +167,7 @@ export function KeySetsChart({ sets, sport = 'ride', height = 300 }: { sets: Key
         ...axisStyle(t, { grid: false }),
         axisLabel: { color: t.muted, fontSize: 10, hideOverlap: true, formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), span > 200 * 86400000 ? "MMM ''yy" : 'd MMM')) },
       },
-      yAxis: valueAxis(t, { scale: true, axisLabel: { color: t.muted, fontSize: 10, formatter: (v: number) => `${v} W` } }),
+      yAxis: valueAxis(t, { scale: true, minInterval: 1, axisLabel: { color: t.muted, fontSize: 10, formatter: (v: number) => `${v} W` } }),
       series: [
         ...lined.map((f, i) => ({
           type: 'line' as const,

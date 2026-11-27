@@ -87,3 +87,53 @@ export function dailyTssForCtl(from: number, to: number, days: number, ctlDays =
 export function acwr(atl: number, ctl: number): number | null {
   return ctl > 1 ? atl / ctl : null;
 }
+
+/**
+ * What to ride on the days with nothing planned before a race, so race-day form lands in the
+ * fresh range rather than wherever an unfinished plan leaves it. `days` runs from tomorrow to
+ * race day: each day's planned load, and whether it is free (in a stretch with nothing planned).
+ * Free days get one daily load, halved in the race's last `taperDays`; it is solved so form on
+ * race morning (TSB, from the day before) is `target` × fitness. Race-day CTL includes the
+ * race's own planned load, as the PMC shows it.
+ */
+export function fillForRace(o: {
+  ctl: number;
+  atl: number;
+  days: { date: string; planned: number; free: boolean }[];
+  ctlDays?: number;
+  atlDays?: number;
+  /** TSB as a fraction of CTL on race morning: 0.12 is the middle of "fresh" */
+  target?: number;
+  taperDays?: number;
+}): { daily: number; ctl: number; tsb: number; load: number[] } | null {
+  const { ctlDays = 42, atlDays = 7, target = 0.12, taperDays = 7 } = o;
+  const n = o.days.length;
+  if (!n || !o.days.some((d) => d.free)) return null;
+  const kc = 1 - Math.exp(-1 / ctlDays);
+  const ka = 1 - Math.exp(-1 / atlDays);
+  const loadFor = (daily: number) => o.days.map((d, i) => d.planned + (d.free && i < n - 1 ? daily * (i >= n - 1 - taperDays ? 0.5 : 1) : 0));
+  const run = (daily: number) => {
+    const load = loadFor(daily);
+    let ctl = o.ctl;
+    let atl = o.atl;
+    let tsb = 0;
+    for (let i = 0; i < n; i++) {
+      if (i === n - 1) tsb = ctl - atl;
+      ctl += (load[i] - ctl) * kc;
+      atl += (load[i] - atl) * ka;
+    }
+    return { ctl, tsb, load };
+  };
+  const rel = (r: { ctl: number; tsb: number }) => r.tsb / Math.max(r.ctl, 1);
+  // form falls as load rises: bisect for the load that meets the target
+  let lo = 0;
+  let hi = 400;
+  if (rel(run(lo)) <= target) return { daily: 0, ...run(0) };
+  if (rel(run(hi)) > target) return { daily: hi, ...run(hi) };
+  for (let k = 0; k < 40; k++) {
+    const mid = (lo + hi) / 2;
+    if (rel(run(mid)) > target) lo = mid;
+    else hi = mid;
+  }
+  return { daily: hi, ...run(hi) };
+}

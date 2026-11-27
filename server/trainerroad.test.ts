@@ -526,4 +526,13 @@ describe('TrainerRoad’s post-ride survey, read', () => {
     expect(surveyAnswer(options, { rpeSurveyElementId: 999, translatedDisplayName: 'Very Hard' })).toMatchObject({ rating: 'Very Hard', level: null });
     expect(surveyAnswer([], { rpe: 2.5, text: 'Windy' })).toEqual({ rating: null, level: null, reasons: [], rpe: 2.5, text: 'Windy' });
   });
+  it('reads the newer shape: the answer in its own words, a reason under the answer it belongs to', async () => {
+    const { surveyAnswer } = await import('./providers/trainerroad');
+    // what TrainerRoad sends now: its 1–5 scale as words, and `rpe` repeating the level
+    expect(surveyAnswer(null, { elementKind: 3, parentElementKind: null, rpe: 3, translatedElementName: 'Hard', translatedParentElementName: null, text: null, reasons: null })).toEqual({ rating: 'Hard', level: 3, reasons: [], rpe: null, text: null });
+    // a failed workout: the answer is the parent, the element its reason, and `rpe` is no RPE
+    expect(surveyAnswer(null, { elementKind: 19, parentElementKind: 6, rpe: 16, translatedElementName: 'Heat', translatedParentElementName: 'I Did Not Pass', text: null, reasons: null })).toEqual({ rating: 'I Did Not Pass', level: null, reasons: ['Heat'], rpe: null, text: null });
+    // option words lose TrainerRoad's number
+    expect(surveyAnswer([{ elementId: 4, kind: 4, text: '4 - Very Hard' }], { rpeSurveyElementId: 4 })).toMatchObject({ rating: 'Very Hard', level: 4 });
+  });
 });

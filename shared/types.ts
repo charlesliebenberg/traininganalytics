@@ -61,10 +61,14 @@ export interface Thresholds {
   /** kg */
   weight: number;
   /** Where ftp / runThresholdSpeed / swimCss came from for this date */
-  sources?: { ftp: ThresholdSource; run: ThresholdSource; swim: ThresholdSource; hr?: ThresholdSource };
+  sources?: { ftp: ThresholdSource; run: ThresholdSource; swim: ThresholdSource; hr?: ThresholdSource; weight?: WeightSource };
+  /** the day the weight in use was recorded: a settings entry, or a weigh-in elsewhere */
+  weightDate?: string;
 }
 
 export type ThresholdSource = 'auto' | 'manual' | 'default';
+/** A weight entered here, the default, or the latest weigh-in TrainerRoad has (when newer). */
+export type WeightSource = 'manual' | 'default' | 'trainerroad';
 
 export interface Lap {
   name: string;
@@ -147,6 +151,10 @@ export interface Activity {
   /** its kind, and whether it was long for the sport (lists too) */
   sessionType?: SessionType | null;
   sessionLong?: boolean;
+  /** the main set, in brief: "4 × 5 min at 378 W" (lists too) */
+  mainSet?: { kind: 'reps' | 'ladder' | 'single'; reps: number; dur: number; out: number } | null;
+  /** the planned workout it was matched to, by name (lists too) */
+  plannedTitle?: string | null;
 }
 
 export interface ActivityDetail extends Activity {
@@ -320,6 +328,11 @@ export interface SeasonWeek {
   tsb: number;
   recovery: boolean;
   event: string | null;
+  /**
+   * The load day by day, from weekStart (a plan kept from the forecast): projections use each
+   * day's where nothing is scheduled that day, instead of spreading the week's total evenly.
+   */
+  days?: (number | null)[];
 }
 
 export interface SeasonPlan {
