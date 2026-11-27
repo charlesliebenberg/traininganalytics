@@ -6,7 +6,8 @@
  * the other; the plan's load is the only thing they share.
  */
 import { addDays, differenceInCalendarDays, format, parseISO, subDays } from 'date-fns';
-import { formZone } from '../shared/analytics/pmc';
+import { fillForRace, formZone } from '../shared/analytics/pmc';
+import type { PmcPoint } from '../shared/types';
 import { compareFtp, valueOn, type FtpPoint } from '../shared/analytics/trainerroad';
 import { getPreferences, q, rowToEvent } from './db';
 import { dailyLoads, pmc, today } from './aggregate';
@@ -40,6 +41,52 @@ export interface FtpPathPoint {
   value: number;
   low: number;
   high: number;
+}
+
+export interface ReadinessStretch {
+  from: string;
+  to: string;
+  days: number;
+  /** load a day on it, and what that takes at your recent TSS per hour */
+  daily: number;
+  hours: number | null;
+  /** the last week before the race, at half the load */
+  taper: boolean;
+}
+
+export interface Readiness {
+  /** the days with nothing planned, as ridden: before race week, then race week's taper */
+  stretches: ReadinessStretch[];
+  /** race day, riding them: fitness, form and its zone */
+  ctl: number;
+  tsb: number;
+  form: ReturnType<typeof formZone>;
+}
+
+/**
+ * The load on the unplanned days before the race that brings race-morning form to the middle of
+ * "fresh" (TSB about 12 % of CTL), halved over the last week — and where that leaves race day.
+ */
+function readinessFor(pts: PmcPoint[], t: string, raceDate: string, unplanned: { from: string; to: string }[]): Readiness | null {
+  const now = pts.find((x) => x.date === t);
+  if (!now) return null;
+  const free = (d: string) => unplanned.some((u) => d >= u.from && d <= u.to);
+  const days = pts.filter((x) => x.date > t && x.date <= raceDate).map((x) => ({ date: x.date, planned: x.tss, free: free(x.date) }));
+  const prefs = getPreferences();
+  const fill = fillForRace({ ctl: now.ctl, atl: now.atl, days, ctlDays: prefs.ctlDays, atlDays: prefs.atlDays });
+  if (!fill || fill.daily <= 0) return null;
+  // your riding's TSS per hour over the last six weeks turns load into time
+  const recent = q.get<{ tss: number | null; secs: number | null }>('SELECT SUM(COALESCE(tss_override, tss)) AS tss, SUM(moving_time) AS secs FROM activities WHERE local_date > ? AND local_date <= ?', iso(subDays(parseISO(t), 42)), t);
+  const perHour = recent?.tss && recent.secs && recent.tss / (recent.secs / 3600) > 20 ? recent.tss / (recent.secs / 3600) : null;
+  const raceWeekFrom = iso(subDays(parseISO(raceDate), 7));
+  const stretches: ReadinessStretch[] = [];
+  for (const taper of [false, true]) {
+    const mine = days.map((d, i) => ({ ...d, load: fill.load[i] - d.planned })).filter((d) => d.free && d.date < raceDate && d.date >= raceWeekFrom === taper);
+    if (!mine.length) continue;
+    const daily = mine.reduce((sum, d) => sum + d.load, 0) / mine.length;
+    stretches.push({ from: mine[0].date, to: mine[mine.length - 1].date, days: mine.length, daily: Math.round(daily / 5) * 5, hours: perHour ? Math.round((daily / perHour) * 4) / 4 : null, taper });
+  }
+  return { stretches, ctl: fill.ctl, tsb: fill.tsb, form: formZone(fill.tsb, fill.ctl) };
 }
 
 export function planOutlook() {
@@ -121,11 +168,14 @@ export function planOutlook() {
 
   // ---------- fitness and form on race day, riding the plan ----------
   let raceDay: { date: string; days: number; ctl: number; atl: number; tsb: number; form: ReturnType<typeof formZone>; ctlNow: number | null } | null = null;
+  let readiness: Readiness | null = null;
   if (race) {
     const pts = pmc(t, race.date);
     const p = pts.find((x) => x.date === race.date);
     const now = pts.find((x) => x.date === t);
     if (p) raceDay = { date: race.date, days: differenceInCalendarDays(parseISO(race.date), parseISO(t)), ctl: p.ctl, atl: p.atl, tsb: p.tsb, form: formZone(p.tsb, p.ctl), ctlNow: now?.ctl ?? null };
+    // the stretches with nothing planned count as rest: what riding them would bring race day to
+    if (p && now && unplanned.length && raceDay?.form.id !== 'fresh') readiness = readinessFor(pts, t, race.date, unplanned);
   }
 
   // ---------- this app's FTP outlook: its own estimate, carried by the capacity model ----------
@@ -160,6 +210,8 @@ export function planOutlook() {
     raceDay,
     /** before the race, days with nothing planned: the projections count them as rest */
     unplanned,
+    /** what to ride on those days to arrive fresh, when the plan as it stands doesn't */
+    readiness,
     weeks,
     compliance,
     ftp: {
