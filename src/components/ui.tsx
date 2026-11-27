@@ -3,9 +3,14 @@ import { useEffect, type ReactNode, type ButtonHTMLAttributes, type InputHTMLAtt
 import { X, Loader2, Bike, Footprints, Waves, Dumbbell, Mountain, Snowflake, Ship, Activity as ActivityIcon, PersonStanding } from 'lucide-react';
 import type { Sport } from '../../shared/types';
 
-export function Card({ title, subtitle, actions, children, className, pad = true }: { title?: ReactNode; subtitle?: ReactNode; actions?: ReactNode; children?: ReactNode; className?: string; pad?: boolean }) {
+/**
+ * A titled panel. With `fill`, the card is a column whose body takes the height left over —
+ * for a chart that should grow to match a taller neighbour in the same grid row rather than
+ * leave the card half empty.
+ */
+export function Card({ title, subtitle, actions, children, className, bodyClassName, pad = true, fill = false, id }: { title?: ReactNode; subtitle?: ReactNode; actions?: ReactNode; children?: ReactNode; className?: string; bodyClassName?: string; pad?: boolean; fill?: boolean; id?: string }) {
   return (
-    <section className={clsx('card min-w-0', className)}>
+    <section id={id} className={clsx('card min-w-0', fill && 'flex flex-col', className)}>
       {(title || actions) && (
         <header className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2 px-5 pt-4">
           <div className="min-w-[160px] flex-1">
@@ -15,8 +20,20 @@ export function Card({ title, subtitle, actions, children, className, pad = true
           {actions && <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">{actions}</div>}
         </header>
       )}
-      <div className={clsx(pad && 'px-5 pb-5', pad && (title || actions) ? 'pt-3' : pad && 'pt-5')}>{children}</div>
+      <div className={clsx(pad && 'px-5 pb-5', pad && (title || actions) ? 'pt-3' : pad && 'pt-5', fill && 'flex min-h-0 flex-1 flex-col', bodyClassName)}>{children}</div>
     </section>
+  );
+}
+
+/**
+ * A chart area that fills whatever height its flex parent gives it (at least `min` px). The chart
+ * inside should take `height="100%"`.
+ */
+export function FillBox({ min, children, className }: { min: number; children: ReactNode; className?: string }) {
+  return (
+    <div className={clsx('relative min-h-0 flex-1', className)} style={{ minHeight: min }}>
+      <div className="absolute inset-0">{children}</div>
+    </div>
   );
 }
 
@@ -37,20 +54,26 @@ export function Stat({ label, value, unit, sub, accent, className, title }: { la
 }
 
 type BtnVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+/** A button's look, for a link that should read as one (a link can't contain a <button>). */
+export function buttonClass(variant: BtnVariant = 'secondary', size: 'sm' | 'md' = 'md', className?: string) {
+  return clsx(
+    'inline-flex items-center justify-center gap-1.5 rounded-lg font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50',
+    size === 'sm' ? 'h-7 px-2.5 text-xs' : 'h-9 px-3.5 text-[13px]',
+    variant === 'primary' && 'bg-accent text-white hover:brightness-110',
+    variant === 'secondary' && 'border border-line bg-surface-2 text-ink hover:bg-surface-3',
+    variant === 'ghost' && 'text-ink-2 hover:bg-surface-2 hover:text-ink',
+    variant === 'danger' && 'border border-line bg-surface-2 text-critical hover:bg-critical hover:text-white',
+    className,
+  );
+}
+
 export function Button({ variant = 'secondary', size = 'md', loading, icon, className, children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: BtnVariant; size?: 'sm' | 'md'; loading?: boolean; icon?: ReactNode }) {
   return (
     <button
+      type="button"
       {...rest}
       disabled={rest.disabled || loading}
-      className={clsx(
-        'inline-flex items-center justify-center gap-1.5 rounded-lg font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-50',
-        size === 'sm' ? 'h-7 px-2.5 text-xs' : 'h-9 px-3.5 text-[13px]',
-        variant === 'primary' && 'bg-accent text-white hover:brightness-110',
-        variant === 'secondary' && 'border border-line bg-surface-2 text-ink hover:bg-surface-3',
-        variant === 'ghost' && 'text-ink-2 hover:bg-surface-2 hover:text-ink',
-        variant === 'danger' && 'border border-line bg-surface-2 text-critical hover:bg-critical hover:text-white',
-        className,
-      )}
+      className={buttonClass(variant, size, className)}
     >
       {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : icon}
       {children}
@@ -64,7 +87,9 @@ export function Segmented<T extends string | number>({ value, onChange, options,
       {options.map((o) => (
         <button
           key={String(o.value)}
+          type="button"
           title={o.title}
+          aria-pressed={o.value === value}
           onClick={() => onChange(o.value)}
           className={clsx(
             'rounded-md font-medium whitespace-nowrap transition-colors',
@@ -123,9 +148,9 @@ export function Modal({ open, onClose, title, children, width = 560, footer }: {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[1000] flex items-start justify-center overflow-y-auto bg-black/50 p-4 pt-[8vh] backdrop-blur-[2px]" onMouseDown={onClose}>
-      <div className="card w-full" style={{ maxWidth: width }} onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal>
+      <div className="card w-full" style={{ maxWidth: width }} onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal aria-labelledby="modal-title">
         <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
-          <h2 className="text-[15px] font-semibold">{title}</h2>
+          <h2 id="modal-title" className="text-[15px] font-semibold">{title}</h2>
           <button onClick={onClose} className="rounded-md p-1 text-muted hover:bg-surface-2 hover:text-ink" aria-label="Close">
             <X className="h-4 w-4" />
           </button>
@@ -190,27 +215,32 @@ export function SportDot({ sport, size = 8 }: { sport: Sport; size?: number }) {
 
 export function Tabs<T extends string>({ value, onChange, tabs }: { value: T; onChange: (v: T) => void; tabs: { value: T; label: ReactNode }[] }) {
   return (
-    <div className="flex gap-1 border-b border-line">
+    // scrolls sideways on a phone rather than pushing the page wider
+    <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0" role="tablist">
+      <div className="flex min-w-max gap-1 border-b border-line">
       {tabs.map((t) => (
         <button
           key={t.value}
+          role="tab"
+          aria-selected={t.value === value}
           onClick={() => onChange(t.value)}
-          className={clsx('-mb-px border-b-2 px-3 py-2 text-[13px] font-medium transition-colors', t.value === value ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink')}
+          className={clsx('-mb-px border-b-2 px-3 py-2 text-[13px] font-medium whitespace-nowrap transition-colors', t.value === value ? 'border-accent text-ink' : 'border-transparent text-muted hover:text-ink')}
         >
           {t.label}
         </button>
       ))}
+      </div>
     </div>
   );
 }
 
 export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: ReactNode }) {
   return (
-    <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-ink-2 select-none">
-      <span className={clsx('relative inline-block h-4 w-7 shrink-0 rounded-full transition-colors', checked ? 'bg-accent' : 'bg-surface-3')} onClick={() => onChange(!checked)}>
-        <span className={clsx('absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all', checked ? 'left-3.5' : 'left-0.5')} />
+    <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className="inline-flex cursor-pointer items-center gap-2 rounded-md text-left text-xs text-ink-2 select-none hover:text-ink">
+      <span className={clsx('relative inline-block h-4 w-7 shrink-0 rounded-full transition-colors', checked ? 'bg-accent' : 'bg-surface-3')}>
+        <span className={clsx('absolute top-0.5 h-3 w-3 rounded-full bg-white shadow-sm transition-all', checked ? 'left-3.5' : 'left-0.5')} />
       </span>
-      <span onClick={() => onChange(!checked)}>{label}</span>
-    </label>
+      <span>{label}</span>
+    </button>
   );
 }

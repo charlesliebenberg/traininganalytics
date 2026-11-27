@@ -10,6 +10,7 @@ import { RangeProvider } from './lib/range';
 import { setUnits } from './lib/format';
 import { Layout } from './components/Layout';
 import { Button, Empty, Spinner } from './components/ui';
+import { Toaster } from './lib/toast';
 import type { Preferences } from '../shared/types';
 
 const page = <K extends string>(name: K, loader: () => Promise<Record<K, React.ComponentType>>) => lazy(() => loader().then((m) => ({ default: m[name] })));
@@ -101,6 +102,7 @@ function Root() {
             </Prefs>
             </AuthGate>
           </BrowserRouter>
+          <Toaster />
         </RangeProvider>
       </QueryClientProvider>
     </ThemeContext.Provider>
