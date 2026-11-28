@@ -1,16 +1,19 @@
-import { NavLink, Outlet, useLocation, useNavigationType } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import clsx from 'clsx';
-import { RefreshCw, Sun, Moon, Monitor, Activity, Menu, LogOut, Search, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Sun, Moon, Monitor, LogOut, Search, AlertTriangle, Settings as SettingsIcon } from 'lucide-react';
 import { Component, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ErrorInfo, type ReactNode, type RefObject } from 'react';
 import { formatDistanceToNowStrict, parseISO } from 'date-fns';
 import { http, useApi, useAction } from '../lib/api';
 import { useTheme } from '../lib/theme';
-import { APP_NAME } from '../lib/hooks';
-import { NAV, SETTINGS_ITEM, pageTitle } from '../lib/nav';
-import { Button, Empty, Spinner } from './ui';
+import { APP_NAME, isTyping } from '../lib/hooks';
+import { SPACES, SETTINGS, pageTitle } from '../lib/nav';
+import { useInspect } from '../lib/inspect';
+import { Button, Empty, Menu, MenuItem, Spinner } from './ui';
 import { CommandPalette, usePaletteShortcut } from './CommandPalette';
 import { TimezoneNotice } from './TimezoneNotice';
-import type { SyncStatus } from '../../shared/types';
+import { StatusCapsule } from './StatusCapsule';
+import { Inspector } from './inspector/Inspector';
+import type { Preferences, SyncStatus } from '../../shared/types';
 
 export type Status = SyncStatus & { job: { kind: string; message: string | null; progress: number } | null; demo: boolean; publicUrl: string; apiUrl: string };
 
@@ -25,9 +28,9 @@ export function useStatus() {
 
 const PROVIDER: Record<string, string> = { strava: 'Strava', eightsleep: 'Eight Sleep', trainerroad: 'TrainerRoad' };
 
-function SyncPill() {
+/** What the sync is doing, in a few words, and whether something needs attention. */
+function useSyncState() {
   const { data } = useStatus();
-  const sync = useAction(() => http('/sync', { method: 'POST' }), { success: 'Sync started' });
   if (!data) return null;
   const connected = data.connections.filter((c) => c.connected);
   const busy = data.running || !!data.job || data.queue > 0;
@@ -48,64 +51,158 @@ function SyncPill() {
         : data.demo
           ? 'Demo data'
           : 'No sources connected';
+  return { connected: connected.length, busy, error: error ? `${PROVIDER[error.provider] ?? error.provider}: ${error.lastError}` : null, label };
+}
+
+/** The mark: a fitness line climbing to today. */
+function Logo({ className }: { className?: string }) {
   return (
-    <button
-      onClick={() => connected.length && sync.mutate(undefined)}
-      disabled={!connected.length}
-      title={error ? `${PROVIDER[error.provider] ?? error.provider}: ${error.lastError}` : connected.length ? 'Sync now' : undefined}
-      aria-label={connected.length ? `${label}. Sync now` : label}
-      className="flex w-full items-center gap-2 rounded-lg border border-line bg-surface-2 px-2.5 py-2 text-left text-xs text-ink-2 enabled:hover:text-ink disabled:cursor-default"
-    >
-      {error && !busy ? <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" /> : <RefreshCw className={clsx('h-3.5 w-3.5 shrink-0', busy && 'animate-spin text-accent')} />}
-      <span className="truncate">{label}</span>
-    </button>
+    <svg viewBox="0 0 32 32" className={clsx('h-8 w-8 shrink-0', className)} aria-hidden>
+      <rect width="32" height="32" rx="9" fill="var(--inverse)" />
+      <path d="M6.5 22c4 0 5-8 9-8s4.5 4.5 10-5" fill="none" stroke="var(--inverse-ink)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="25.5" cy="9" r="2.6" fill="var(--accent)" />
+    </svg>
   );
 }
 
-function ThemeSwitch() {
+function ProfileMenu() {
   const { mode, setMode } = useTheme();
-  const opts = [
-    { v: 'light' as const, icon: Sun, label: 'Light theme' },
-    { v: 'system' as const, icon: Monitor, label: 'Match system theme' },
-    { v: 'dark' as const, icon: Moon, label: 'Dark theme' },
+  const sync = useSyncState();
+  const prefs = useApi<Preferences>('/preferences');
+  const session = useApi<{ required: boolean }>('/session', { staleTime: Infinity });
+  const doSync = useAction(() => http('/sync', { method: 'POST' }), { success: 'Sync started' });
+  const out = useAction(() => http('/session/logout', { method: 'POST' }));
+  const name = prefs.data?.athleteName?.trim() || 'Athlete';
+  const initials = name
+    .split(/\s+/)
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+  const themes = [
+    { v: 'light' as const, icon: Sun, label: 'Light' },
+    { v: 'system' as const, icon: Monitor, label: 'Auto' },
+    { v: 'dark' as const, icon: Moon, label: 'Dark' },
   ];
   return (
-    <div className="flex rounded-lg border border-line bg-surface-2 p-0.5" role="group" aria-label="Theme">
-      {opts.map(({ v, icon: Icon, label }) => (
-        <button key={v} onClick={() => setMode(v)} title={label} aria-label={label} aria-pressed={mode === v} className={clsx('flex-1 rounded-md py-1', mode === v ? 'bg-surface text-ink shadow-sm' : 'text-muted hover:text-ink')}>
-          <Icon className="mx-auto h-3.5 w-3.5" />
+    <Menu
+      label="You"
+      button={({ open, toggle }) => (
+        <button type="button" onClick={toggle} aria-expanded={open} aria-haspopup="menu" aria-label={`${name}: settings, theme and sync`} className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-3 text-[12px] font-semibold text-ink ring-offset-2 ring-offset-surface transition hover:ring-2 hover:ring-line-strong">
+          {initials}
+          {sync && (sync.busy || sync.error) && <span className={clsx('absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-surface', sync.error && !sync.busy ? 'bg-warning' : 'animate-pulse bg-accent')} />}
         </button>
-      ))}
-    </div>
-  );
-}
-
-function SignOut() {
-  const { data } = useApi<{ required: boolean }>('/session', { staleTime: Infinity });
-  const out = useAction(() => http('/session/logout', { method: 'POST' }));
-  if (!data?.required) return null;
-  return (
-    <button onClick={() => out.mutate(undefined)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-muted hover:bg-surface-2 hover:text-ink">
-      <LogOut className="h-3.5 w-3.5" />
-      Sign out
-    </button>
+      )}
+      className="w-72"
+    >
+      <div className="px-2.5 pt-1.5 pb-2.5">
+        <div className="truncate text-[14px] font-semibold text-ink">{name}</div>
+        {sync && (
+          <div className={clsx('mt-0.5 flex items-center gap-1.5 text-[12px]', sync.error && !sync.busy ? 'text-ink-2' : 'text-muted')} title={sync.error ?? undefined}>
+            {sync.error && !sync.busy && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" />}
+            <span className="truncate">{sync.error && !sync.busy ? sync.error : sync.label}</span>
+          </div>
+        )}
+      </div>
+      <div className="border-t border-line pt-1.5">
+        {sync && sync.connected > 0 && (
+          <MenuItem icon={<RefreshCw className={clsx(sync.busy && 'animate-spin text-accent')} />} onClick={() => doSync.mutate(undefined)}>
+            Sync now
+          </MenuItem>
+        )}
+        <Link to={SETTINGS.to} role="menuitem" className="flex w-full items-center gap-2.5 rounded-[10px] px-2.5 py-2 text-[13px] text-ink-2 hover:bg-surface-2 hover:text-ink">
+          <SettingsIcon className="h-4 w-4 text-muted" />
+          Settings
+        </Link>
+      </div>
+      <div className="mt-1.5 border-t border-line px-1 pt-2.5 pb-1">
+        <div className="mb-1.5 px-1.5 text-[11px] text-muted">Appearance</div>
+        <div className="grid grid-cols-3 gap-1 rounded-[10px] bg-surface-2 p-0.5" role="group" aria-label="Theme">
+          {themes.map(({ v, icon: Icon, label }) => (
+            <button key={v} type="button" data-keep-open onClick={() => setMode(v)} aria-pressed={mode === v} className={clsx('flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-[12px] font-medium', mode === v ? 'bg-surface text-ink shadow-sm ring-1 ring-line' : 'text-muted hover:text-ink')}>
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {session.data?.required && (
+        <div className="mt-1.5 border-t border-line pt-1.5">
+          <MenuItem icon={<LogOut />} onClick={() => out.mutate(undefined)}>
+            Sign out
+          </MenuItem>
+        </div>
+      )}
+    </Menu>
   );
 }
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
-function SearchButton({ onOpen }: { onOpen: () => void }) {
+function TopBar({ onSearch }: { onSearch: () => void }) {
+  const loc = useLocation();
+  const here = [...SPACES, SETTINGS].find((s) => s.match(loc.pathname));
   return (
-    <button onClick={onOpen} className="flex w-full items-center gap-2 rounded-lg border border-line bg-surface-2 px-2.5 py-1.5 text-[13px] text-muted hover:text-ink">
-      <Search className="h-3.5 w-3.5" />
-      <span className="flex-1 text-left">Search</span>
-      <kbd className="rounded border border-line bg-surface px-1.5 text-[10px] font-medium">{isMac ? '⌘K' : 'Ctrl K'}</kbd>
-    </button>
+    <header className="z-[900] shrink-0 border-b border-line bg-surface">
+      <div className="mx-auto flex h-14 max-w-[1680px] items-center gap-1.5 px-3 sm:px-5">
+        <Link to="/" className="flex shrink-0 items-center gap-2.5 rounded-xl pr-2" aria-label={`${APP_NAME}: Today`}>
+          <Logo />
+          <span className="hidden text-[14.5px] font-semibold tracking-[-0.01em] xl:block">{APP_NAME}</span>
+        </Link>
+        <span className="truncate pl-1 text-[15px] font-semibold md:hidden">{here?.label ?? APP_NAME}</span>
+        <nav className="ml-3 hidden items-center gap-0.5 md:flex" aria-label="Main">
+          {SPACES.map((s) => (
+            <NavLink key={s.to} to={s.to} end={s.to === '/'} title={s.blurb} className={({ isActive }) => clsx('flex items-center gap-2 rounded-[10px] px-3 py-1.5 text-[13.5px] font-medium transition-colors', isActive ? 'bg-surface-2 text-ink' : 'text-ink-2 hover:bg-surface-2/70 hover:text-ink')}>
+              {({ isActive }) => (
+                <>
+                  <s.icon className={clsx('h-4 w-4', isActive ? 'text-ink' : 'text-muted')} />
+                  {s.label}
+                </>
+              )}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+          <StatusCapsule />
+          <button type="button" onClick={onSearch} className="hidden h-9 items-center gap-2 rounded-[10px] border border-line bg-surface-2/60 pr-1.5 pl-2.5 text-[13px] text-muted transition-colors hover:border-line-strong hover:text-ink lg:flex">
+            <Search className="h-4 w-4" />
+            <span className="w-24 text-left">Search</span>
+            <kbd className="rounded-md border border-line bg-surface px-1.5 py-0.5 font-sans text-[10.5px] font-medium">{isMac ? '⌘K' : 'Ctrl K'}</kbd>
+          </button>
+          <button type="button" onClick={onSearch} className="flex h-9 w-9 items-center justify-center rounded-[10px] text-ink-2 hover:bg-surface-2 hover:text-ink lg:hidden" aria-label="Search">
+            <Search className="h-[18px] w-[18px]" />
+          </button>
+          <ProfileMenu />
+        </div>
+      </div>
+    </header>
+  );
+}
+
+/** On a phone, the four places sit under your thumb. */
+function TabBar() {
+  return (
+    <nav className="glass pb-safe fixed inset-x-0 bottom-0 z-[900] border-t border-line md:hidden" aria-label="Main">
+      <div className="grid grid-cols-4">
+        {SPACES.map((s) => (
+          <NavLink key={s.to} to={s.to} end={s.to === '/'} className={({ isActive }) => clsx('flex flex-col items-center gap-1 pt-2 pb-1.5 text-[10.5px] font-medium transition-colors', isActive ? 'text-ink' : 'text-muted')}>
+            {({ isActive }) => (
+              <>
+                <span className={clsx('flex h-7 w-12 items-center justify-center rounded-full transition-colors', isActive && 'bg-surface-3')}>
+                  <s.icon className="h-[19px] w-[19px]" strokeWidth={isActive ? 2.25 : 1.9} />
+                </span>
+                {s.label}
+              </>
+            )}
+          </NavLink>
+        ))}
+      </div>
+    </nav>
   );
 }
 
 /**
- * A page that throws shows what went wrong in place of the page, with the sidebar still there
+ * A page that throws shows what went wrong in place of the page, with the navigation still there
  * to go elsewhere — rather than a blank screen. After a deploy, a page's code may no longer be
  * on the server; that one asks for a reload.
  */
@@ -126,7 +223,7 @@ class PageErrorBoundary extends Component<{ children: ReactNode; resetKey: strin
     const stale = /dynamically imported module|Importing a module script failed|error loading dynamically|Failed to fetch/i.test(error.message);
     return (
       <div className="card" role="alert">
-        <Empty icon={<AlertTriangle className="h-6 w-6 text-warning" />} title={stale ? 'A newer version of the app is available' : 'This page ran into a problem'}>
+        <Empty icon={<AlertTriangle className="text-warning" />} title={stale ? 'A newer version of the app is available' : 'This page ran into a problem'}>
           <p>{stale ? 'The app was updated since this tab opened. Reload to get the latest version.' : error.message}</p>
           <div className="mt-4 flex justify-center gap-2">
             {stale ? (
@@ -172,6 +269,8 @@ function useScrollRestoration(ref: RefObject<HTMLElement | null>) {
     const samePage = path.current === loc.pathname;
     path.current = loc.pathname;
     if (type === 'POP') {
+      // opening or closing the inspector doesn't move the page under it
+      if (samePage) return;
       const y = positions.current.get(loc.key);
       if (y == null) return;
       // the page may still be loading its data: keep trying until it is tall enough
@@ -183,19 +282,44 @@ function useScrollRestoration(ref: RefObject<HTMLElement | null>) {
       let timer = window.setTimeout(restore, 0);
       return () => clearTimeout(timer);
     }
-    // a filter or tab changing the URL on the same page keeps your place
+    // a filter, tab or the inspector changing the URL on the same page keeps your place
     if (!samePage) el.scrollTo({ top: 0 });
   }, [loc.key, loc.pathname, type, ref]);
 }
 
+/** g then t / s / p / a: go to Today, Season, Performance or Activities from the keyboard. */
+function useGoKeys() {
+  const nav = useNavigate();
+  useEffect(() => {
+    let armed = 0;
+    const h = (e: KeyboardEvent) => {
+      if (isTyping(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'g') {
+        armed = Date.now();
+        return;
+      }
+      if (Date.now() - armed > 1200) return;
+      armed = 0;
+      const to = { t: '/', s: '/season', p: '/performance', a: '/activities' }[k];
+      if (to) {
+        e.preventDefault();
+        nav(to);
+      }
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, [nav]);
+}
+
 export function Layout() {
-  const [open, setOpen] = useState(false);
   const [palette, setPalette] = useState(false);
   const loc = useLocation();
   const main = useRef<HTMLElement>(null);
-  useEffect(() => setOpen(false), [loc.pathname]);
+  const { current } = useInspect();
   useScrollRestoration(main);
   usePaletteShortcut(setPalette);
+  useGoKeys();
   const closePalette = useCallback(() => setPalette(false), []);
   // the tab title follows the page; an activity sets its own
   useEffect(() => {
@@ -203,77 +327,11 @@ export function Layout() {
     if (t) document.title = `${t} · ${APP_NAME}`;
     else if (!loc.pathname.startsWith('/activities/')) document.title = APP_NAME;
   }, [loc.pathname]);
-  useEffect(() => {
-    if (!open) return;
-    const h = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
-  }, [open]);
-  const linkClass = ({ isActive }: { isActive: boolean }) => clsx('mb-0.5 flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition-colors', isActive ? 'bg-accent-soft text-ink' : 'text-ink-2 hover:bg-surface-2 hover:text-ink');
   return (
-    <div className="flex h-full">
-      <aside
-        id="sidebar"
-        className={clsx(
-          'fixed inset-y-0 left-0 z-[900] flex w-60 shrink-0 flex-col border-r border-line bg-surface transition-transform lg:static lg:translate-x-0',
-          open ? 'translate-x-0' : '-translate-x-full',
-        )}
-      >
-        <div className="flex items-center gap-2.5 px-5 pt-5 pb-3">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-white">
-            <Activity className="h-4.5 w-4.5" strokeWidth={2.5} />
-          </div>
-          <div>
-            <div className="text-[14px] leading-tight font-semibold">{APP_NAME}</div>
-            <div className="text-[11px] text-muted">Analyze · Plan · Perform</div>
-          </div>
-        </div>
-        <div className="px-3 pb-1">
-          <SearchButton onOpen={() => setPalette(true)} />
-        </div>
-        <nav className="flex-1 overflow-y-auto px-3 pb-3" aria-label="Main">
-          {NAV.map((g) => (
-            <div key={g.group ?? 'root'} className="mt-3">
-              {g.group && <div className="px-2.5 pb-1.5 text-[11px] font-semibold tracking-wider text-muted uppercase">{g.group}</div>}
-              {g.items.map(({ to, label, icon: Icon }) => (
-                <NavLink key={to} to={to} end={to === '/'} className={linkClass}>
-                  {({ isActive }) => (
-                    <>
-                      <Icon className={clsx('h-4 w-4', isActive ? 'text-accent' : 'text-muted')} />
-                      {label}
-                    </>
-                  )}
-                </NavLink>
-              ))}
-            </div>
-          ))}
-        </nav>
-        <div className="space-y-2 border-t border-line p-3">
-          <NavLink to={SETTINGS_ITEM.to} className={(s) => clsx(linkClass(s), 'mb-0')}>
-            {({ isActive }) => (
-              <>
-                <SETTINGS_ITEM.icon className={clsx('h-4 w-4', isActive ? 'text-accent' : 'text-muted')} />
-                {SETTINGS_ITEM.label}
-              </>
-            )}
-          </NavLink>
-          <SyncPill />
-          <ThemeSwitch />
-          <SignOut />
-        </div>
-      </aside>
-      {open && <div className="fixed inset-0 z-[800] bg-black/40 lg:hidden" onClick={() => setOpen(false)} />}
-      <main ref={main} className="min-w-0 flex-1 overflow-y-auto">
-        <div className="sticky top-0 z-[700] flex items-center gap-3 border-b border-line bg-surface/90 px-4 py-2.5 backdrop-blur lg:hidden">
-          <button onClick={() => setOpen(true)} className="rounded-md p-1.5 hover:bg-surface-2" aria-label="Open menu" aria-expanded={open} aria-controls="sidebar">
-            <Menu className="h-5 w-5" />
-          </button>
-          <span className="flex-1 font-semibold">{pageTitle(loc.pathname) ?? APP_NAME}</span>
-          <button onClick={() => setPalette(true)} className="rounded-md p-1.5 text-ink-2 hover:bg-surface-2" aria-label="Search">
-            <Search className="h-5 w-5" />
-          </button>
-        </div>
-        <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
+    <div className="flex h-full flex-col">
+      <TopBar onSearch={() => setPalette(true)} />
+      <main ref={main} className={clsx('min-h-0 flex-1 overflow-y-auto transition-[padding] duration-200', current && '2xl:pr-[540px]')}>
+        <div className="mx-auto max-w-[1440px] px-4 pt-6 pb-28 sm:px-6 md:pb-14 lg:px-8 lg:pt-8">
           <TimezoneNotice />
           <PageErrorBoundary resetKey={loc.pathname}>
             <Suspense fallback={<Spinner />}>
@@ -282,6 +340,8 @@ export function Layout() {
           </PageErrorBoundary>
         </div>
       </main>
+      <TabBar />
+      <Inspector />
       <CommandPalette open={palette} onClose={closePalette} />
     </div>
   );

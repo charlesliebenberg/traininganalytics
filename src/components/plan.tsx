@@ -1,11 +1,11 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, Flag } from 'lucide-react';
+import { AlertTriangle, ArrowRight } from 'lucide-react';
 import type { FtpPoint } from '../../shared/analytics/trainerroad';
 import { useApi } from '../lib/api';
 import { alpha, useTokens, type Tokens } from '../lib/theme';
 import { fmtDate, fmtNum } from '../lib/format';
-import { Badge, Card, Stat } from './ui';
+import { Card, Stat } from './ui';
 import { Chart, axisStyle, tipRow, tooltipStyle, valueAxis } from './Chart';
 import { formColor } from './charts';
 
@@ -71,54 +71,6 @@ export const pathOn = (path: FtpPath[], date: string) => [...path].reverse().fin
 /** Phase bands for a time chart: TrainerRoad's phases, as ECharts markArea data. */
 export function phaseAreas(phases: PlanPhase[] | undefined, toX: (d: string) => number) {
   return (phases ?? []).filter((p) => p.start && p.end).map((p) => [{ xAxis: toX(p.start!), name: p.name ?? '' }, { xAxis: toX(p.end!) }]);
-}
-
-/**
- * The two FTP outlooks, side by side and never mixed: this app's (its own estimate, carried by
- * its capacity model riding the planned load) and TrainerRoad's (its FTP and AI FTP's prediction).
- */
-export function FtpOutlook({ o, at }: { o: PlanOutlook; at?: string | null }) {
-  const t = useTokens();
-  const app = o.ftp.app;
-  const tr = o.ftp.trainerRoad;
-  const end = at ?? o.race?.date ?? o.plannedThrough;
-  const appAt = app && end ? pathOn(app.path, end) : null;
-  const pred = tr?.predicted[0] ?? null;
-  return (
-    <div className="space-y-2 text-[13px]">
-      {app && (
-        <div className="flex items-start gap-2">
-          <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: t.accent }} />
-          <div className="min-w-0 flex-1">
-            <span className="font-medium">This app</span> <span className="tnum">{app.now} W</span>
-            {appAt && appAt.value !== app.now ? (
-              <>
-                {' '}
-                → <b className="tnum">{appAt.value} W</b> by {fmtDate(appAt.date, 'd MMM')}
-                {appAt.low !== appAt.high ? <span className="text-muted"> ({appAt.low}–{appAt.high})</span> : null}
-              </>
-            ) : null}
-            <div className="text-[11px] text-muted">its capacity model, riding the rides planned</div>
-          </div>
-        </div>
-      )}
-      {tr && (
-        <div className="flex items-start gap-2">
-          <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full" style={{ background: trColor(t) }} />
-          <div className="min-w-0 flex-1">
-            <span className="font-medium">TrainerRoad</span> <span className="tnum">{tr.now ?? '–'} W</span>
-            {pred ? (
-              <>
-                {' '}
-                → <b className="tnum">{pred.value} W</b> predicted by {fmtDate(pred.date, 'd MMM')}
-              </>
-            ) : null}
-            <div className="text-[11px] text-muted">{pred ? 'its FTP and AI FTP’s prediction' : 'its FTP; AI FTP has no prediction out now'}</div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
 }
 
 /** Weekly load: what was planned and what was ridden, the weeks gone and to come. */
@@ -199,8 +151,8 @@ export function UnplannedNote({ o }: { o: PlanOutlook }) {
               against CTL {Math.round(rd.ctl)}, {signedForm(rd.tsb)} ({rd.form.label.toLowerCase()}) if they stay empty
             </span>
           </div>
-          <Link to="/forecast?s=filled" className="mt-2 inline-flex items-center gap-1 text-accent hover:underline">
-            Compare paths in the forecast <ArrowRight className="h-3 w-3" />
+          <Link to="/season?s=filled" className="mt-2 inline-flex items-center gap-1 text-accent hover:underline">
+            Compare the ways forward <ArrowRight className="h-3 w-3" />
           </Link>
         </div>
       )}
@@ -212,78 +164,6 @@ export function UnplannedNote({ o }: { o: PlanOutlook }) {
 export function complianceText(c: NonNullable<PlanOutlook['compliance']>) {
   const pct = c.plannedTss ? Math.round((c.doneTss / c.plannedTss) * 100) : null;
   return `${c.completed} of ${c.workouts} workouts done${c.missed ? `, ${c.missed} missed` : ''}${pct != null ? ` · ${Math.round(c.doneTss)} of ${Math.round(c.plannedTss)} TSS ridden (${pct}%)` : ''}`;
-}
-
-/** The dashboard's view of the plan: the race, where the plan takes fitness and form by it, how it's been followed, and both FTP outlooks. */
-export function PlanCard({ o, ctlNow }: { o: PlanOutlook; ctlNow: number | null }) {
-  const t = useTokens();
-  const cur = o.plan?.current;
-  const rd = o.raceDay;
-  const show = o.weeks.filter((w) => w.when !== 'past' || w.planned.n > 0);
-  return (
-    <Card
-      title={o.race ? 'Plan & goal race' : 'Your plan'}
-      subtitle={
-        o.source === 'trainerroad' ? (
-          <span className="inline-flex items-center gap-1.5">
-            <TrChip /> {o.plan?.name ?? 'TrainerRoad'}
-            {cur?.name ? ` · ${cur.name}${cur.end ? ` to ${fmtDate(cur.end, 'd MMM')}` : ''}` : ''}
-          </span>
-        ) : (
-          'Your calendar'
-        )
-      }
-      actions={
-        <Link to="/forecast" className="flex items-center gap-1 text-xs text-accent hover:underline">
-          Forecast <ArrowRight className="h-3 w-3" />
-        </Link>
-      }
-    >
-      {o.race && (
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-soft text-accent">
-            <Flag className="h-5 w-5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate font-semibold">{o.race.name}</span>
-              <Badge>{o.race.priority} race</Badge>
-            </div>
-            <div className="text-xs text-muted">{fmtDate(o.race.date, 'EEE d MMM yyyy')}</div>
-          </div>
-          {rd && (
-            <div className="text-right">
-              <div className="text-2xl font-semibold">{rd.days}</div>
-              <div className="text-[11px] text-muted">days to go</div>
-            </div>
-          )}
-        </div>
-      )}
-      {rd && (
-        <div className="mt-3 grid grid-cols-3 gap-3 rounded-lg bg-surface-2 p-3">
-          <Stat label="Race CTL" value={fmtNum(rd.ctl, 0)} sub={ctlNow != null ? `${rd.ctl - ctlNow >= 0 ? '+' : ''}${fmtNum(rd.ctl - ctlNow, 0)} on today` : undefined} />
-          <Stat label="Race TSB" accent={formColor(t, rd.form.id)} value={fmtNum(rd.tsb, 0)} sub={<span title={rd.form.hint}>{rd.form.label}</span>} />
-          <Stat label="Planned to" value={o.plannedThrough ? fmtDate(o.plannedThrough, 'd MMM') : '–'} sub={`${o.plannedAhead} workouts`} />
-        </div>
-      )}
-      <div className="mt-3 space-y-1.5">
-        <UnplannedNote o={o} />
-        {rd && rd.tsb > 25 && !o.unplanned.length && <p className="text-xs text-ink-2">Riding only what’s planned, you’d arrive very fresh: fitness falls in the run-in.</p>}
-      </div>
-      {show.length > 0 && (
-        <div className="mt-2">
-          <PlanWeeksChart weeks={show} height={140} />
-        </div>
-      )}
-      {o.compliance && <p className="mt-1 text-xs text-muted">Followed, {o.compliance.weeks === 1 ? 'last week' : `last ${o.compliance.weeks} weeks`}: {complianceText(o.compliance)}</p>}
-      {(o.ftp.app || o.ftp.trainerRoad) && (
-        <div className="mt-4 border-t border-line pt-3">
-          <div className="mb-2 text-[11px] font-medium tracking-wide text-muted uppercase">FTP outlook{o.race ? ` to ${o.race.name}` : ''}</div>
-          <FtpOutlook o={o} />
-        </div>
-      )}
-    </Card>
-  );
 }
 
 /**

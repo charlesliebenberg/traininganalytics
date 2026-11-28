@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowDown, ArrowUp, Search, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, List, Map as MapIcon, Search, X } from 'lucide-react';
 import clsx from 'clsx';
 import type { Activity, Sport } from '../../shared/types';
 import { qs, useApi } from '../lib/api';
 import { useRange } from '../lib/range';
 import { useDebounced } from '../lib/hooks';
-import { Button, Card, Input, PageHeader, Select, SportIcon, Spinner, Empty, Badge } from '../components/ui';
+import { Button, Card, Input, PageHeader, Select, SportIcon, Spinner, Empty, Badge, SportBadge } from '../components/ui';
+import { ActivityMap } from '../components/ActivityMap';
+import { useInspectLink } from '../lib/inspect';
 import { RangePicker } from '../components/RangePicker';
 import { fmtDate, fmtDistance, fmtDuration, fmtElevation, fmtNum, fmtPace, fmtSpeed, SPORT_LABEL } from '../lib/format';
 import { activityTitle, sessionBrief, typeColor } from '../lib/session';
@@ -83,13 +85,12 @@ const SORT_OPTIONS = [
 /** One activity as a row on a phone: what it was, when, and its load. */
 function MobileRow({ a }: { a: Activity }) {
   const t = useTokens();
+  const inspectLink = useInspectLink();
   const detail = [fmtDuration(a.movingTime, { short: true }), a.distance ? fmtDistance(a.distance, 1, a.sport) : null, a.np ? `${a.np} W NP` : paceLike(a.sport) && a.avgSpeed ? fmtPace(a.avgSpeed, a.sport) : null].filter(Boolean).join(' · ');
   const brief = sessionBrief(a);
   return (
-    <Link to={`/activities/${a.id}`} className="flex items-center gap-3 px-4 py-3 active:bg-surface-2">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-2">
-        <SportIcon sport={a.sport} />
-      </span>
+    <Link {...inspectLink('a', a.id)} className="flex items-center gap-3 px-4 py-3 active:bg-surface-2">
+      <SportBadge sport={a.sport} size={36} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
           <span className="truncate text-[13px] font-medium text-ink">{activityTitle(a)}</span>
@@ -115,6 +116,7 @@ function MobileRow({ a }: { a: Activity }) {
 
 export function Activities() {
   const t = useTokens();
+  const inspectLink = useInspectLink();
   const { range } = useRange();
   // filters live in the URL: coming back from an activity finds the list as you left it
   const [params, setParams] = useSearchParams();
@@ -145,15 +147,30 @@ export function Activities() {
     else set({ sort: key === 'date' ? null : key, dir: key === 'name' ? 'asc' : null });
   };
   const filtered = !!(sport || q);
+  const view = params.get('view') === 'map' ? 'map' : 'list';
 
   return (
     <div>
       <PageHeader
-        title="Activities"
-        subtitle={data ? `${data.total.toLocaleString()} ${data.total === 1 ? 'activity' : 'activities'} · ${fmtDuration(data.totals.time ?? 0, { short: true })} · ${fmtDistance(data.totals.distance ?? 0, 0)} · ${fmtNum(data.totals.tss ?? 0)} TSS` : undefined}
+        eyebrow="Activities"
+        title="Everything you’ve done"
+        subtitle={`${range.label}${sport ? ` · ${SPORT_LABEL[sport].toLowerCase()}` : ''}: as a list to sort and search, or as a map of where you ride`}
         actions={
           <>
-            <div className="relative w-full sm:w-auto">
+            <div className="inline-flex rounded-[10px] bg-surface-2 p-0.5" role="group" aria-label="View">
+              {(
+                [
+                  ['list', 'List', List],
+                  ['map', 'Map', MapIcon],
+                ] as const
+              ).map(([v, label, Icon]) => (
+                <button key={v} type="button" aria-pressed={view === v} onClick={() => set({ view: v === 'list' ? null : v })} className={clsx('inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-[12.5px] font-medium', view === v ? 'bg-surface text-ink shadow-sm ring-1 ring-line' : 'text-muted hover:text-ink')}>
+                  <Icon className="h-3.5 w-3.5" />
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className={clsx('relative w-full sm:w-auto', view === 'map' && 'hidden')}>
               <Search className="pointer-events-none absolute top-2.5 left-2.5 h-4 w-4 text-muted" />
               <Input placeholder="Search activities" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Escape' && setSearch('')} className="w-full pr-8 pl-8 sm:w-56" aria-label="Search activities" />
               {search && (
@@ -170,7 +187,7 @@ export function Activities() {
                 </option>
               ))}
             </Select>
-            <Select className="md:hidden" value={sort} onChange={(e) => set({ sort: e.target.value === 'date' ? null : e.target.value, dir: SORT_OPTIONS.find((o) => o.value === e.target.value)?.dir === 'asc' ? 'asc' : null })} aria-label="Sort">
+            <Select className={clsx('md:hidden', view === 'map' && 'hidden')} value={sort} onChange={(e) => set({ sort: e.target.value === 'date' ? null : e.target.value, dir: SORT_OPTIONS.find((o) => o.value === e.target.value)?.dir === 'asc' ? 'asc' : null })} aria-label="Sort">
               {SORT_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
@@ -181,6 +198,26 @@ export function Activities() {
           </>
         }
       />
+      {/* the range at a glance */}
+      {data && (
+        <div className="card mb-4 grid grid-cols-2 divide-line sm:grid-cols-4 sm:divide-x">
+          {[
+            ['Activities', data.total.toLocaleString(), filtered ? 'matching' : 'in the range'],
+            ['Time', fmtDuration(data.totals.time ?? 0, { short: true }), 'moving'],
+            ['Distance', fmtDistance(data.totals.distance ?? 0, 0), data.totals.elevation ? `${fmtElevation(data.totals.elevation)} climbed` : ''],
+            ['Load', fmtNum(data.totals.tss ?? 0), 'TSS'],
+          ].map(([label, value, sub]) => (
+            <div key={label} className="px-5 py-4">
+              <div className="eyebrow">{label}</div>
+              <div className="figure mt-1.5 text-[24px]">{value}</div>
+              <div className="mt-0.5 text-[12px] text-muted">{sub}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {view === 'map' ? (
+        <ActivityMap from={range.from} to={range.to} sport={sport} />
+      ) : (
       <Card pad={false}>
         {isLoading ? (
           <Spinner />
@@ -214,7 +251,7 @@ export function Activities() {
             <div className="hidden overflow-x-auto md:block">
               <table className="w-full text-[13px]">
                 <thead>
-                  <tr className="border-b border-line text-left text-[11px] tracking-wide text-muted uppercase">
+                  <tr className="border-b border-line text-left text-[11px] font-semibold tracking-[0.06em] text-muted uppercase">
                     {COLS.map((c) => (
                       <th
                         key={c.key}
@@ -239,8 +276,8 @@ export function Activities() {
                   {data.items.map((a) => (
                     <tr key={a.id} className="border-b border-line/60 last:border-0 hover:bg-surface-2">
                       {COLS.map((c) => (
-                        <td key={c.key} className={clsx('px-3 py-2 whitespace-nowrap text-ink-2 first:pl-5 last:pr-5', c.align === 'right' && 'text-right', c.key === 'name' && 'max-w-[280px]', c.key === 'session' && 'max-w-[240px]', c.show && SHOW[c.show])}>
-                          <Link to={`/activities/${a.id}`} className="block min-w-0" tabIndex={c.key === 'name' ? 0 : -1}>
+                        <td key={c.key} className={clsx('px-3 py-2.5 whitespace-nowrap text-ink-2 first:pl-5 last:pr-5', c.align === 'right' && 'text-right', c.key === 'name' && 'max-w-[280px]', c.key === 'session' && 'max-w-[240px]', c.show && SHOW[c.show])}>
+                          <Link {...inspectLink('a', a.id)} className="block min-w-0" tabIndex={c.key === 'name' ? 0 : -1}>
                             {c.render(a, t)}
                           </Link>
                         </td>
@@ -260,6 +297,7 @@ export function Activities() {
           </>
         )}
       </Card>
+      )}
     </div>
   );
 }

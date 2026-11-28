@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { addDays, format, parseISO } from 'date-fns';
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronLeft, ChevronRight, ClipboardCopy, Minus } from 'lucide-react';
 import clsx from 'clsx';
@@ -11,6 +11,7 @@ import { fmtDate, fmtDuration, fmtNum } from '../lib/format';
 import { GROUP_LABEL, GROUP_OF, SESSION_GROUPS, TYPE_LABEL, TYPE_SHORT, activityTitle, groupColor, outText, sessionBrief, setLabel, typeColor, type SessionGroup } from '../lib/session';
 import { toast } from '../lib/toast';
 import { copyText } from '../lib/clipboard';
+import { useInspectLink } from '../lib/inspect';
 import { surveyText, type SurveyAnswer } from './trainerroad';
 import { effortSentence } from './insights';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from './Chart';
@@ -50,11 +51,15 @@ const day = (d: string) => fmtDate(d, 'EEE d MMM');
 const HARD_WORDS: Partial<Record<SessionType, string>> = { threshold: 'threshold', vo2: 'VO2max', anaerobic: 'anaerobic intervals', sprint: 'sprints', race: 'group ride or race' };
 const signedPct = (v: number, digits = 0) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(digits)}%`;
 const noun = (sport: string) => (sport === 'run' ? 'run' : sport === 'ride' ? 'ride' : 'session');
-const ActLink = ({ a, children }: { a: Pick<ReviewActivity, 'id'>; children: ReactNode }) => (
-  <Link to={`/activities/${a.id}`} className="font-medium text-ink hover:text-accent hover:underline">
-    {children}
-  </Link>
-);
+/** An activity named in a sentence: opens beside the page, in the inspector. */
+const ActLink = ({ a, children }: { a: Pick<ReviewActivity, 'id'>; children: ReactNode }) => {
+  const inspectLink = useInspectLink();
+  return (
+    <Link {...inspectLink('a', a.id)} className="font-medium text-ink underline decoration-line-strong underline-offset-2 hover:text-accent hover:decoration-accent">
+      {children}
+    </Link>
+  );
+};
 
 /** One observation as a sentence (activities link to themselves). */
 function NoteText({ n, r, weeks }: { n: ReviewNote; r: Review; weeks: number }) {
@@ -448,27 +453,3 @@ function ReviewBody({ d }: { d: TrainingReviewData }) {
   );
 }
 
-/** The current week on the dashboard: the headline and the strongest few lines. */
-export function WeekCard() {
-  const nav = useNavigate();
-  const { data } = useApi<TrainingReviewData>(`/review${qs({ date: format(new Date(), 'yyyy-MM-dd'), weeks: 1 })}`);
-  if (!data) return null;
-  const r = data.review;
-  const lines = [...r.signals.slice(0, 2), ...r.notes.filter((n) => n.kind === 'load' || n.tone === 'warn').slice(0, 2)];
-  return (
-    <Card
-      title="This week"
-      subtitle={`${fmtDate(data.from, 'd MMM')} – ${fmtDate(data.to, 'd MMM')}`}
-      actions={
-        <button onClick={() => nav(`/journal?week=${data.from}`)} className="text-xs text-accent hover:underline">
-          Journal →
-        </button>
-      }
-    >
-      <ReviewHeadline r={r} weeks={1} />
-      <div className="mt-3">
-        <NoteList notes={lines} r={r} weeks={1} />
-      </div>
-    </Card>
-  );
-}

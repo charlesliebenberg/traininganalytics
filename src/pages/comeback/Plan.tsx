@@ -8,7 +8,7 @@ import { Chart, axisStyle, tipRow, tooltipStyle, valueAxis } from '../../compone
 import { http, useAction } from '../../lib/api';
 import { alpha, useTokens } from '../../lib/theme';
 import { fmtDate, fmtNum } from '../../lib/format';
-import { PlanChart } from '../Season';
+import { PlanChart } from '../../components/PlanChart';
 import { beyondSustained } from './findings';
 import { peakName, type Overview, type PeakCard, type Preview } from './types';
 
@@ -49,7 +49,7 @@ export function PlanSection({ o, peak, weeklyTss, setWeeklyTss, mix, buildTssPer
       const plan = await http<{ id: number }>('/plans', { method: 'POST', json: { name: `Comeback → ${name} capacity`, config: preview!.config } });
       return http(`/plans/${plan.id}/apply`, { method: 'POST', json: { weeks: 4 } });
     },
-    { onSuccess: () => nav('/calendar') },
+    { onSuccess: () => nav('/season') },
   );
 
   const capOption = useMemo(() => {
@@ -123,7 +123,7 @@ export function PlanSection({ o, peak, weeklyTss, setWeeklyTss, mix, buildTssPer
           <p className="col-span-2 text-[11px] text-muted">
             {following
               ? `You follow ${following}’s plan: this adds its own workouts beside ${following}’s, doubling the load the calendar and projections count. Use it to compare, or if you leave ${following}.`
-              : 'Saved as your active season plan; fill later weeks from the Season Planner as you go.'}
+              : 'Saved as your active season plan; fill later weeks from your season as you go.'}
           </p>
         </div>
         <div className="min-w-0">

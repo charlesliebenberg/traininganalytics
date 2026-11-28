@@ -1,165 +1,17 @@
 import { useMemo } from 'react';
-import { parseISO } from 'date-fns';
 import clsx from 'clsx';
-import type { PmcPoint, RaceEvent, WorkoutStructure } from '../../shared/types';
-import { formZone, formZoneById, FORM_ZONES, type DayForm } from '../../shared/analytics/pmc';
+import type { WorkoutStructure } from '../../shared/types';
+import { formZoneById, FORM_ZONES, type DayForm } from '../../shared/analytics/pmc';
 import { flatten } from '../../shared/analytics/workout';
 import { Chart, axisStyle, tipRow, tooltipStyle, valueAxis, legendStyle, type EChartsOption } from './Chart';
 import { alpha, useTokens, type Tokens } from '../lib/theme';
 import { fmtDate, fmtDurLabel, fmtDuration } from '../lib/format';
-import { breakNames, gapsInDaily, makeTimeline } from '../lib/timeline';
 
 // ---------- form-zone colours (state, so status palette) ----------
-export function formColor(t: Tokens, id: string): string {
-  switch (id) {
-    case 'transition':
-      return t.muted;
-    case 'fresh':
-      return t.accent;
-    case 'neutral':
-      return t.lineStrong;
-    case 'optimal':
-      return t.good;
-    default:
-      return t.critical;
-  }
-}
+// the colours and words for form live with the other small helpers, so a page can use them without the charts
+import { formColor, fmtForm } from '../lib/form';
+export { formColor, fmtForm };
 
-// ---------- Performance Management Chart ----------
-export function PmcChart({ points, events = [], phases, height = 420, compact = false, showTss = true }: { points: PmcPoint[]; events?: RaceEvent[]; phases?: { name: string | null; start: string | null; end: string | null }[]; height?: number; compact?: boolean; showTss?: boolean }) {
-  const t = useTokens();
-  const option = useMemo<EChartsOption>(() => {
-    const actual = points.filter((p) => !p.projected);
-    // long breaks (90+ days without load) are squeezed, so years of history read continuously
-    const gaps = gapsInDaily(actual, (p) => p.tss === 0);
-    const tl = gaps.length ? makeTimeline(gaps) : null;
-    const ts = (d: string) => (tl ? tl.toX(parseISO(d).getTime()) : parseISO(d).getTime());
-    const byX = new Map(points.map((p) => [ts(p.date), p]));
-    const lastActual = actual[actual.length - 1];
-    const proj = points.filter((p) => p.projected);
-    const projWithJoin = lastActual && proj.length ? [lastActual, ...proj] : proj;
-    const line = (color: string, dashed = false) => ({ type: 'line' as const, showSymbol: false, smooth: 0.2, lineStyle: { width: 2, color, type: dashed ? ('dashed' as const) : ('solid' as const) }, itemStyle: { color }, emphasis: { disabled: true } });
-    const panels = showTss ? 3 : 2;
-    const gap = 26;
-    // the legend gets a row of its own above the first panel's axis name (it pages on a phone)
-    const top = compact ? 44 : 50;
-    const bottom = compact ? 26 : 56;
-    const avail = height - top - bottom - gap * (panels - 1);
-    const h1 = Math.round(avail * (showTss ? 0.5 : 0.62));
-    const h2 = Math.round(avail * (showTss ? 0.27 : 0.38));
-    const h3 = avail - h1 - h2;
-    const grids = [
-      { left: 44, right: 16, top, height: h1 },
-      { left: 44, right: 16, top: top + h1 + gap, height: h2 },
-      ...(showTss ? [{ left: 44, right: 16, top: top + h1 + h2 + gap * 2, height: h3 }] : []),
-    ];
-    const xAxes = grids.map((_, i) => ({
-      type: (tl ? 'value' : 'time') as 'value',
-      gridIndex: i,
-      ...(tl ? { min: ts(points[0].date), max: ts(points[points.length - 1].date), splitNumber: 8 } : {}),
-      ...axisStyle(t, { grid: false }),
-      axisLabel: { show: i === grids.length - 1, color: t.muted, fontSize: 11, hideOverlap: true, ...(tl ? { formatter: (v: number) => (tl.inBreak(v) ? '' : fmtDate(new Date(tl.fromX(v)), "MMM ''yy")) } : {}) },
-      axisLine: { show: true, lineStyle: { color: t.lineStrong } },
-    }));
-    const breakBands = (labels: boolean) =>
-      tl
-        ? {
-            markArea: {
-              silent: true,
-              itemStyle: { color: alpha(t.muted, 0.1) },
-              label: { show: labels, color: t.muted, fontSize: 10, position: 'insideTop' as const },
-              data: tl.breaks.map((g, i, all) => [{ xAxis: g.x0, name: breakNames(all)[i] }, { xAxis: g.x1 }]),
-            },
-          }
-        : {};
-    const todayTs = lastActual ? ts(lastActual.date) : Date.now();
-    const evLines = events.map((e) => ({
-      xAxis: ts(e.date),
-      lineStyle: { color: e.priority === 'A' ? t.critical : e.priority === 'B' ? t.serious : t.muted, width: 1, type: 'solid' as const },
-      // along the line, cut to the fitness panel's height so it doesn't run down into form
-      label: { formatter: `${e.priority} · ${e.name}`, color: t.ink2, fontSize: 10, position: 'insideEndTop' as const, width: Math.max(40, h1 - 12), overflow: 'truncate' as const },
-    }));
-    const tsbData = points.map((p) => ({
-      value: [ts(p.date), Math.round(p.tsb * 10) / 10],
-      itemStyle: { color: alpha(formColor(t, formZone(p.tsb, p.ctl).id), p.projected ? 0.45 : 0.9), borderRadius: 1 },
-    }));
-    const series: any[] = [
-      { ...line(t.ctl), name: 'Fitness (CTL)', xAxisIndex: 0, yAxisIndex: 0, data: actual.map((p) => [ts(p.date), p.ctl]), areaStyle: { color: alpha(t.ctl, 0.08) }, markLine: evLines.length || proj.length ? { symbol: 'none', silent: true, data: [...evLines, ...(proj.length ? [{ xAxis: todayTs, lineStyle: { color: t.muted, type: 'solid' as const, width: 1 }, label: { formatter: 'Today', color: t.muted, fontSize: 10, position: 'insideEndTop' as const } }] : [])] } : undefined },
-      { ...line(t.atl), name: 'Fatigue (ATL)', xAxisIndex: 0, yAxisIndex: 0, data: actual.map((p) => [ts(p.date), p.atl]), lineStyle: { width: 1.5, color: t.atl }, ...breakBands(true) },
-      { type: 'bar', name: 'Form (TSB)', xAxisIndex: 1, yAxisIndex: 1, data: tsbData, barMaxWidth: 6, barCategoryGap: '10%', itemStyle: { color: t.good }, ...breakBands(false) },
-    ];
-    // the plan's phases (TrainerRoad's), shaded behind fitness
-    const shown = (phases ?? []).filter((p) => p.start && p.end && p.end >= points[0]?.date && p.start <= points[points.length - 1]?.date);
-    if (shown.length) {
-      const lo = points[0].date;
-      const hi = points[points.length - 1].date;
-      series.push({
-        type: 'line',
-        name: 'Plan phase',
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: [],
-        silent: true,
-        markArea: {
-          silent: true,
-          itemStyle: { color: alpha(t.series[3], 0.07), borderColor: alpha(t.series[3], 0.35), borderWidth: 0.5 },
-          label: { show: true, position: 'insideTopLeft' as const, color: t.muted, fontSize: 10, formatter: (p: any) => p.name },
-          data: shown.map((p) => [{ xAxis: ts(p.start! < lo ? lo : p.start!), name: p.name ?? '' }, { xAxis: ts(p.end! > hi ? hi : p.end!) }]),
-        },
-      });
-    }
-    if (projWithJoin.length) {
-      series.push(
-        { ...line(t.ctl, true), name: 'Fitness (CTL)', xAxisIndex: 0, yAxisIndex: 0, data: projWithJoin.map((p) => [ts(p.date), p.ctl]), lineStyle: { width: 2, color: t.ctl, type: 'dashed' } },
-        { ...line(t.atl, true), name: 'Fatigue (ATL)', xAxisIndex: 0, yAxisIndex: 0, data: projWithJoin.map((p) => [ts(p.date), p.atl]), lineStyle: { width: 1.5, color: t.atl, type: 'dashed' } },
-      );
-    }
-    if (showTss) {
-      series.push({
-        type: 'bar',
-        name: 'Daily TSS',
-        itemStyle: { color: t.ink2 },
-        xAxisIndex: 2,
-        yAxisIndex: 2,
-        barMaxWidth: 6,
-        data: points.map((p) => ({ value: [ts(p.date), Math.round(p.tss)], itemStyle: { color: p.projected ? alpha(t.muted, 0.45) : alpha(t.ink2, 0.75), borderRadius: [2, 2, 0, 0] } })),
-        ...breakBands(false),
-      });
-    }
-    return {
-      animation: false,
-      grid: grids,
-      axisPointer: { link: [{ xAxisIndex: 'all' }], lineStyle: { color: t.muted, width: 1 } },
-      legend: { ...legendStyle(t), data: ['Fitness (CTL)', 'Fatigue (ATL)', 'Form (TSB)', ...(showTss ? ['Daily TSS'] : [])] },
-      tooltip: {
-        trigger: 'axis',
-        ...tooltipStyle(t),
-        axisPointer: { type: 'line' },
-        formatter: (ps: any) => {
-          const arr = Array.isArray(ps) ? ps : [ps];
-          const x = arr[0]?.value?.[0] ?? arr[0]?.axisValue;
-          const p = byX.get(x);
-          if (!p) return '';
-          const z = formZone(p.tsb, p.ctl);
-          return `<div style="font-weight:600;margin-bottom:4px">${fmtDate(p.date)}${p.projected ? ' · projected' : ''}</div>
-            ${tipRow(t.ctl, 'Fitness', p.ctl.toFixed(1))}${tipRow(t.atl, 'Fatigue', p.atl.toFixed(1))}${tipRow(formColor(t, z.id), `Form · ${z.label}`, p.tsb.toFixed(1))}
-            ${tipRow(t.ink2, p.projected ? 'Planned TSS' : 'TSS', Math.round(p.tss).toString())}${tipRow(t.muted, 'Ramp (7d)', `${p.ramp >= 0 ? '+' : ''}${p.ramp.toFixed(1)}`)}`;
-        },
-      },
-      xAxis: xAxes,
-      yAxis: grids.map((_, i) => valueAxis(t, { gridIndex: i, splitNumber: i === 0 ? 4 : 2, name: ['CTL / ATL', 'TSB', 'TSS'][i], nameLocation: 'end', nameGap: 8, nameTextStyle: { color: t.muted, fontSize: 10, align: 'left', padding: [0, 0, 0, -30] } })),
-      dataZoom: compact ? [] : [{ type: 'inside', xAxisIndex: grids.map((_, i) => i) }, { type: 'slider', xAxisIndex: grids.map((_, i) => i), height: 18, bottom: 8, borderColor: t.line, backgroundColor: t.surface2, fillerColor: alpha(t.accent, 0.15), handleStyle: { color: t.surface, borderColor: t.lineStrong }, dataBackground: { lineStyle: { color: t.lineStrong }, areaStyle: { color: t.surface3 } }, textStyle: { color: t.muted }, moveHandleSize: 0, showDetail: false }],
-      series,
-    };
-  }, [points, events, phases, t, height, compact, showTss]);
-  return <Chart option={option} height={height} />;
-}
-
-/** Signed TSB, as form reads: +12 fresh, −20 tired. */
-export function fmtForm(tsb: number): string {
-  const r = Math.round(tsb);
-  return r > 0 ? `+${r}` : r < 0 ? `−${-r}` : '0';
-}
 
 /**
  * How fresh you were for a ride: its day's form (TSB) beside the zone's colour, the zone named

@@ -4,7 +4,9 @@ import { ChevronLeft, ChevronRight, ExternalLink, Pencil, Trash2, Check } from '
 import type { ActivityDetail as Detail, PlannedWorkout, Sport } from '../../shared/types';
 import { http, useAction, useApi } from '../lib/api';
 import { useTokens } from '../lib/theme';
-import { Badge, Button, Card, FillBox, Input, Segmented, Spinner, SportIcon, Stat, Empty, Select, buttonClass } from '../components/ui';
+import { Badge, Button, Card, FillBox, Input, Segmented, Spinner, SportBadge, Stat, Empty, Select, buttonClass } from '../components/ui';
+import { useInspectLink } from '../lib/inspect';
+import { activityTitle } from '../lib/session';
 import { RouteMap, type RouteMapHandle } from '../components/RouteMap';
 import { MiniProfile } from '../components/charts';
 import { InsightPanel, type ActivityInsights } from '../components/insights';
@@ -58,6 +60,7 @@ export function ActivityDetail() {
   const { id } = useParams();
   const nav = useNavigate();
   const t = useTokens();
+  const inspectLink = useInspectLink();
   const { data: a, isLoading, error } = useApi<DetailResponse>(`/activities/${id}`);
   const prefs = useApi<{ crankLength: number }>('/preferences');
   const insights = useApi<ActivityInsights>(`/activities/${id}/insights`);
@@ -113,6 +116,8 @@ export function ActivityDetail() {
   if (error || !a) return <Empty title="Activity not found" />;
 
   const th = a.thresholds;
+  // a device's "Afternoon Ride" goes by the workout it was planned as, as everywhere else
+  const shownName = activityTitle({ name: a.name, plannedTitle: a.planned?.title ?? null });
   const pace = isPaceSport(a.sport);
   const s = a.streams;
   const hasGps = !!(s?.lat && s.lat.some((v) => v != null));
@@ -145,19 +150,23 @@ export function ActivityDetail() {
       {/* header */}
       <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="mb-1 flex items-center gap-2 text-xs text-muted">
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
             <Link to="/activities" className="hover:text-ink">
               Activities
             </Link>
             <span>/</span>
             <span>{fmtDate(a.startTime, 'EEEE d MMMM yyyy · HH:mm')}</span>
             <span>·</span>
-            <Link to={`/journal?week=${a.localDate}`} className="hover:text-ink" title="The week this was part of, in the journal">
+            <Link {...inspectLink('w', a.localDate)} className="hover:text-ink" title="The week it was part of">
               Its week
             </Link>
+            <span>·</span>
+            <Link {...inspectLink('d', a.localDate)} className="hover:text-ink" title="Everything that day: form going in, the night before, what was planned">
+              Its day
+            </Link>
           </div>
-          <div className="flex items-center gap-2.5">
-            <SportIcon sport={a.sport} className="h-6 w-6" />
+          <div className="flex items-center gap-3">
+            <SportBadge sport={a.sport} size={44} />
             {editing ? (
               <form
                 className="flex min-w-0 gap-2"
@@ -171,7 +180,9 @@ export function ActivityDetail() {
                 <Button type="submit" variant="primary" icon={<Check className="h-4 w-4" />} aria-label="Save name" />
               </form>
             ) : (
-              <h1 className="truncate text-[22px] font-semibold tracking-tight">{a.name}</h1>
+              <h1 className="truncate text-[26px] leading-8 font-semibold tracking-[-0.02em]" title={shownName !== a.name ? `Recorded as “${a.name}”` : undefined}>
+                {shownName}
+              </h1>
             )}
             {!editing && (
               <button
@@ -228,7 +239,7 @@ export function ActivityDetail() {
       </div>
 
       {/* key metrics */}
-      <div className="card grid grid-cols-2 gap-x-6 gap-y-4 p-5 sm:grid-cols-4 lg:grid-cols-6 2xl:grid-cols-8">
+      <div className="card grid grid-cols-2 gap-x-6 gap-y-5 p-6 sm:grid-cols-4 lg:grid-cols-6 2xl:grid-cols-8">
         {metrics.map((m) => (
           <Stat key={m.label} {...m} />
         ))}

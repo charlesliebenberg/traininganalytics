@@ -41,18 +41,18 @@ export const surveyText = (s: SurveyAnswer) => {
 };
 
 /** On an activity: TrainerRoad's record of the same ride, and how you said it felt. */
-export function TrainerRoadRideStrip({ ride }: { ride: TrainerRoadRide }) {
+export function TrainerRoadRideStrip({ ride, className = 'card mt-4 px-5 py-3' }: { ride: TrainerRoadRide; className?: string }) {
   const parts = [
     ride.name,
     ride.tss != null ? `${Math.round(ride.tss)} TSS${ride.if != null ? ` (IF ${ride.if.toFixed(2)})` : ''} by its FTP` : null,
     ride.survey ? `felt ${surveyText(ride.survey)}` : 'survey not answered',
   ].filter(Boolean);
   return (
-    <div className="card mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 px-5 py-3 text-[13px]">
+    <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] ${className}`}>
       <span className="flex h-4 items-center rounded bg-ink px-1 text-[9px] font-bold text-surface">TR</span>
       <span className="font-medium text-ink">TrainerRoad</span>
       <span className="text-ink-2">{parts.join(' · ')}</span>
-      <Link to="/trainerroad" className="ml-auto flex items-center gap-1 text-xs text-accent hover:underline">
+      <Link to="/performance#trainerroad" className="ml-auto flex items-center gap-1 text-xs text-accent hover:underline">
         More <ArrowRight className="h-3 w-3" />
       </Link>
     </div>
@@ -83,7 +83,7 @@ export function TrainerRoadFtpNote() {
         {parts.join(' · ')}
         {f.app != null ? `, against this app’s ${f.app} W` : ''}
       </span>
-      <Link to="/trainerroad" className="ml-auto flex items-center gap-1 text-xs text-accent hover:underline">
+      <Link to="/performance#trainerroad" className="ml-auto flex items-center gap-1 text-xs text-accent hover:underline">
         Compare <ArrowRight className="h-3 w-3" />
       </Link>
     </div>
