@@ -1,143 +1,132 @@
 @import 'tailwindcss';
+@import '@fontsource-variable/inter/opsz.css';
 @import 'leaflet/dist/leaflet.css';
 
 @custom-variant dark (&:where([data-theme=dark], [data-theme=dark] *));
 
+/*
+ * The design tokens. Surfaces and inks are a cool neutral; data colours are one validated
+ * categorical set (blue, orange, aqua, yellow, magenta, green, violet, red), each metric and
+ * sport keeping its colour on every page. Dark is its own selected set, not an inversion.
+ */
 :root {
   color-scheme: light;
-  --page: #f4f4f1;
-  --surface: #fcfcfb;
-  --surface-2: #f0efec;
-  --surface-3: #e7e6e1;
-  --line: #e1e0d9;
-  --line-strong: #c3c2b7;
-  --ink: #0b0b0b;
-  --ink-2: #52514e;
-  --muted: #898781;
-  --accent: #2a78d6;
-  --accent-soft: rgba(42, 120, 214, 0.12);
-  --good: #0ca30c;
-  --good-text: #006300;
-  --warning: #fab219;
-  --serious: #ec835a;
-  --critical: #d03b3b;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.04);
+  --page: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #f3f4f6;
+  --surface-3: #e7e9ed;
+  --line: #e6e8ec;
+  --line-strong: #cfd3da;
+  --ink: #0d1117;
+  --ink-2: #464d5a;
+  --muted: #7b8290;
+  --accent: #2563eb;
+  --accent-soft: rgba(37, 99, 235, 0.09);
+  --inverse: #0d1117;
+  --inverse-ink: #ffffff;
+  --glass: rgba(255, 255, 255, 0.82);
+  --good: #0aac23;
+  --good-text: #006c10;
+  --warning: #fbb315;
+  --serious: #f18a59;
+  --critical: #dc3c3d;
+  --shadow-sm: 0 1px 2px rgba(13, 17, 23, 0.05);
+  --shadow: 0 1px 2px rgba(13, 17, 23, 0.04), 0 6px 16px -8px rgba(13, 17, 23, 0.08);
+  --shadow-lg: 0 24px 64px -16px rgba(13, 17, 23, 0.28), 0 2px 8px rgba(13, 17, 23, 0.06);
 
   /* data series (entity-fixed) */
-  --s-power: #4a3aa7;
-  --s-hr: #e34948;
-  --s-cadence: #eda100;
-  --s-speed: #2a78d6;
-  --s-altitude: #898781;
-  --s-temp: #e87ba4;
-  --s-wbal: #1baf7a;
-  --s-ctl: #2a78d6;
-  --s-atl: #e87ba4;
-  --s-tsb: #eb6834;
-  --s-1: #2a78d6;
-  --s-2: #eb6834;
-  --s-3: #1baf7a;
-  --s-4: #eda100;
-  --s-5: #e87ba4;
-  --s-6: #008300;
-  --s-7: #4a3aa7;
-  --s-8: #e34948;
-  --sport-ride: #2a78d6;
-  --sport-run: #eb6834;
-  --sport-swim: #1baf7a;
-  --sport-strength: #4a3aa7;
-  --sport-walk: #008300;
-  --sport-hike: #008300;
-  --sport-ski: #e87ba4;
-  --sport-row: #eda100;
-  --sport-other: #898781;
+  --s-1: #257de0;
+  --s-2: #f47230;
+  --s-3: #00b894;
+  --s-4: #f2a600;
+  --s-5: #ee7fac;
+  --s-6: #008a17;
+  --s-7: #6a4ce2;
+  --s-8: #ec4647;
+  --s-power: var(--s-7);
+  --s-hr: var(--s-8);
+  --s-cadence: var(--s-4);
+  --s-speed: var(--s-1);
+  --s-altitude: #8a909c;
+  --s-temp: var(--s-5);
+  --s-wbal: var(--s-3);
+  --s-ctl: var(--s-1);
+  --s-atl: var(--s-5);
+  --s-tsb: var(--s-2);
+  --sport-ride: var(--s-1);
+  --sport-run: var(--s-2);
+  --sport-swim: var(--s-3);
+  --sport-strength: var(--s-7);
+  --sport-walk: var(--s-6);
+  --sport-hike: var(--s-6);
+  --sport-ski: var(--s-5);
+  --sport-row: var(--s-4);
+  --sport-other: #8a909c;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     color-scheme: dark;
-    --page: #0d0d0d;
-    --surface: #1a1a19;
-    --surface-2: #232321;
-    --surface-3: #2c2c2a;
-    --line: #2c2c2a;
-    --line-strong: #383835;
-    --ink: #ffffff;
-    --ink-2: #c3c2b7;
-    --muted: #898781;
-    --accent: #3987e5;
-    --accent-soft: rgba(57, 135, 229, 0.16);
-    --good-text: #0ca30c;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-    --s-power: #9085e9;
-    --s-hr: #e66767;
-    --s-cadence: #c98500;
-    --s-speed: #3987e5;
-    --s-altitude: #898781;
-    --s-temp: #d55181;
-    --s-wbal: #199e70;
-    --s-ctl: #3987e5;
-    --s-atl: #d55181;
-    --s-tsb: #d95926;
-    --s-1: #3987e5;
-    --s-2: #d95926;
-    --s-3: #199e70;
-    --s-4: #c98500;
-    --s-5: #d55181;
-    --s-6: #008300;
-    --s-7: #9085e9;
-    --s-8: #e66767;
-    --sport-ride: #3987e5;
-    --sport-run: #d95926;
-    --sport-swim: #199e70;
-    --sport-strength: #9085e9;
-    --sport-walk: #0ca30c;
-    --sport-hike: #0ca30c;
-    --sport-ski: #d55181;
-    --sport-row: #c98500;
+    --page: #0b0c0f;
+    --surface: #14161a;
+    --surface-2: #1b1e23;
+    --surface-3: #262a31;
+    --line: #23262d;
+    --line-strong: #363b44;
+    --ink: #f2f4f7;
+    --ink-2: #b4bac5;
+    --muted: #7c8391;
+    --accent: #6b9bff;
+    --accent-soft: rgba(107, 155, 255, 0.15);
+    --inverse: #f2f4f7;
+    --inverse-ink: #0b0c0f;
+    --glass: rgba(16, 18, 22, 0.8);
+    --good-text: #53c556;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 28px 72px -16px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.06);
+    --s-1: #338ced;
+    --s-2: #e76624;
+    --s-3: #00a888;
+    --s-4: #d28e05;
+    --s-5: #e24d8b;
+    --s-6: #0aac23;
+    --s-7: #9887ef;
+    --s-8: #eb6263;
+    --s-altitude: #7c8391;
+    --sport-other: #7c8391;
   }
 }
 :root[data-theme='dark'] {
   color-scheme: dark;
-  --page: #0d0d0d;
-  --surface: #1a1a19;
-  --surface-2: #232321;
-  --surface-3: #2c2c2a;
-  --line: #2c2c2a;
-  --line-strong: #383835;
-  --ink: #ffffff;
-  --ink-2: #c3c2b7;
-  --muted: #898781;
-  --accent: #3987e5;
-  --accent-soft: rgba(57, 135, 229, 0.16);
-  --good-text: #0ca30c;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --s-power: #9085e9;
-  --s-hr: #e66767;
-  --s-cadence: #c98500;
-  --s-speed: #3987e5;
-  --s-altitude: #898781;
-  --s-temp: #d55181;
-  --s-wbal: #199e70;
-  --s-ctl: #3987e5;
-  --s-atl: #d55181;
-  --s-tsb: #d95926;
-  --s-1: #3987e5;
-  --s-2: #d95926;
-  --s-3: #199e70;
-  --s-4: #c98500;
-  --s-5: #d55181;
-  --s-6: #008300;
-  --s-7: #9085e9;
-  --s-8: #e66767;
-  --sport-ride: #3987e5;
-  --sport-run: #d95926;
-  --sport-swim: #199e70;
-  --sport-strength: #9085e9;
-  --sport-walk: #0ca30c;
-  --sport-hike: #0ca30c;
-  --sport-ski: #d55181;
-  --sport-row: #c98500;
+  --page: #0b0c0f;
+  --surface: #14161a;
+  --surface-2: #1b1e23;
+  --surface-3: #262a31;
+  --line: #23262d;
+  --line-strong: #363b44;
+  --ink: #f2f4f7;
+  --ink-2: #b4bac5;
+  --muted: #7c8391;
+  --accent: #6b9bff;
+  --accent-soft: rgba(107, 155, 255, 0.15);
+  --inverse: #f2f4f7;
+  --inverse-ink: #0b0c0f;
+  --glass: rgba(16, 18, 22, 0.8);
+  --good-text: #53c556;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 28px 72px -16px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --s-1: #338ced;
+  --s-2: #e76624;
+  --s-3: #00a888;
+  --s-4: #d28e05;
+  --s-5: #e24d8b;
+  --s-6: #0aac23;
+  --s-7: #9887ef;
+  --s-8: #eb6263;
+  --s-altitude: #7c8391;
+  --sport-other: #7c8391;
 }
 
 @theme inline {
@@ -152,68 +141,192 @@
   --color-muted: var(--muted);
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
+  --color-inverse: var(--inverse);
+  --color-inverse-ink: var(--inverse-ink);
   --color-good: var(--good);
   --color-good-text: var(--good-text);
   --color-warning: var(--warning);
   --color-serious: var(--serious);
   --color-critical: var(--critical);
-  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-sans: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow);
+  --shadow-lg: var(--shadow-lg);
 }
 
-html,
-body,
-#root {
-  height: 100%;
+/* in layers, so a utility class on an element can always override them */
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-optical-sizing: auto;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-size: 14px;
+    line-height: 1.5;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: var(--accent-soft);
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.012em;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--surface-3);
+    border-radius: 10px;
+    border: 2px solid var(--page);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  input[type='number']::-webkit-inner-spin-button {
+    opacity: 0.4;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .leaflet-container {
+    background: var(--surface-2);
+    font-family: var(--font-sans);
+  }
+  .leaflet-control-attribution {
+    font-size: 10px;
+    background: color-mix(in srgb, var(--surface) 80%, transparent) !important;
+    color: var(--muted) !important;
+  }
+  .leaflet-control-attribution a {
+    color: var(--ink-2) !important;
+  }
+  .leaflet-bar a {
+    background: var(--surface) !important;
+    color: var(--ink) !important;
+    border-color: var(--line) !important;
+  }
 }
-body {
-  background: var(--page);
-  color: var(--ink);
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-  font-size: 14px;
+
+@layer components {
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    box-shadow: var(--shadow-sm);
+  }
+  .skeleton {
+    background: linear-gradient(90deg, var(--surface-2) 0%, var(--surface-3) 50%, var(--surface-2) 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.4s linear infinite;
+    border-radius: 8px;
+  }
 }
-.tnum {
+
+/* numbers that line up in columns */
+@utility tnum {
   font-variant-numeric: tabular-nums;
 }
-.card {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  box-shadow: var(--shadow);
+/* a small uppercase label over a value or a group */
+@utility eyebrow {
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+/* a headline number: display cut, tight */
+@utility figure {
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1;
 }
-::-webkit-scrollbar-thumb {
-  background: var(--surface-3);
-  border-radius: 10px;
-  border: 2px solid var(--page);
+@utility glass {
+  background: var(--glass);
+  backdrop-filter: saturate(1.6) blur(14px);
+  -webkit-backdrop-filter: saturate(1.6) blur(14px);
 }
-::-webkit-scrollbar-track {
-  background: transparent;
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
-.leaflet-container {
-  background: var(--surface-2);
-  font-family: var(--font-sans);
+/* the safe area at the bottom of a phone, under the tab bar */
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
 }
-.leaflet-control-attribution {
-  font-size: 10px;
-  background: color-mix(in srgb, var(--surface) 80%, transparent) !important;
-  color: var(--muted) !important;
+
+/* motion: panels slide, things settle; nothing moves for people who'd rather it didn't */
+@keyframes sheet-in-right {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
 }
-.leaflet-control-attribution a {
-  color: var(--ink-2) !important;
+@keyframes sheet-in-up {
+  from {
+    transform: translateY(32px);
+    opacity: 0;
+  }
 }
-.leaflet-bar a {
-  background: var(--surface) !important;
-  color: var(--ink) !important;
-  border-color: var(--line) !important;
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
 }
-input[type='number']::-webkit-inner-spin-button {
-  opacity: 0.4;
+@keyframes rise-in {
+  from {
+    transform: translateY(6px);
+    opacity: 0;
+  }
 }
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+/* a week the season was asked to show: lit, then fading back */
+@keyframes flash {
+  0%,
+  35% {
+    box-shadow: inset 0 0 0 2px var(--accent);
+    background-color: var(--accent-soft);
+  }
+}
+@utility animate-sheet-right {
+  animation: sheet-in-right 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@utility animate-sheet-up {
+  animation: sheet-in-up 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@utility animate-fade {
+  animation: fade-in 180ms ease-out;
+}
+@utility animate-rise {
+  animation: rise-in 260ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@utility animate-flash {
+  animation: flash 1.8s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
 }

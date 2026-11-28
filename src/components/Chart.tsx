@@ -83,7 +83,9 @@ export function Chart({ option, height = 260, className, onEvents, onReady, notM
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
-    chart.setOption(option as EChartsOption, { notMerge, lazyUpdate: false });
+    // every chart in the app's typeface, unless it says otherwise
+    const o = option as EChartsOption;
+    chart.setOption({ ...o, textStyle: { fontFamily: CHART_FONT, ...(o.textStyle as object | undefined) } } as EChartsOption, { notMerge, lazyUpdate: false });
   }, [option, notMerge]);
 
   useEffect(() => {
@@ -106,15 +108,17 @@ export function Chart({ option, height = 260, className, onEvents, onReady, notM
 
 // ---------- shared option builders ----------
 
+export const CHART_FONT = "'Inter Variable', system-ui, -apple-system, 'Segoe UI', sans-serif";
+
 export function baseTextStyle(t: Tokens) {
-  return { color: t.ink2, fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif', fontSize: 11 };
+  return { color: t.ink2, fontFamily: CHART_FONT, fontSize: 11 };
 }
 
 export function axisStyle(t: Tokens, opts: { grid?: boolean } = {}) {
   return {
     axisLine: { show: true, lineStyle: { color: t.lineStrong } },
     axisTick: { show: false },
-    axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true },
+    axisLabel: { color: t.muted, fontSize: 11, hideOverlap: true, fontFamily: CHART_FONT },
     splitLine: { show: opts.grid ?? true, lineStyle: { color: t.line, width: 1 } },
     nameTextStyle: { color: t.muted, fontSize: 11 },
   };
@@ -135,9 +139,9 @@ export function tooltipStyle(t: Tokens) {
     backgroundColor: t.surface,
     borderColor: t.line,
     borderWidth: 1,
-    padding: [8, 10],
-    textStyle: { color: t.ink, fontSize: 12 },
-    extraCssText: `box-shadow: 0 6px 24px rgba(0,0,0,${t.dark ? 0.5 : 0.12}); border-radius: 10px;`,
+    padding: [10, 12],
+    textStyle: { color: t.ink, fontSize: 12, fontFamily: CHART_FONT },
+    extraCssText: `box-shadow: 0 16px 40px -12px rgba(0,0,0,${t.dark ? 0.7 : 0.22}), 0 1px 3px rgba(0,0,0,${t.dark ? 0.4 : 0.06}); border-radius: 12px; line-height: 1.55;`,
   };
 }
 
@@ -147,11 +151,11 @@ export function legendStyle(t: Tokens) {
     type: 'scroll' as const,
     top: 0,
     right: 0,
-    icon: 'roundRect',
-    itemWidth: 10,
-    itemHeight: 10,
-    itemGap: 14,
-    textStyle: { color: t.ink2, fontSize: 12 },
+    icon: 'circle',
+    itemWidth: 8,
+    itemHeight: 8,
+    itemGap: 16,
+    textStyle: { color: t.ink2, fontSize: 12, fontFamily: CHART_FONT },
     inactiveColor: t.surface3,
     pageIconColor: t.ink2,
     pageIconInactiveColor: t.surface3,
@@ -160,7 +164,7 @@ export function legendStyle(t: Tokens) {
   };
 }
 
-export function areaFill(color: string, top = 0.28, bottom = 0.02) {
+export function areaFill(color: string, top = 0.18, bottom = 0.01) {
   return {
     color: {
       type: 'linear' as const,
