@@ -31,7 +31,7 @@ import { clearDemo, isDemo, loadDemo } from './demo';
 import { syncNow, syncStatus } from './sync';
 import * as comeback from './comeback';
 import { forecast, saveScenario, type ForecastRequest } from './forecast';
-import { journal } from './journal';
+import { journal, journalWeek } from './journal';
 import { activityInsights, aerobicTrend, latestInsights } from './aerobic';
 import { keySets, trainingReview } from './sessions';
 import { topEfforts, type EffortMetric } from './efforts';
@@ -293,10 +293,12 @@ api.get('/activities/:id', (c) => {
     next: q.get('SELECT id FROM activities WHERE start_time > ? ORDER BY start_time ASC LIMIT 1', a.startTime)?.id ?? null,
   };
   const planned = a.plannedId ? q.get('SELECT * FROM planned_workouts WHERE id = ?', a.plannedId) : null;
+  // ?lite=1: the summary without the second-by-second data (the inspector's view)
+  const lite = c.req.query('lite') === '1';
   return c.json({
     ...a,
-    curves: getCurves(id),
-    streams: loadStreams(id),
+    curves: lite ? null : getCurves(id),
+    streams: lite ? null : loadStreams(id),
     thresholds: thresholdsFor(a.localDate),
     nav,
     planned: planned ? rowToPlanned(planned) : null,
@@ -471,6 +473,37 @@ function plannedMetrics(structure: WorkoutStructure | null, fallback: { duration
 api.get('/planned', (c) => {
   const { from, to } = range(c, 30);
   return c.json(q.all('SELECT * FROM planned_workouts WHERE date BETWEEN ? AND ? ORDER BY date, sort_order', from, to).map(rowToPlanned));
+});
+
+/** Everything about one day: what was done and planned, races, form going in, and the night before. */
+api.get('/day', (c) => {
+  const d = c.req.query('date');
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return c.json({ error: 'date=YYYY-MM-DD' }, 400);
+  const t = today();
+  const acts = q.all(`SELECT ${ACTIVITY_LIST_COLUMNS} FROM activities WHERE local_date = ? ORDER BY start_time`, d).map(rowToActivity);
+  const planned = q.all('SELECT * FROM planned_workouts WHERE date = ? ORDER BY sort_order', d).map(rowToPlanned);
+  const events = q.all('SELECT * FROM events WHERE date = ? ORDER BY priority', d).map(rowToEvent);
+  const pts = pmc(iso(subDays(parseISO(d), 1)), d);
+  return c.json({
+    date: d,
+    today: t,
+    activities: acts.map(({ laps, ...a }) => a),
+    planned,
+    events,
+    // form going into the day is the day before's; the day's own point has its load in it
+    before: pts.length > 1 ? pts[0] : null,
+    after: pts[pts.length - 1] ?? null,
+    sleep: d <= t ? nightBefore(d) : null,
+    thresholds: thresholdsFor(d <= t ? d : t),
+  });
+});
+
+api.get('/planned/:id', (c) => {
+  const row = q.get('SELECT * FROM planned_workouts WHERE id = ?', Number(c.req.param('id')));
+  if (!row) return c.json({ error: 'Not found' }, 404);
+  const p = rowToPlanned(row);
+  const activity = p.activityId ? q.get(`SELECT ${ACTIVITY_LIST_COLUMNS} FROM activities WHERE id = ?`, p.activityId) : null;
+  return c.json({ ...p, activity: activity ? rowToActivity(activity) : null, thresholds: thresholdsFor(p.date) });
 });
 
 api.post('/planned', async (c) => {
@@ -743,6 +776,36 @@ api.post('/forecast/save', async (c) => {
   return saved ? c.json(saved) : c.json({ error: 'Nothing to save: no forecast for this race' }, 400);
 });
 /** The training week by week, newest first: `before` a week to page back from. */
+api.get('/journal/week', (c) => {
+  const start = c.req.query('start');
+  if (!start || !/^\d{4}-\d{2}-\d{2}$/.test(start)) return c.json({ error: 'start=YYYY-MM-DD' }, 400);
+  return c.json(journalWeek(start));
+});
+
+/**
+ * Where the athlete stands right now, for the status every page shows: fitness, fatigue and form,
+ * this week's ramp, FTP, and the race ahead.
+ */
+api.get('/now', (c) => {
+  const t = today();
+  const pts = pmc(iso(subDays(parseISO(t), 7)), t);
+  const p = pts[pts.length - 1];
+  const th = thresholdsFor(t);
+  const race = q.get("SELECT * FROM events WHERE date >= ? ORDER BY CASE priority WHEN 'A' THEN 0 ELSE 1 END, date LIMIT 1", t);
+  const ev = race ? rowToEvent(race) : null;
+  return c.json({
+    today: t,
+    ctl: p?.ctl ?? null,
+    atl: p?.atl ?? null,
+    tsb: p?.tsb ?? null,
+    ramp: p && pts[0] ? p.ctl - pts[0].ctl : null,
+    form: p ? formZone(p.tsb, p.ctl) : null,
+    ftp: th.ftp || null,
+    weight: th.weight || null,
+    race: ev ? { id: ev.id, name: ev.name, date: ev.date, priority: ev.priority, days: differenceInCalendarDays(parseISO(ev.date), parseISO(t)) } : null,
+  });
+});
+
 api.get('/journal', (c) => {
   const before = c.req.query('before');
   return c.json(journal(before && /^\d{4}-\d{2}-\d{2}$/.test(before) ? before : null, Math.min(12, Math.max(1, Number(c.req.query('weeks')) || 6))));

@@ -64,6 +64,16 @@ export function journal(before: string | null, count = 6) {
   };
 }
 
+/** One week by its first day, as the journal has it — or null for a week with nothing in it. */
+export function journalWeek(start: string) {
+  const prefs = getPreferences();
+  const ws = iso(startOfWeek(parseISO(start), { weekStartsOn: prefs.weekStart }));
+  const phases = (trainerRoadPlan()?.phases ?? []) as { name: string | null; start: string | null; end: string | null }[];
+  const seasonPlan = q.get<{ weeks: string }>('SELECT weeks FROM season_plans ORDER BY id DESC LIMIT 1');
+  const planWeeks = seasonPlan ? (JSON.parse(seasonPlan.weeks) as { weekStart: string; phase: string }[]) : [];
+  return weekOf(ws, iso(addDays(parseISO(ws), 6)), today(), phases, planWeeks);
+}
+
 /** One week, with everything about it. */
 function weekOf(ws: string, we: string, t: string, phases: { name: string | null; start: string | null; end: string | null }[], planWeeks: { weekStart: string; phase: string }[]) {
   const r = trainingReview(ws, 1);
