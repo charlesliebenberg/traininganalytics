@@ -15,7 +15,7 @@ import { formColor, fmtForm, MiniProfile } from '../charts';
 import { NightBefore } from '../sleep';
 import { AddModal, compliance, PRIORITY_COLOR } from '../planning';
 import { SportBadge, buttonClass } from '../ui';
-import { PanelLoading, PanelSection, PanelShell } from './Inspector';
+import { PanelLoading, PanelMissing, PanelSection, PanelShell } from './Inspector';
 
 interface Day {
   date: string;
@@ -37,10 +37,11 @@ const when = (d: string, today: string) => {
 /** A day: what was done and planned, races, form going into it, and the night before. */
 export function DayPanel({ date, onClose }: { date: string; onClose: () => void }) {
   const t = useTokens();
-  const { data: d, isLoading } = useApi<Day>(`/day?date=${date}`);
+  const { data: d, isLoading, error } = useApi<Day>(`/day?date=${date}`);
   const inspectLink = useInspectLink();
   const [adding, setAdding] = useState<null | 'library' | 'event'>(null);
-  if (isLoading || !d) return <PanelLoading onClose={onClose} />;
+  if (isLoading) return <PanelLoading onClose={onClose} />;
+  if (!d) return <PanelMissing title="This day couldn't be loaded" onClose={onClose}>{error?.message}</PanelMissing>;
   const matched = new Set(d.activities.map((a) => a.id));
   const open = d.planned.filter((p) => !p.activityId || !matched.has(p.activityId));
   const form = d.before ? formZone(d.before.tsb, d.before.ctl) : null;
