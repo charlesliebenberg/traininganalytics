@@ -1,13 +1,12 @@
 import { useEffect, useMemo } from 'react';
-import { Link } from 'react-router-dom';
 import { parseISO } from 'date-fns';
-import { AlertTriangle, ArrowRight, CheckCircle2, Moon } from 'lucide-react';
+import { AlertTriangle, Moon } from 'lucide-react';
 import type { SleepNight } from '../../shared/types';
-import { signedPct as pct, sleepAdvice, type MorningAfter, type PlannedToday, type SleepRead } from '../../shared/analytics/sleep';
+import { signedPct as pct, type MorningAfter, type SleepRead } from '../../shared/analytics/sleep';
 import { qs, useApi } from '../lib/api';
 import { alpha, useTokens } from '../lib/theme';
-import { fmtDate, fmtNum, iso } from '../lib/format';
-import { Card, Spinner, Stat } from './ui';
+import { fmtDate, fmtNum } from '../lib/format';
+import { Card, Spinner } from './ui';
 import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from './Chart';
 
 /** "7 h 15" */
@@ -19,58 +18,8 @@ const vsNormal = (x: number, unit: '%' | ' bpm') => {
   return v === 0 ? 'at normal' : `${v}${unit} ${x > 0 ? 'above' : 'below'} normal`;
 };
 
-function Tone({ tone }: { tone: 'good' | 'neutral' | 'warning' }) {
-  if (tone === 'good') return <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-good" aria-label="good" />;
-  if (tone === 'warning') return <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-label="warning" />;
-  return <Moon className="mt-0.5 h-4 w-4 shrink-0 text-muted" />;
-}
-
-/** Last night against your normal, and what it means for today's training given your form. */
-export function LastNightCard({ read, tsb, planned = [] }: { read: SleepRead; tsb: number | null; planned?: PlannedToday[] }) {
-  const n = read.night;
-  // the night you woke up from this morning: anything older says nothing about today
-  const fresh = n.date === iso(new Date());
-  // what's planned matters only for the day it's planned on
-  const advice = sleepAdvice(read, tsb, fresh ? planned : []);
-  return (
-    <Card
-      title="Last night"
-      subtitle={fresh ? `${n.bedStart && n.bedEnd ? `${fmtDate(n.bedStart, 'HH:mm')} – ${fmtDate(n.bedEnd, 'HH:mm')} · ` : ''}Eight Sleep` : `Latest night: woke ${fmtDate(n.date, 'EEE d MMM')}`}
-      actions={
-        <Link to="/fitness#recovery" className="flex items-center gap-1 text-xs text-accent hover:underline">
-          Recovery <ArrowRight className="h-3 w-3" />
-        </Link>
-      }
-    >
-      {fresh ? (
-        <div className="mb-4 flex items-start gap-2">
-          <Tone tone={advice.tone} />
-          <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-ink">{advice.title}</div>
-            <p className="mt-0.5 text-xs leading-relaxed text-ink-2">{advice.detail}</p>
-          </div>
-        </div>
-      ) : (
-        <p className="mb-4 text-xs text-muted">Nothing for last night yet: Eight Sleep may still be processing it, or the Pod didn't record it.</p>
-      )}
-      <div className="grid grid-cols-2 gap-4">
-        <Stat label="Sleep score" value={n.score ?? '–'} sub={n.processing ? 'still processing' : undefined} />
-        <Stat label="Asleep" value={fmtSleep(n.asleep)} sub={read.asleep?.typical != null ? `usually ${fmtSleep(read.asleep.typical)}` : n.inBed ? `${fmtSleep(n.inBed)} in bed` : undefined} />
-        <Stat
-          label="HRV"
-          value={read.hrv ? Math.round(read.hrv.value) : '–'}
-          unit="ms"
-          sub={read.hrv?.vsNormal != null ? `${pct(read.hrv.vsNormal)} on normal` : 'learning your normal'}
-          title={read.hrv?.range ? `Against your normal: last night ${pct(read.hrv.vsNormal!)}, the last 7 nights ${pct(read.hrv.rollingVsNormal!)} (normal range for the 7-night average: ${Math.round(read.hrv.range[0])}–${Math.round(read.hrv.range[1])} ms)` : undefined}
-        />
-        <Stat label="Heart rate asleep" value={read.hr ? Math.round(read.hr.value) : '–'} unit="bpm" sub={read.hr?.vsNormal != null ? `${bpm(read.hr.vsNormal)} on normal` : undefined} />
-      </div>
-    </Card>
-  );
-}
-
 /** The night before an activity: how recovered you went into it. */
-export function NightBefore({ read }: { read: SleepRead }) {
+export function NightBefore({ read, className = 'card mt-4 px-5 py-3' }: { read: SleepRead; className?: string }) {
   const n = read.night;
   const parts = [
     n.asleep != null ? `slept ${fmtSleep(n.asleep)}` : null,
@@ -79,7 +28,7 @@ export function NightBefore({ read }: { read: SleepRead }) {
     read.hr ? `heart rate ${Math.round(read.hr.value)} bpm${read.hr.vsNormal != null ? ` (${vsNormal(read.hr.vsNormal, ' bpm')})` : ''}` : null,
   ].filter(Boolean);
   return (
-    <div className="card mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 px-5 py-3 text-[13px]">
+    <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] ${className}`}>
       <Moon className="h-4 w-4 text-muted" />
       <span className="font-medium text-ink">The night before</span>
       <span className="text-ink-2">{parts.join(' · ')}</span>

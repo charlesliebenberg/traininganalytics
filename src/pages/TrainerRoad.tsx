@@ -140,7 +140,7 @@ function FtpCard({ f, ai, outlook }: { f: NonNullable<Insights['ftp']>; ai: Insi
       title="FTP: TrainerRoad’s and this app’s"
       subtitle="TrainerRoad’s FTP as you, a test or AI FTP Detection set it, what AI FTP Detection found and predicts, against this app’s own daily estimate from your power (Thresholds)"
       actions={
-        <Link to="/forecast" className="flex items-center gap-1 text-xs text-accent hover:underline">
+        <Link to="/season" className="flex items-center gap-1 text-xs text-accent hover:underline">
           Race-day forecast <ArrowRight className="h-3 w-3" />
         </Link>
       }

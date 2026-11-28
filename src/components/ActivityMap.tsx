@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
-import { useNavigate } from 'react-router-dom';
+import { Maximize2 } from 'lucide-react';
 import { decodePolyline } from '../../shared/polyline';
 import { qs, useApi } from '../lib/api';
-import { resolvePreset, type DateRange } from '../lib/range';
 import { useTokens } from '../lib/theme';
-import { fmtDate, SPORT_LABEL } from '../lib/format';
-import { Button, PageHeader, Select, Card, Segmented } from '../components/ui';
-import { RangePicker } from '../components/RangePicker';
-import { tileLayer } from '../components/RouteMap';
+import { useInspect } from '../lib/inspect';
+import { fmtDate } from '../lib/format';
+import { Button, Segmented } from './ui';
+import { tileLayer } from './RouteMap';
 
 interface Row {
   id: number;
@@ -18,13 +17,18 @@ interface Row {
   polyline: string;
 }
 
-export function Heatmap() {
+/**
+ * Everything you've done in the range, as routes on one map: where you ride most, lit by how
+ * often. A route opens its activity beside the map.
+ */
+export function ActivityMap({ from, to, sport }: { from: string; to: string; sport: string }) {
   const t = useTokens();
-  const nav = useNavigate();
-  const [range, setRange] = useState<DateRange>(() => resolvePreset('all'));
-  const [sport, setSport] = useState('');
+  const inspect = useInspect();
+  // the routes are drawn once per data; their clicks always use today's location
+  const open = useRef(inspect.open);
+  open.current = inspect.open;
   const [style, setStyle] = useState<'heat' | 'sport'>('heat');
-  const { data } = useApi<Row[]>(`/heatmap${qs({ from: range.from, to: range.to, sport })}`);
+  const { data } = useApi<Row[]>(`/heatmap${qs({ from, to, sport })}`);
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<L.Map | null>(null);
   const layer = useRef<L.LayerGroup | null>(null);
@@ -82,7 +86,7 @@ export function Heatmap() {
         opacity: style === 'heat' ? 0.22 : 0.6,
       });
       line.bindTooltip(`${r.name} · ${fmtDate(r.local_date, 'd MMM yyyy')}`, { sticky: true });
-      line.on('click', () => nav(`/activities/${r.id}`));
+      line.on('click', () => open.current('a', r.id));
       line.addTo(g);
       all = all ? all.extend(line.getBounds()) : L.latLngBounds(line.getBounds().getSouthWest(), line.getBounds().getNorthEast());
       const [a, b] = cell(pts[0]);
@@ -92,36 +96,23 @@ export function Heatmap() {
     allBounds.current = all;
     setElsewhere(away);
     if (bounds) m.fitBounds(bounds, { padding: [30, 30] });
-  }, [data, style, t, nav]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, style, t]);
 
   return (
-    <div>
-      <PageHeader
-        title="Heatmap"
-        subtitle={data ? `${data.length} routes${elsewhere ? `, showing where you ride most (${elsewhere} elsewhere)` : ''} · virtual rides left out · click a route to open it` : undefined}
-        actions={
-          <>
-            {elsewhere > 0 && (
-              <Button onClick={() => allBounds.current && map.current?.fitBounds(allBounds.current, { padding: [30, 30] })}>
-                Show all
-              </Button>
-            )}
-            <Segmented value={style} onChange={setStyle} options={[{ value: 'heat', label: 'Heat' }, { value: 'sport', label: 'By sport' }]} />
-            <Select value={sport} onChange={(e) => setSport(e.target.value)}>
-              <option value="">All sports</option>
-              {Object.entries(SPORT_LABEL).map(([k, v]) => (
-                <option key={k} value={k}>
-                  {v}
-                </option>
-              ))}
-            </Select>
-            <RangePicker value={range} onChange={setRange} />
-          </>
-        }
-      />
-      <Card pad={false} className="overflow-hidden p-1.5">
-        <div ref={el} style={{ height: 'calc(100vh - 190px)', minHeight: 480 }} className="rounded-xl" />
-      </Card>
+    <div className="card overflow-hidden">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-2.5">
+        <span className="min-w-0 flex-1 text-[12.5px] text-muted">
+          {data ? `${data.length.toLocaleString()} routes${elsewhere ? ` · showing where you ride most, ${elsewhere} elsewhere` : ''} · virtual rides left out` : 'Loading routes…'}
+        </span>
+        {elsewhere > 0 && (
+          <Button size="sm" variant="ghost" icon={<Maximize2 className="h-3.5 w-3.5" />} onClick={() => allBounds.current && map.current?.fitBounds(allBounds.current, { padding: [30, 30] })}>
+            Show all
+          </Button>
+        )}
+        <Segmented size="sm" value={style} onChange={setStyle} options={[{ value: 'heat', label: 'Heat' }, { value: 'sport', label: 'By sport' }]} />
+      </div>
+      <div ref={el} style={{ height: 'calc(100dvh - 300px)', minHeight: 440 }} />
     </div>
   );
 }

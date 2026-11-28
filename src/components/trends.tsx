@@ -1,21 +1,23 @@
-import { useMemo, useState } from 'react';
+/**
+ * Training over weeks and months: volume by sport, what it was made of, polarization, interval
+ * sets over time, and the years side by side.
+ */
+import { useMemo } from 'react';
 import { parseISO, getDayOfYear } from 'date-fns';
 import { qs, useApi } from '../lib/api';
-import { resolvePreset, type DateRange } from '../lib/range';
+import { type DateRange } from '../lib/range';
 import { alpha, useTokens } from '../lib/theme';
 import { distValue, distUnit, elevUnit, elevValue, fmtDate, fmtNum, iso, SPORT_LABEL } from '../lib/format';
-import { Card, PageHeader, Segmented, Select, Spinner } from '../components/ui';
-import { RangePicker } from '../components/RangePicker';
-import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
-import { foldEmptyBuckets, isGap, monthsText, type Gap } from '../lib/timeline';
+import { Spinner } from './ui';
+import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from './Chart';
+import { isGap, monthsText, type Gap } from '../lib/timeline';
 import { HR_ZONES, POWER_ZONES, SEILER_ZONES } from '../../shared/analytics/zones';
 import type { SessionType } from '../../shared/analytics/session';
 import type { DailyLoad } from '../../shared/types';
-import { ReviewCard } from '../components/review';
-import { KeySetsChart, type KeySet } from '../components/session';
+import { KeySetsChart, type KeySet } from './session';
 import { GROUP_LABEL, GROUP_OF, SESSION_GROUPS, groupColor } from '../lib/session';
 
-interface Bucket {
+export interface Bucket {
   start: string;
   sports: Record<string, { time: number; distance: number; elevation: number; tss: number; count: number; work: number }>;
   power: number[];
@@ -27,8 +29,8 @@ interface Bucket {
   efRun: number | null;
   decoupling: number | null;
 }
-type Item = Bucket | { gap: Gap };
-interface TrendsData {
+export type Item = Bucket | { gap: Gap };
+export interface TrendsData {
   buckets: Bucket[];
 }
 
@@ -42,8 +44,8 @@ function gapAreas(items: Item[], t: ReturnType<typeof useTokens>) {
   return idx.length ? { markArea: { silent: true, itemStyle: { color: alpha(t.muted, 0.1) }, data: idx.map((i) => [{ xAxis: i }, { xAxis: i }]) } } : {};
 }
 
-type Metric = 'time' | 'distance' | 'tss' | 'elevation' | 'count' | 'work';
-const METRICS: { value: Metric; label: string }[] = [
+export type Metric = 'time' | 'distance' | 'tss' | 'elevation' | 'count' | 'work';
+export const METRICS: { value: Metric; label: string }[] = [
   { value: 'time', label: 'Hours' },
   { value: 'distance', label: 'Distance' },
   { value: 'tss', label: 'TSS' },
@@ -67,7 +69,7 @@ function metricValue(m: Metric, v: { time: number; distance: number; elevation: 
 }
 const metricUnit = (m: Metric) => (m === 'time' ? 'h' : m === 'distance' ? distUnit() : m === 'elevation' ? elevUnit() : m === 'work' ? 'kJ' : '');
 
-function VolumeChart({ items, metric, bucket }: { items: Item[]; metric: Metric; bucket: 'week' | 'month' }) {
+export function VolumeChart({ items, metric, bucket }: { items: Item[]; metric: Metric; bucket: 'week' | 'month' }) {
   const t = useTokens();
   const option = useMemo(() => {
     const buckets = items.filter((b): b is Bucket => !isGap(b));
@@ -102,7 +104,7 @@ function VolumeChart({ items, metric, bucket }: { items: Item[]; metric: Metric;
   return <Chart option={option} height={300} />;
 }
 
-function ZoneDistribution({ items, kind, bucket }: { items: Item[]; kind: 'power' | 'hr' | 'seiler'; bucket: 'week' | 'month' }) {
+export function ZoneDistribution({ items, kind, bucket }: { items: Item[]; kind: 'power' | 'hr' | 'seiler'; bucket: 'week' | 'month' }) {
   const t = useTokens();
   const option = useMemo(() => {
     const defs = kind === 'power' ? POWER_ZONES : kind === 'hr' ? HR_ZONES : SEILER_ZONES;
@@ -145,7 +147,7 @@ function ZoneDistribution({ items, kind, bucket }: { items: Item[]; kind: 'power
   return <Chart option={option} height={280} />;
 }
 
-function LineTrend({ items, lines, bucket, height = 220, threshold, inverse }: { items: Item[]; lines: { name: string; color: string; get: (b: Bucket) => number | null; fmt: (v: number) => string }[]; bucket: 'week' | 'month'; height?: number; threshold?: { value: number; label: string }; inverse?: boolean }) {
+export function LineTrend({ items, lines, bucket, height = 220, threshold, inverse }: { items: Item[]; lines: { name: string; color: string; get: (b: Bucket) => number | null; fmt: (v: number) => string }[]; bucket: 'week' | 'month'; height?: number; threshold?: { value: number; label: string }; inverse?: boolean }) {
   const t = useTokens();
   const option = useMemo(() => {
     return {
@@ -183,7 +185,7 @@ function LineTrend({ items, lines, bucket, height = 220, threshold, inverse }: {
 }
 
 /** Sessions of each kind per bucket (rides and runs), stacked: what the training was made of. */
-function SessionMix({ items, bucket }: { items: Item[]; bucket: 'week' | 'month' }) {
+export function SessionMix({ items, bucket }: { items: Item[]; bucket: 'week' | 'month' }) {
   const t = useTokens();
   const option = useMemo(() => {
     const count = (b: Item, g: string) => (isGap(b) ? 0 : Object.entries(b.sessions ?? {}).reduce((s, [k, v]) => s + (GROUP_OF[k as SessionType] === g ? (v ?? 0) : 0), 0));
@@ -217,7 +219,7 @@ function SessionMix({ items, bucket }: { items: Item[]; bucket: 'week' | 'month'
 }
 
 /** Interval and sustained sets in the range, by workout family (rides). */
-function IntervalSets({ range }: { range: DateRange }) {
+export function IntervalSets({ range }: { range: DateRange }) {
   const { data } = useApi<KeySet[]>(`/sets${qs({ sport: 'ride', from: range.from, to: range.to })}`);
   if (!data) return <Spinner />;
   if (!data.length) return <p className="py-8 text-center text-xs text-muted">No interval or sustained sets in this range — threshold reps, sweet spot blocks or VO2 work show up here.</p>;
@@ -231,7 +233,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
  * Cumulative totals by day of year for every year with training. This year and the biggest
  * year are drawn in colour and labelled; the rest stay as grey context.
  */
-function YearOverYear({ metric }: { metric: 'distance' | 'time' | 'tss' }) {
+export function YearOverYear({ metric }: { metric: 'distance' | 'time' | 'tss' }) {
   const t = useTokens();
   const { data } = useApi<DailyLoad[]>(`/daily${qs({ from: '2000-01-01', to: iso(new Date()) })}`);
   const option = useMemo(() => {
@@ -290,80 +292,3 @@ function YearOverYear({ metric }: { metric: 'distance' | 'time' | 'tss' }) {
   return <Chart option={option} height={320} />;
 }
 
-export function Trends() {
-  const t = useTokens();
-  const [range, setRange] = useState<DateRange>(() => resolvePreset('365d'));
-  const [bucket, setBucket] = useState<'week' | 'month'>('week');
-  const [metric, setMetric] = useState<Metric>('time');
-  const [zoneKind, setZoneKind] = useState<'sessions' | 'power' | 'hr' | 'seiler'>('sessions');
-  const [yoy, setYoy] = useState<'distance' | 'time' | 'tss'>('distance');
-  const { data, isLoading } = useApi<TrendsData>(`/trends${qs({ from: range.from, to: range.to, bucket })}`);
-  // long stretches without training fold into one marked column (13+ weeks / 3+ months)
-  const items: Item[] = useMemo(() => {
-    const list = data?.buckets ?? [];
-    // drop empty buckets before the first activity in the range
-    const first = list.findIndex((b) => Object.keys(b.sports).length > 0);
-    return foldEmptyBuckets(first > 0 ? list.slice(first) : list, (b) => Object.keys(b.sports).length === 0, bucket === 'week' ? 13 : 3);
-  }, [data, bucket]);
-  const folded = items.some(isGap);
-  return (
-    <div>
-      <PageHeader
-        title="Trends"
-        subtitle="Your training reviewed week by week, what it was made of, and whether your key sessions are improving"
-        actions={
-          <>
-            <Segmented value={bucket} onChange={setBucket} options={[{ value: 'week', label: 'Weekly' }, { value: 'month', label: 'Monthly' }]} />
-            <RangePicker value={range} onChange={setRange} presets={['90d', '180d', '365d', '730d', 'ytd', 'lastyear', 'all']} />
-          </>
-        }
-      />
-      <ReviewCard />
-      {isLoading || !data ? (
-        <Spinner />
-      ) : (
-        <>
-          <Card
-            className="mt-4"
-            title="Training volume"
-            subtitle={`${METRICS.find((m) => m.value === metric)?.label} per ${bucket}, stacked by sport${folded ? ' · breaks of 3+ months are folded into one column' : ''}`}
-            actions={<Select value={metric} onChange={(e) => setMetric(e.target.value as Metric)}>{METRICS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}</Select>}
-          >
-            <VolumeChart items={items} metric={metric} bucket={bucket} />
-          </Card>
-          <div className="mt-4 grid gap-4 xl:grid-cols-2">
-            <Card
-              title={zoneKind === 'sessions' ? 'Session mix' : 'Intensity distribution'}
-              subtitle={
-                zoneKind === 'sessions'
-                  ? `Rides and runs per ${bucket} by what they were: read from each one's intervals, intensity and surges`
-                  : zoneKind === 'seiler'
-                    ? '3-zone model (below LT1 / between thresholds / above LT2) — power for rides, heart rate otherwise'
-                    : 'Share of time in each zone'
-              }
-              actions={<Segmented size="sm" value={zoneKind} onChange={setZoneKind} options={[{ value: 'sessions', label: 'Sessions' }, { value: 'seiler', label: '3-zone' }, { value: 'power', label: 'Power' }, { value: 'hr', label: 'HR' }]} />}
-            >
-              {zoneKind === 'sessions' ? <SessionMix items={items} bucket={bucket} /> : <ZoneDistribution items={items} kind={zoneKind} bucket={bucket} />}
-            </Card>
-            <Card title="Polarization index" subtitle={`Treff et al., ${bucket === 'week' ? 'over the 4 weeks ending each week' : 'per month'}. Above 2.0 is polarized; below is pyramidal or threshold-heavy.`}>
-              <LineTrend items={items} bucket={bucket} height={280} threshold={{ value: 2, label: 'polarized' }} lines={[{ name: 'Polarization index', color: t.series[6], get: (b) => b.polarization, fmt: (v) => v.toFixed(2) }]} />
-            </Card>
-          </div>
-          <Card className="mt-4" title="Interval sets" subtitle="Each threshold, sweet spot, VO2 or sustained set by its average power, grouped by workout: a rising line is the same session getting stronger. Click a point to open the ride.">
-            <IntervalSets range={range} />
-          </Card>
-          <Card
-            className="mt-4"
-            title="Aerobic decoupling"
-            subtitle={`Pw:HR / Pa:HR drift on steady sessions of an hour or more, ridden evenly${bucket === 'week' ? ', averaged over 4 weeks' : ''}. Under 5 % = aerobically durable. Aerobic fitness itself is on Fitness & Form.`}
-          >
-            <LineTrend items={items} bucket={bucket} height={240} threshold={{ value: 5, label: '5%' }} lines={[{ name: 'Decoupling', color: t.series[2], get: (b) => b.decoupling, fmt: (v) => `${v.toFixed(1)}%` }]} />
-          </Card>
-          <Card className="mt-4" title="Year over year" subtitle="Cumulative totals by day of year, every year you trained — this year and your biggest year highlighted" actions={<Segmented size="sm" value={yoy} onChange={setYoy} options={[{ value: 'distance', label: 'Distance' }, { value: 'time', label: 'Time' }, { value: 'tss', label: 'TSS' }]} />}>
-            <YearOverYear metric={yoy} />
-          </Card>
-        </>
-      )}
-    </div>
-  );
-}

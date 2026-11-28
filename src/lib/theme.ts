@@ -35,7 +35,7 @@ export interface Tokens {
 function readTokens(): Tokens {
   const cs = getComputedStyle(document.documentElement);
   const v = (n: string) => cs.getPropertyValue(`--${n}`).trim();
-  const dark = cs.colorScheme.includes('dark') || v('page').toLowerCase() === '#0d0d0d';
+  const dark = cs.colorScheme.includes('dark');
   return {
     dark,
     page: v('page'),

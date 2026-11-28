@@ -311,7 +311,7 @@ function autoHint(source: string | undefined, value: string) {
   return (
     <span>
       Auto: <b className="text-ink-2">{value}</b> in use ·{' '}
-      <Link to="/thresholds" className="text-accent hover:underline">
+      <Link to="/performance/thresholds" className="text-accent hover:underline">
         details
       </Link>
     </span>
@@ -539,7 +539,7 @@ export function Settings() {
   const error = params.get('error');
   return (
     <div>
-      <PageHeader title="Settings & Sync" subtitle="Data sources, athlete thresholds and preferences" />
+      <PageHeader eyebrow="Settings" title="Your setup" subtitle="Where your data comes from, the numbers your zones and load are worked out from, and how the app reads to you" />
       {(connected || error) && (
         <div className={`card mb-4 flex items-center gap-2 px-4 py-3 text-[13px] ${error ? 'text-critical' : ''}`}>
           {error ? <AlertTriangle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4 text-good" />}
@@ -555,7 +555,7 @@ export function Settings() {
           onChange={setTab}
           tabs={[
             { value: 'connections', label: 'Connections' },
-            { value: 'athlete', label: 'Athlete & zones' },
+            { value: 'athlete', label: 'Athlete and zones' },
             { value: 'import', label: 'Import files' },
             { value: 'preferences', label: 'Preferences' },
             { value: 'data', label: 'Data' },

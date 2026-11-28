@@ -1,6 +1,6 @@
 import { StrictMode, lazy, useEffect, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Link, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import './index.css';
 import { http, queryClient, setUnauthorizedHandler, useApi } from './lib/api';
@@ -14,23 +14,31 @@ import { Toaster } from './lib/toast';
 import type { Preferences } from '../shared/types';
 
 const page = <K extends string>(name: K, loader: () => Promise<Record<K, React.ComponentType>>) => lazy(() => loader().then((m) => ({ default: m[name] })));
-const Dashboard = page('Dashboard', () => import('./pages/Dashboard'));
+const Today = page('Today', () => import('./pages/Today'));
+const Season = page('Season', () => import('./pages/season/Season'));
+const Performance = page('Performance', () => import('./pages/performance/Performance'));
 const Activities = page('Activities', () => import('./pages/Activities'));
 const ActivityDetail = page('ActivityDetail', () => import('./pages/ActivityDetail'));
-const Fitness = page('Fitness', () => import('./pages/Fitness'));
-const Performance = page('Performance', () => import('./pages/Performance'));
-const Trends = page('Trends', () => import('./pages/Trends'));
-const Records = page('Records', () => import('./pages/Records'));
-const Heatmap = page('Heatmap', () => import('./pages/Heatmap'));
-const Calendar = page('Calendar', () => import('./pages/Calendar'));
 const Workouts = page('Workouts', () => import('./pages/Workouts'));
-const Season = page('Season', () => import('./pages/Season'));
 const Settings = page('Settings', () => import('./pages/Settings'));
-const Thresholds = page('Thresholds', () => import('./pages/Thresholds'));
-const Comeback = page('Comeback', () => import('./pages/Comeback'));
-const TrainerRoad = page('TrainerRoad', () => import('./pages/TrainerRoad'));
-const Forecast = page('Forecast', () => import('./pages/Forecast'));
-const Journal = page('Journal', () => import('./pages/Journal'));
+
+/**
+ * The pages the app used to have, sent to where they live now — so bookmarks, old links and
+ * muscle memory still land in the right place, with what they asked for.
+ */
+function Moved({ to }: { to: (q: URLSearchParams) => string }) {
+  const loc = useLocation();
+  return <Navigate to={to(new URLSearchParams(loc.search))} replace />;
+}
+const withQ = (path: string, q: URLSearchParams, keep: Record<string, string>) => {
+  const out = new URLSearchParams();
+  for (const [from, to] of Object.entries(keep)) {
+    const v = q.get(from);
+    if (v) out.set(to, v);
+  }
+  const s = out.toString();
+  return s ? `${path}${path.includes('?') ? '&' : '?'}${s}` : path;
+};
 
 setUnauthorizedHandler(() => queryClient.invalidateQueries({ queryKey: ['/session'] }));
 
@@ -85,24 +93,28 @@ function Root() {
             <Prefs>
               <Routes>
                 <Route element={<Layout />}>
-                  <Route index element={<Dashboard />} />
-                  <Route path="journal" element={<Journal />} />
+                  <Route index element={<Today />} />
+                  <Route path="season" element={<Season />} />
+                  <Route path="season/year" element={<Season />} />
+                  <Route path="season/workouts" element={<Workouts />} />
+                  <Route path="performance" element={<Performance />} />
+                  <Route path="performance/:lens" element={<Performance />} />
                   <Route path="activities" element={<Activities />} />
                   <Route path="activities/:id" element={<ActivityDetail />} />
-                  <Route path="fitness" element={<Fitness />} />
-                  <Route path="performance" element={<Performance />} />
-                  <Route path="trends" element={<Trends />} />
-                  <Route path="records" element={<Records />} />
-                  <Route path="thresholds" element={<Thresholds />} />
-                  <Route path="forecast" element={<Forecast />} />
-                  <Route path="comeback" element={<Comeback />} />
-                  <Route path="trainerroad" element={<TrainerRoad />} />
-                  <Route path="map" element={<Heatmap />} />
-                  <Route path="calendar" element={<Calendar />} />
-                  <Route path="workouts" element={<Workouts />} />
-                  <Route path="season" element={<Season />} />
                   <Route path="settings" element={<Settings />} />
-                  <Route path="*" element={<Empty title="Page not found"><Link className="text-accent underline" to="/">Return to dashboard</Link></Empty>} />
+                  {/* where the old pages went */}
+                  <Route path="journal" element={<Moved to={(q) => withQ('/season', q, { week: 'week' })} />} />
+                  <Route path="calendar" element={<Moved to={() => '/season'} />} />
+                  <Route path="forecast" element={<Moved to={(q) => withQ('/season', q, { event: 'race', s: 's' })} />} />
+                  <Route path="fitness" element={<Moved to={() => '/season'} />} />
+                  <Route path="trends" element={<Moved to={() => '/season/year'} />} />
+                  <Route path="thresholds" element={<Moved to={() => '/performance/thresholds'} />} />
+                  <Route path="records" element={<Moved to={() => '/performance/records'} />} />
+                  <Route path="comeback" element={<Moved to={() => '/performance/peaks'} />} />
+                  <Route path="trainerroad" element={<Moved to={() => '/performance/trainerroad'} />} />
+                  <Route path="map" element={<Moved to={() => '/activities?view=map'} />} />
+                  <Route path="workouts" element={<Moved to={(q) => withQ('/season/workouts', q, { planned: 'planned', template: 'template' })} />} />
+                  <Route path="*" element={<Empty title="Page not found"><Link className="text-accent underline" to="/">Back to today</Link></Empty>} />
                 </Route>
               </Routes>
             </Prefs>

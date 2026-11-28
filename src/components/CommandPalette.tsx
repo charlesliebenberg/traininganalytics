@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import clsx from 'clsx';
-import { CornerDownLeft, Monitor, Moon, Plus, RefreshCw, Search, Sun, Upload } from 'lucide-react';
-import type { Activity } from '../../shared/types';
+import { CornerDownLeft, Flag, Monitor, Moon, Plus, RefreshCw, Search, Sun, Upload } from 'lucide-react';
+import type { Activity, RaceEvent } from '../../shared/types';
 import { http, qs, useAction, useApi } from '../lib/api';
 import { useDebounced, isTyping } from '../lib/hooks';
-import { ALL_PAGES } from '../lib/nav';
+import { DESTINATIONS } from '../lib/nav';
+import { useInspect } from '../lib/inspect';
 import { useTheme } from '../lib/theme';
 import { fmtDate, fmtDistance, fmtDuration } from '../lib/format';
 import { SportIcon } from './ui';
@@ -43,6 +44,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const list = useRef<HTMLDivElement>(null);
   const dq = useDebounced(q.trim(), 150);
   const acts = useApi<{ items: Activity[] }>(open ? `/activities${qs({ search: dq.length >= 2 ? dq : undefined, limit: dq.length >= 2 ? 8 : 5, from: '2000-01-01' })}` : null, { placeholderData: (p) => p });
+  const events = useApi<RaceEvent[]>(open ? '/events' : null);
+  const inspect = useInspect();
   const sync = useAction(() => http('/sync', { method: 'POST' }), { success: 'Sync started' });
 
   useEffect(() => {
@@ -58,9 +61,35 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       nav(to);
       onClose();
     };
-    const pages: Item[] = ALL_PAGES.filter((p) => !q || matches(q, p.label, p.keywords)).map((p) => ({ id: `page:${p.to}`, group: 'Pages', label: p.label, icon: <p.icon className="h-4 w-4" />, run: go(p.to) }));
+    const lq = q.toLowerCase();
+    const rank = (label: string) => (label.toLowerCase().startsWith(lq) ? 0 : label.toLowerCase().includes(lq) ? 1 : 2);
+    const pages: Item[] = DESTINATIONS.filter((p) => (q ? matches(q, p.label, p.hint, p.keywords) : p.to.split('/').length <= 2 && !p.to.includes('?')))
+      .sort((a, b) => (q ? rank(a.label) - rank(b.label) : 0))
+      .map((p) => ({
+      id: `page:${p.to}`,
+      group: 'Go to',
+      label: p.label,
+      hint: p.hint !== p.label ? p.hint : undefined,
+      icon: <p.icon className="h-4 w-4" />,
+      run: go(p.to),
+    }));
+    const today = new Date().toISOString().slice(0, 10);
+    const races: Item[] = (events.data ?? [])
+      .filter((e) => e.date >= today && (!q || matches(q, e.name, 'race event', e.priority)))
+      .slice(0, 4)
+      .map((e) => ({
+        id: `race:${e.id}`,
+        group: 'Races',
+        label: e.name,
+        hint: `${e.priority} · ${fmtDate(e.date, 'EEE d MMM yyyy')}`,
+        icon: <Flag className="h-4 w-4" />,
+        run: () => {
+          inspect.open('e', e.id);
+          onClose();
+        },
+      }));
     const actions: Item[] = [
-      { id: 'act:workout', group: 'Actions', label: 'New workout', hint: 'Workout Builder', icon: <Plus className="h-4 w-4" />, run: go('/workouts'), k: 'create build structured' },
+      { id: 'act:workout', group: 'Actions', label: 'New workout', hint: 'Workout builder', icon: <Plus className="h-4 w-4" />, run: go('/season/workouts'), k: 'create build structured' },
       { id: 'act:import', group: 'Actions', label: 'Import activity files', hint: 'FIT, TCX, GPX, ZIP', icon: <Upload className="h-4 w-4" />, run: go('/settings?tab=import'), k: 'upload trainingpeaks' },
       {
         id: 'act:sync',
@@ -86,11 +115,15 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       label: activityTitle(a),
       hint: `${fmtDate(a.localDate, 'EEE d MMM yyyy')} · ${sessionBrief(a) ?? `${fmtDuration(a.movingTime, { short: true })}${a.distance ? ` · ${fmtDistance(a.distance, 1, a.sport)}` : ''}`}`,
       icon: <SportIcon sport={a.sport} />,
-      run: go(`/activities/${a.id}`),
+      // opens beside the page you're on
+      run: () => {
+        inspect.open('a', a.id);
+        onClose();
+      },
     }));
-    // with a query, what it names comes first; without one, pages lead
-    return q ? [...pages, ...activities, ...actions] : [...pages, ...actions, ...activities];
-  }, [q, dq, acts.data, nav, onClose, setMode, sync]);
+    // with a query, what it names comes first; without one, places lead
+    return q ? [...pages, ...races, ...activities, ...actions] : [...pages, ...races, ...actions, ...activities];
+  }, [q, dq, acts.data, events.data, inspect, nav, onClose, setMode, sync]);
 
   useEffect(() => setActive(0), [q]);
   useEffect(() => {
@@ -115,8 +148,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   };
   let lastGroup = '';
   return (
-    <div className="fixed inset-0 z-[1100] flex items-start justify-center bg-black/50 p-4 pt-[12vh] backdrop-blur-[2px]" onMouseDown={onClose}>
-      <div className="card w-full max-w-[560px] overflow-hidden" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal aria-label="Search and jump to">
+    <div className="animate-fade fixed inset-0 z-[1100] flex items-start justify-center bg-black/40 p-4 pt-[12vh] backdrop-blur-[3px]" onMouseDown={onClose}>
+      <div className="animate-rise w-full max-w-[600px] overflow-hidden rounded-2xl border border-line bg-surface shadow-lg" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal aria-label="Search and jump to">
         <div className="flex items-center gap-2.5 border-b border-line px-4">
           <Search className="h-4 w-4 shrink-0 text-muted" />
           <input
@@ -124,8 +157,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={onKey}
-            placeholder="Jump to a page, find an activity…"
-            className="h-12 min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-muted focus:outline-none focus-visible:outline-none"
+            placeholder="Go anywhere, find a ride or a race…"
+            className="h-14 min-w-0 flex-1 bg-transparent text-[15px] text-ink placeholder:text-muted focus:outline-none focus-visible:outline-none"
             role="combobox"
             aria-expanded
             aria-controls="palette-list"
@@ -148,9 +181,9 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                   aria-selected={i === active}
                   onMouseMove={() => setActive(i)}
                   onClick={it.run}
-                  className={clsx('flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left', i === active ? 'bg-accent-soft text-ink' : 'text-ink-2')}
+                  className={clsx('flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left', i === active ? 'bg-surface-2 text-ink' : 'text-ink-2')}
                 >
-                  <span className={clsx('flex h-4 w-4 shrink-0 items-center justify-center', i === active ? 'text-accent' : 'text-muted')}>{it.icon}</span>
+                  <span className={clsx('flex h-4 w-4 shrink-0 items-center justify-center', i === active ? 'text-ink' : 'text-muted')}>{it.icon}</span>
                   <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{it.label}</span>
                   {it.hint && <span className="hidden max-w-[50%] truncate text-[11px] text-muted sm:block">{it.hint}</span>}
                   {i === active && <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-muted" />}

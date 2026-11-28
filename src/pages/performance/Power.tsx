@@ -1,22 +1,22 @@
 import { useMemo, useState } from 'react';
 import { differenceInCalendarDays, parseISO, subDays, subYears } from 'date-fns';
-import type { Thresholds } from '../../shared/types';
-import { CURVE_DURATIONS } from '../../shared/analytics/series';
-import { FIXED_MAX, ompd, POWER_PROFILE, PROFILE_LEVELS, profileLevel, type PdModel } from '../../shared/analytics/models';
-import { ftpBasisText, repsText, type ThresholdEstimate } from '../../shared/analytics/thresholds';
-import { qs, useApi } from '../lib/api';
-import { resolvePreset, type DateRange } from '../lib/range';
-import { alpha, useTokens } from '../lib/theme';
-import { fmtDate, fmtDurLabel, fmtPaceSec, iso, paceSeconds, paceUnit } from '../lib/format';
-import { Card, FillBox, PageHeader, Segmented, Select, Spinner, Stat, Toggle } from '../components/ui';
-import { RangePicker } from '../components/RangePicker';
-import { CurveChart, type CurveSeries } from '../components/charts';
-import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../components/Chart';
-import { breakNames, makeTimeline, type Gap } from '../lib/timeline';
+import type { Thresholds } from '../../../shared/types';
+import { CURVE_DURATIONS } from '../../../shared/analytics/series';
+import { FIXED_MAX, ompd, POWER_PROFILE, PROFILE_LEVELS, profileLevel, type PdModel } from '../../../shared/analytics/models';
+import { ftpBasisText, repsText, type ThresholdEstimate } from '../../../shared/analytics/thresholds';
+import { qs, useApi } from '../../lib/api';
+import { resolvePreset, type DateRange } from '../../lib/range';
+import { alpha, useTokens } from '../../lib/theme';
+import { fmtDate, fmtDurLabel, fmtPaceSec, iso, paceSeconds, paceUnit } from '../../lib/format';
+import { Card, FillBox, PageHeader, Segmented, Select, Spinner, Stat, Toggle } from '../../components/ui';
+import { RangePicker } from '../../components/RangePicker';
+import { CurveChart, type CurveSeries } from '../../components/charts';
+import { Chart, axisStyle, legendStyle, tipRow, tooltipStyle, valueAxis } from '../../components/Chart';
+import { breakNames, makeTimeline, type Gap } from '../../lib/timeline';
 import { Link, useNavigate } from 'react-router-dom';
 
-type Kind = 'power' | 'np' | 'hr' | 'speed' | 'vam';
-interface Agg {
+export type Kind = 'power' | 'np' | 'hr' | 'speed' | 'vam';
+export interface Agg {
   durations: number[];
   values: (number | null)[];
   activityIds: (number | null)[];
@@ -25,7 +25,7 @@ interface Agg {
 
 const KIND_LABEL: Record<Kind, string> = { power: 'Power', np: 'Normalized power', hr: 'Heart rate', speed: 'Pace', vam: 'Climbing (VAM)' };
 
-function useCurve(kind: Kind | `fatigue:${number}`, r: { from: string; to: string } | null) {
+export function useCurve(kind: Kind | `fatigue:${number}`, r: { from: string; to: string } | null) {
   const sport = kind === 'speed' ? 'run' : kind === 'hr' || kind === 'vam' ? '' : 'ride';
   return useApi<Agg>(r ? `/curves${qs({ type: kind, from: r.from, to: r.to, sport })}` : null);
 }
@@ -45,7 +45,7 @@ function compareRange(mode: string, r: DateRange): { from: string; to: string; l
 }
 
 /** Your power-duration model now: the estimate Thresholds, W′ balance and the ride insights use. */
-interface ModelResponse {
+export interface ModelResponse {
   estimate: ThresholdEstimate | null;
   model: PdModel | null;
   weight: number;
@@ -83,7 +83,7 @@ function ModelCard({ data, th, weight }: { data: ModelResponse; th: Thresholds; 
       </div>
       <p className="mt-4 rounded-lg bg-surface-2 p-3 text-xs leading-relaxed text-ink-2">
         One estimate across the app: the same critical power, W′ and FTP as Thresholds, W′ balance and your ride insights, updated every day. The dashed curve draws it — sprint power, then CP and W′ up to 30 minutes, easing to FTP at an hour.{' '}
-        <Link to="/thresholds" className="whitespace-nowrap text-accent hover:underline">
+        <Link to="/performance/thresholds" className="whitespace-nowrap text-accent hover:underline">
           How it&apos;s estimated →
         </Link>
       </p>
@@ -91,7 +91,7 @@ function ModelCard({ data, th, weight }: { data: ModelResponse; th: Thresholds; 
   );
 }
 
-function ProfileCard({ curve, weight, ftp }: { curve: Agg | undefined; weight: number; ftp: number | null }) {
+export function ProfileCard({ curve, weight, ftp }: { curve: Agg | undefined; weight: number; ftp: number | null }) {
   const t = useTokens();
   if (!curve) return null;
   const rows = POWER_PROFILE.map((p) => {
@@ -112,13 +112,16 @@ function ProfileCard({ curve, weight, ftp }: { curve: Agg | undefined; weight: n
   }
   return (
     <Card title="Power profile" subtitle={`Coggan benchmarks in W/kg · ${weight} kg`} actions={<span className="text-xs text-ink-2">Profile: <b className="text-ink">{type}</b></span>}>
-      <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
+      {/* as many across as the card has room for */}
+      <div className="@container">
+      <div className="grid gap-x-8 gap-y-4 @md:grid-cols-2 @4xl:grid-cols-4">
         {rows.map((r) => (
-          <div key={r.label}>
-            <div className="mb-1 flex items-baseline justify-between text-xs">
-              <span className="font-medium">{r.label}</span>
-              <span className="tnum text-ink-2">
-                {r.wkg ? `${r.wkg.toFixed(2)} W/kg · ${Math.round(r.watts!)} W` : '–'} <span className="ml-1 text-ink">{r.lvl?.label}</span>
+          <div key={r.label} className="min-w-0">
+            <div className="mb-1.5 flex items-baseline justify-between gap-2 text-xs">
+              <span className="shrink-0 font-semibold text-ink">{r.label}</span>
+              <span className="tnum min-w-0 truncate text-right text-ink-2">
+                {r.wkg ? `${r.wkg.toFixed(2)} W/kg · ${Math.round(r.watts!)} W` : '–'}
+                {r.lvl && <span className="ml-1.5 font-medium text-ink">{r.lvl.label}</span>}
               </span>
             </div>
             <div className="relative flex h-2.5 gap-[2px]">
@@ -128,6 +131,7 @@ function ProfileCard({ curve, weight, ftp }: { curve: Agg | undefined; weight: n
             </div>
           </div>
         ))}
+      </div>
       </div>
       <p className="mt-3 text-[11px] text-muted">Levels: {PROFILE_LEVELS.join(' → ')}. FTP is the one your zones and TSS use.</p>
     </Card>
@@ -332,7 +336,7 @@ function ModelHistory() {
   );
 }
 
-export function Performance() {
+export function Power() {
   const t = useTokens();
   const nav = useNavigate();
   const [range, setRange] = useState<DateRange>(() => resolvePreset('90d'));

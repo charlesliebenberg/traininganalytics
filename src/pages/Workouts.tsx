@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate, Link } from 'react-router-dom';
 import clsx from 'clsx';
 import { ArrowDown, ArrowUp, Copy, Download, Plus, Repeat, Save, Trash2, CalendarPlus, TrendingUp } from 'lucide-react';
 import type { PlannedWorkout, Sport, TargetType, Thresholds, WorkoutBlock, WorkoutIntent, WorkoutStep, WorkoutStructure, WorkoutTemplate } from '../../shared/types';
@@ -192,7 +192,7 @@ export function Workouts() {
   const schedule = useAction(() => http('/planned', { method: 'POST', json: { date: schedDate, sport: draft.sport, title: draft.name, description: draft.description, structure: draft.structure } }), {
     onSuccess: () => {
       setScheduling(false);
-      nav(`/calendar?m=${schedDate.slice(0, 7)}`);
+      nav(`/season?week=${schedDate}`);
     },
     success: () => `Scheduled “${draft.name}” for ${fmtDate(schedDate, 'EEE d MMM')}`,
   });
@@ -204,7 +204,12 @@ export function Workouts() {
   return (
     <div>
       <PageHeader
-        title="Workout Builder"
+        eyebrow={
+          <Link to="/season" className="hover:text-ink">
+            ← Season
+          </Link>
+        }
+        title="Workout builder"
         subtitle={draft.plannedId ? 'Editing a planned workout' : 'Design structured workouts, save them to your library, schedule and export to Zwift / TrainerRoad / Wahoo'}
         actions={
           <>
